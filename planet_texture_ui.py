@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import re
 import time
 from dataclasses import asdict
@@ -39,9 +40,8 @@ from rocky_planet_gen import (
 
 
 HOST = "127.0.0.1"
-PORT = 8765
+PORT = int(os.environ.get("PLANET_TEXTURE_UI_PORT", "8765"))
 OUTPUT_ROOT = Path("output")
-PREVIEW_GLOBE_SIZE = 560
 
 
 PARAM_GROUPS = [
@@ -218,6 +218,17 @@ def save_planet_output(payload: dict) -> Path:
     return out_dir
 
 
+def output_summary(out_dir: Path) -> dict:
+    quad_dir = out_dir / "quad_sphere"
+    stitched = sorted(path.name for path in quad_dir.glob("*_cubemap_cross.png")) if quad_dir.exists() else []
+    face_dirs = sorted(path.name for path in quad_dir.iterdir() if path.is_dir()) if quad_dir.exists() else []
+    return {
+        "output_dir": str(out_dir.resolve()),
+        "quad_sphere_faces": face_dirs,
+        "stitched_quad_sphere_maps": stitched,
+    }
+
+
 def load_preset_json(path_text: str) -> dict:
     path = Path(path_text)
     if not path.is_absolute():
@@ -284,13 +295,9 @@ class PlanetUiHandler(BaseHTTPRequestHandler):
             if parsed.path == "/api/preview":
                 cfg = config_from_payload(payload, preview=True)
                 maps = build_maps(cfg)
-                tmp_preview = OUTPUT_ROOT / "_ui_preview_globe.png"
-                tmp_preview.parent.mkdir(parents=True, exist_ok=True)
-                render_globe_preview(maps["color"], maps["height"], tmp_preview, size=PREVIEW_GLOBE_SIZE)
                 self.write_json(
                     {
                         "color": image_data_url(maps["color"]),
-                        "globe": f"data:image/png;base64,{base64.b64encode(tmp_preview.read_bytes()).decode('ascii')}",
                         "summary": {
                             "preset": cfg.preset,
                             "seed": cfg.seed,
@@ -300,7 +307,7 @@ class PlanetUiHandler(BaseHTTPRequestHandler):
                 )
             elif parsed.path == "/api/save":
                 out_dir = save_planet_output(payload)
-                self.write_json({"output_dir": str(out_dir.resolve())})
+                self.write_json(output_summary(out_dir))
             elif parsed.path == "/api/load":
                 self.write_json(load_preset_json(str(payload.get("path", ""))))
             else:
@@ -483,6 +490,46 @@ img {
   width: 100%;
   height: auto;
 }
+.globe-figure {
+  display: grid;
+  grid-template-rows: auto minmax(260px, 1fr) auto;
+}
+.globe-toolbar {
+  display: grid;
+  grid-template-columns: 74px auto minmax(110px, 1fr) 48px;
+  gap: 8px;
+  align-items: center;
+  padding: 8px;
+  border-bottom: 1px solid var(--line);
+}
+.globe-toolbar label,
+.globe-toolbar span {
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.globe-toolbar button {
+  min-height: 30px;
+}
+.globe-canvas-wrap {
+  display: grid;
+  place-items: center;
+  min-height: 260px;
+  background:
+    radial-gradient(circle at center, rgba(85, 183, 165, 0.08), transparent 62%),
+    #040506;
+}
+#globeCanvas {
+  display: block;
+  width: 100%;
+  max-width: 560px;
+  aspect-ratio: 1;
+  cursor: grab;
+  touch-action: none;
+}
+#globeCanvas.dragging {
+  cursor: grabbing;
+}
 .status {
   min-height: 42px;
   border: 1px solid var(--line);
@@ -500,6 +547,11 @@ img {
   grid-template-columns: minmax(0, 1fr) 76px;
   gap: 8px;
   margin-top: 8px;
+}
+.hint {
+  margin: 4px 0 10px;
+  color: var(--muted);
+  font-size: 12px;
 }
 @media (max-width: 900px) {
   main { grid-template-columns: 1fr; }
@@ -538,9 +590,10 @@ img {
         <label for="projection">Projection</label>
         <select id="projection">
           <option value="equirectangular">Equirectangular</option>
-          <option value="quad_sphere">Quad-sphere</option>
+          <option value="quad_sphere">Quad-sphere faces + stitched crosses</option>
         </select>
       </div>
+      <p class="hint" id="projectionHint">Quad-sphere saves six face folders and stitched *_cubemap_cross.png atlases, matching the CLI --quad-sphere output.</p>
       <div class="row">
         <label for="width">Width</label>
         <input id="width" type="number" min="64" step="64" value="2048">
@@ -576,9 +629,17 @@ img {
         <img id="colorPreview" alt="Color texture preview">
         <figcaption>color texture preview</figcaption>
       </figure>
-      <figure>
-        <img id="globePreview" alt="Globe preview">
-        <figcaption>globe preview</figcaption>
+      <figure class="globe-figure">
+        <div class="globe-toolbar">
+          <button id="globePlayPause" type="button">Pause</button>
+          <label for="globeSpeed">Speed</label>
+          <input id="globeSpeed" type="range" min="0.05" max="2" step="0.05" value="0.35">
+          <span id="globeSpeedValue">0.35x</span>
+        </div>
+        <div class="globe-canvas-wrap">
+          <canvas id="globeCanvas" width="560" height="560" aria-label="Interactive globe preview"></canvas>
+        </div>
+        <figcaption>drag to rotate globe preview</figcaption>
       </figure>
     </div>
   </section>
@@ -599,10 +660,30 @@ const els = {
   outputName: document.getElementById("outputName"),
   status: document.getElementById("status"),
   colorPreview: document.getElementById("colorPreview"),
-  globePreview: document.getElementById("globePreview"),
+  globeCanvas: document.getElementById("globeCanvas"),
+  globePlayPause: document.getElementById("globePlayPause"),
+  globeSpeed: document.getElementById("globeSpeed"),
+  globeSpeedValue: document.getElementById("globeSpeedValue"),
   paramGroups: document.getElementById("paramGroups"),
   loadPath: document.getElementById("loadPath"),
 };
+
+const globe = {
+  ctx: els.globeCanvas.getContext("2d", {willReadFrequently: true}),
+  textureCanvas: document.createElement("canvas"),
+  textureData: null,
+  textureWidth: 0,
+  textureHeight: 0,
+  yaw: 0,
+  pitch: 0,
+  playing: true,
+  dragging: false,
+  lastX: 0,
+  lastY: 0,
+  lastFrameTime: 0,
+  speed: parseFloat(els.globeSpeed.value),
+};
+globe.textureCtx = globe.textureCanvas.getContext("2d", {willReadFrequently: true});
 
 function setStatus(text, kind = "") {
   els.status.className = `status ${kind}`;
@@ -728,6 +809,159 @@ async function postJson(path, payload) {
   return data;
 }
 
+function setGlobeTexture(src) {
+  const image = new Image();
+  image.onload = () => {
+    globe.textureWidth = image.naturalWidth;
+    globe.textureHeight = image.naturalHeight;
+    globe.textureCanvas.width = globe.textureWidth;
+    globe.textureCanvas.height = globe.textureHeight;
+    globe.textureCtx.clearRect(0, 0, globe.textureWidth, globe.textureHeight);
+    globe.textureCtx.drawImage(image, 0, 0);
+    globe.textureData = globe.textureCtx.getImageData(0, 0, globe.textureWidth, globe.textureHeight).data;
+    drawGlobe();
+  };
+  image.src = src;
+}
+
+function syncGlobeSpeed() {
+  globe.speed = parseFloat(els.globeSpeed.value);
+  els.globeSpeedValue.textContent = `${globe.speed.toFixed(2).replace(/0$/, "").replace(/\.$/, "")}x`;
+}
+
+function setGlobePlaying(playing) {
+  globe.playing = playing;
+  els.globePlayPause.textContent = playing ? "Pause" : "Play";
+}
+
+function sizeGlobeCanvas() {
+  const rect = els.globeCanvas.getBoundingClientRect();
+  const displaySize = Math.max(240, Math.round(Math.min(rect.width || 560, 560)));
+  const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+  const size = Math.round(displaySize * dpr);
+  if (els.globeCanvas.width !== size || els.globeCanvas.height !== size) {
+    els.globeCanvas.width = size;
+    els.globeCanvas.height = size;
+  }
+  return size;
+}
+
+function drawGlobe() {
+  const size = sizeGlobeCanvas();
+  const ctx = globe.ctx;
+  ctx.clearRect(0, 0, size, size);
+
+  if (!globe.textureData) {
+    ctx.fillStyle = "#050608";
+    ctx.fillRect(0, 0, size, size);
+    ctx.fillStyle = "#a9b0ba";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.font = `${Math.max(12, Math.round(size / 34))}px system-ui, sans-serif`;
+    ctx.fillText("Render a preview", size / 2, size / 2);
+    return;
+  }
+
+  const image = ctx.createImageData(size, size);
+  const data = image.data;
+  const radius = size * 0.46;
+  const center = size / 2;
+  const yaw = globe.yaw;
+  const pitch = globe.pitch;
+  const cosYaw = Math.cos(yaw);
+  const sinYaw = Math.sin(yaw);
+  const cosPitch = Math.cos(pitch);
+  const sinPitch = Math.sin(pitch);
+  const light = [-0.45, 0.35, 0.82];
+  const lightLen = Math.hypot(light[0], light[1], light[2]);
+  light[0] /= lightLen;
+  light[1] /= lightLen;
+  light[2] /= lightLen;
+
+  for (let py = 0; py < size; py += 1) {
+    const sy = (center - py) / radius;
+    for (let px = 0; px < size; px += 1) {
+      const sx = (px - center) / radius;
+      const r2 = sx * sx + sy * sy;
+      const i = (py * size + px) * 4;
+      if (r2 > 1) {
+        data[i + 3] = 0;
+        continue;
+      }
+
+      const sz = Math.sqrt(1 - r2);
+      const py1 = sy * cosPitch - sz * sinPitch;
+      const pz1 = sy * sinPitch + sz * cosPitch;
+      const x = sx * cosYaw + pz1 * sinYaw;
+      const y = py1;
+      const z = -sx * sinYaw + pz1 * cosYaw;
+      const lon = Math.atan2(x, z);
+      const lat = Math.asin(Math.max(-1, Math.min(1, y)));
+      let u = Math.floor(((lon + Math.PI) / (Math.PI * 2)) * globe.textureWidth) % globe.textureWidth;
+      if (u < 0) u += globe.textureWidth;
+      const v = Math.max(0, Math.min(globe.textureHeight - 1, Math.floor(((Math.PI / 2 - lat) / Math.PI) * globe.textureHeight)));
+      const ti = (v * globe.textureWidth + u) * 4;
+
+      const shade = 0.18 + Math.max(0, sx * light[0] + sy * light[1] + sz * light[2]) * 0.95;
+      const rim = Math.max(0, Math.min(1, (1 - sz) * 1.4));
+      const atmosphere = [72, 122, 176];
+      const edgeAlpha = 1 - Math.max(0, Math.min(1, (r2 - 0.88) / 0.12));
+      const blend = rim * 0.18;
+      data[i] = Math.min(255, ((globe.textureData[ti] * (1 - blend)) + atmosphere[0] * blend) * shade);
+      data[i + 1] = Math.min(255, ((globe.textureData[ti + 1] * (1 - blend)) + atmosphere[1] * blend) * shade);
+      data[i + 2] = Math.min(255, ((globe.textureData[ti + 2] * (1 - blend)) + atmosphere[2] * blend) * shade);
+      data[i + 3] = Math.round(255 * edgeAlpha);
+    }
+  }
+  ctx.putImageData(image, 0, 0);
+}
+
+function animateGlobe(timestamp) {
+  const elapsed = globe.lastFrameTime ? Math.min(0.08, (timestamp - globe.lastFrameTime) / 1000) : 0;
+  globe.lastFrameTime = timestamp;
+  if (globe.playing && !globe.dragging && globe.textureData) {
+    globe.yaw = (globe.yaw + elapsed * globe.speed * 0.45) % (Math.PI * 2);
+    drawGlobe();
+  }
+  requestAnimationFrame(animateGlobe);
+}
+
+function bindGlobeControls() {
+  syncGlobeSpeed();
+  els.globePlayPause.addEventListener("click", () => setGlobePlaying(!globe.playing));
+  els.globeSpeed.addEventListener("input", syncGlobeSpeed);
+  els.globeCanvas.addEventListener("pointerdown", (event) => {
+    setGlobePlaying(false);
+    globe.dragging = true;
+    globe.lastX = event.clientX;
+    globe.lastY = event.clientY;
+    els.globeCanvas.classList.add("dragging");
+    els.globeCanvas.setPointerCapture(event.pointerId);
+  });
+  els.globeCanvas.addEventListener("pointermove", (event) => {
+    if (!globe.dragging) return;
+    const dx = event.clientX - globe.lastX;
+    const dy = event.clientY - globe.lastY;
+    globe.lastX = event.clientX;
+    globe.lastY = event.clientY;
+    globe.yaw = (globe.yaw + dx * 0.008) % (Math.PI * 2);
+    globe.pitch = Math.max(-1.25, Math.min(1.25, globe.pitch + dy * 0.008));
+    drawGlobe();
+  });
+  const endDrag = (event) => {
+    if (!globe.dragging) return;
+    globe.dragging = false;
+    els.globeCanvas.classList.remove("dragging");
+    if (els.globeCanvas.hasPointerCapture(event.pointerId)) {
+      els.globeCanvas.releasePointerCapture(event.pointerId);
+    }
+  };
+  els.globeCanvas.addEventListener("pointerup", endDrag);
+  els.globeCanvas.addEventListener("pointercancel", endDrag);
+  window.addEventListener("resize", drawGlobe);
+  requestAnimationFrame(animateGlobe);
+}
+
 function schedulePreview(delay = 350) {
   clearTimeout(debounceTimer);
   debounceTimer = setTimeout(renderPreview, delay);
@@ -744,7 +978,7 @@ async function renderPreview() {
   try {
     const data = await postJson("/api/preview", getPayload());
     els.colorPreview.src = data.color;
-    els.globePreview.src = data.globe;
+    setGlobeTexture(data.color);
     setStatus(`Preview ready: ${data.summary.preset}, seed ${data.summary.seed}, ${data.summary.preview_size}`, "ok");
   } catch (error) {
     setStatus(error.message, "error");
@@ -765,7 +999,12 @@ async function saveOutput() {
   setStatus("Saving full texture output...", "busy");
   try {
     const data = await postJson("/api/save", getPayload());
-    setStatus(`Saved texture output: ${data.output_dir}`, "ok");
+    const stitched = data.stitched_quad_sphere_maps || [];
+    if (stitched.length) {
+      setStatus(`Saved quad-sphere output: ${data.output_dir}. Stitched atlases: ${stitched.join(", ")}`, "ok");
+    } else {
+      setStatus(`Saved texture output: ${data.output_dir}`, "ok");
+    }
   } catch (error) {
     setStatus(error.message, "error");
   } finally {
@@ -804,6 +1043,7 @@ async function boot() {
   const response = await fetch("/api/defaults");
   schema = await response.json();
   renderControls();
+  bindGlobeControls();
 
   els.preset.addEventListener("change", applyPresetDefaults);
   els.seed.addEventListener("change", () => schedulePreview(0));
