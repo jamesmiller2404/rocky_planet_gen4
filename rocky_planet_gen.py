@@ -22,6 +22,9 @@ Quad-sphere output:
 
     Writes six face folders under quad_sphere/:
         px, nx, py, ny, pz, nz
+
+    Also writes 4x3 cubemap-cross atlases under quad_sphere/:
+        color_cubemap_cross.png, height_cubemap_cross.png, ...
 """
 
 from __future__ import annotations
@@ -300,9 +303,12 @@ def lerp(a, b, t):
     return a * (1.0 - t) + b * t
 
 
-def normalize01(a):
-    amin = float(np.min(a))
-    amax = float(np.max(a))
+def normalize01(a, value_range=None):
+    if value_range is None:
+        amin = float(np.min(a))
+        amax = float(np.max(a))
+    else:
+        amin, amax = value_range
     if amax - amin < 1e-9:
         return np.zeros_like(a)
     return (a - amin) / (amax - amin)
@@ -376,8 +382,9 @@ def sphere_vectors(width, height):
 
 
 def quad_sphere_face_vectors(face, size):
-    u_axis = ((np.arange(size, dtype=np.float32) + 0.5) / size) * 2.0 - 1.0
-    v_axis = np.linspace(-1.0, 1.0, size, dtype=np.float32)
+    axis = ((np.arange(size, dtype=np.float32) + 0.5) / size) * 2.0 - 1.0
+    u_axis = axis
+    v_axis = axis
     u, v = np.meshgrid(u_axis, v_axis[::-1])
 
     if face == "px":
@@ -468,7 +475,19 @@ def render_globe_preview(color, height_map, out_path, size=900):
     save_rgb(out_path, img)
 
 
-def build_maps_from_vectors(cfg, x, y, z, lat, lon, normal_wrap_x=True):
+def build_maps_from_vectors(
+    cfg,
+    x,
+    y,
+    z,
+    lat,
+    lon,
+    normal_wrap_x=True,
+    land_threshold=None,
+    moisture_range=None,
+    height_range=None,
+    return_raw_stats=False,
+):
     lat_abs = np.abs(np.sin(lat))
     colors = vary_palette(cfg.seed, cfg.preset)
 
@@ -493,7 +512,11 @@ def build_maps_from_vectors(cfg, x, y, z, lat, lon, normal_wrap_x=True):
     coast_detail = (coast_detail - 0.5) * cfg.shoreline_complexity * 0.38
     land_field = continent + coast_detail - cfg.shoreline_erosion * 0.12
 
-    threshold = float(np.quantile(land_field, 1.0 - cfg.land_coverage))
+    threshold = (
+        float(np.quantile(land_field, 1.0 - cfg.land_coverage))
+        if land_threshold is None
+        else float(land_threshold)
+    )
     continent_land = land_field >= threshold
 
     island_noise = fbm_3d(x, y, z, cfg.island_scale, 5, 0.66, cfg.seed + 1777)
@@ -516,11 +539,12 @@ def build_maps_from_vectors(cfg, x, y, z, lat, lon, normal_wrap_x=True):
     ocean_depth = np.where(land, 0.0, 1.0 - shelf * 0.75)
 
     biome = fbm_3d(x, y, z, cfg.biome_scale, cfg.biome_complexity, 0.57, cfg.seed + 2333)
-    moisture = normalize01(
+    moisture_input = (
         fbm_3d(x, y, z, cfg.biome_scale * 0.7, 4, 0.55, cfg.seed + 3441)
         + shelf * 0.28
         + (1.0 - lat_abs) * 0.16
     )
+    moisture = normalize01(moisture_input, moisture_range)
     desert_bias = cfg.desert_coverage * (0.45 + (1.0 - moisture) * 0.75)
     forest_bias = cfg.forest_coverage * (0.35 + moisture * 0.85)
 
@@ -559,13 +583,14 @@ def build_maps_from_vectors(cfg, x, y, z, lat, lon, normal_wrap_x=True):
     height = np.where(land, 0.38 + base_land_height * 0.20, 0.18 - ocean_depth * 0.18)
     height += np.where(land, mountain_mask * cfg.mountain_height * 0.36, 0.0)
     height += np.where(land, shoreline * 0.025, 0.0)
-    height = normalize01(height)
+    raw_height = height
+    height = normalize01(raw_height, height_range)
 
     roughness = np.where(land, 0.72, 0.24)
     roughness = roughness + mountain_mask * 0.12 - shelf * 0.07
     roughness = np.clip(roughness, 0.0, 1.0)
 
-    return {
+    maps = {
         "color": color,
         "height": height,
         "normal": normal_from_height(height, wrap_x=normal_wrap_x),
@@ -574,6 +599,11 @@ def build_maps_from_vectors(cfg, x, y, z, lat, lon, normal_wrap_x=True):
         "shoreline_mask": shoreline,
         "ocean_depth": ocean_depth,
     }
+    if return_raw_stats:
+        maps["_land_field"] = land_field
+        maps["_moisture_input"] = moisture_input
+        maps["_raw_height"] = raw_height
+    return maps
 
 
 def build_maps(cfg):
@@ -582,10 +612,58 @@ def build_maps(cfg):
 
 
 def build_quad_sphere_maps(cfg, face_size):
-    faces = {}
+    vectors = {}
+    probe_maps = {}
     for face in ("px", "nx", "py", "ny", "pz", "nz"):
         x, y, z, lat, lon = quad_sphere_face_vectors(face, face_size)
-        faces[face] = build_maps_from_vectors(cfg, x, y, z, lat, lon, normal_wrap_x=False)
+        vectors[face] = (x, y, z, lat, lon)
+        probe_maps[face] = build_maps_from_vectors(
+            cfg,
+            x,
+            y,
+            z,
+            lat,
+            lon,
+            normal_wrap_x=False,
+            return_raw_stats=True,
+        )
+
+    all_land = np.concatenate([maps["_land_field"].ravel() for maps in probe_maps.values()])
+    land_threshold = float(np.quantile(all_land, 1.0 - cfg.land_coverage))
+
+    probe_maps = {}
+    for face, (x, y, z, lat, lon) in vectors.items():
+        probe_maps[face] = build_maps_from_vectors(
+            cfg,
+            x,
+            y,
+            z,
+            lat,
+            lon,
+            normal_wrap_x=False,
+            land_threshold=land_threshold,
+            return_raw_stats=True,
+        )
+
+    all_moisture = np.concatenate([maps["_moisture_input"].ravel() for maps in probe_maps.values()])
+    all_height = np.concatenate([maps["_raw_height"].ravel() for maps in probe_maps.values()])
+    moisture_range = (float(np.min(all_moisture)), float(np.max(all_moisture)))
+    height_range = (float(np.min(all_height)), float(np.max(all_height)))
+
+    faces = {}
+    for face, (x, y, z, lat, lon) in vectors.items():
+        faces[face] = build_maps_from_vectors(
+            cfg,
+            x,
+            y,
+            z,
+            lat,
+            lon,
+            normal_wrap_x=False,
+            land_threshold=land_threshold,
+            moisture_range=moisture_range,
+            height_range=height_range,
+        )
     return faces
 
 
@@ -597,6 +675,52 @@ def save_map_set(out_dir, maps):
     save_gray(out_dir / "land_mask.png", maps["land_mask"])
     save_gray(out_dir / "shoreline_mask.png", maps["shoreline_mask"])
     save_gray(out_dir / "ocean_depth.png", maps["ocean_depth"])
+
+
+QUAD_SPHERE_MAP_NAMES = (
+    "color",
+    "height",
+    "normal",
+    "roughness",
+    "land_mask",
+    "shoreline_mask",
+    "ocean_depth",
+)
+
+CUBEMAP_CROSS_LAYOUT = {
+    "py": (1, 0),
+    "nx": (0, 1),
+    "pz": (1, 1),
+    "px": (2, 1),
+    "nz": (3, 1),
+    "ny": (1, 2),
+}
+
+
+def build_cubemap_cross(faces, map_name, face_size):
+    sample = faces["px"][map_name]
+    if sample.ndim == 3:
+        cross = np.zeros((face_size * 3, face_size * 4, sample.shape[2]), dtype=sample.dtype)
+        if map_name == "normal":
+            cross[:, :] = np.array([128.0, 128.0, 255.0], dtype=sample.dtype)
+    else:
+        cross = np.zeros((face_size * 3, face_size * 4), dtype=sample.dtype)
+
+    for face, (col, row) in CUBEMAP_CROSS_LAYOUT.items():
+        y0 = row * face_size
+        x0 = col * face_size
+        cross[y0 : y0 + face_size, x0 : x0 + face_size] = faces[face][map_name]
+    return cross
+
+
+def save_quad_sphere_cubemap_crosses(out_dir, faces, face_size):
+    for map_name in QUAD_SPHERE_MAP_NAMES:
+        cross = build_cubemap_cross(faces, map_name, face_size)
+        path = out_dir / f"{map_name}_cubemap_cross.png"
+        if cross.ndim == 3:
+            save_rgb(path, cross)
+        else:
+            save_gray(path, cross)
 
 
 def write_quad_sphere_manifest(out_dir, face_size):
@@ -613,6 +737,35 @@ def write_quad_sphere_manifest(out_dir, face_size):
             "shoreline_mask.png",
             "ocean_depth.png",
         ],
+        "cubemap_cross": {
+            "layout": "horizontal_cross_4x3",
+            "size": {
+                "width": face_size * 4,
+                "height": face_size * 3,
+            },
+            "face_cells": {
+                "py": {"column": 1, "row": 0},
+                "nx": {"column": 0, "row": 1},
+                "pz": {"column": 1, "row": 1},
+                "px": {"column": 2, "row": 1},
+                "nz": {"column": 3, "row": 1},
+                "ny": {"column": 1, "row": 2},
+            },
+            "maps": [
+                "quad_sphere/color_cubemap_cross.png",
+                "quad_sphere/height_cubemap_cross.png",
+                "quad_sphere/normal_cubemap_cross.png",
+                "quad_sphere/roughness_cubemap_cross.png",
+                "quad_sphere/land_mask_cubemap_cross.png",
+                "quad_sphere/shoreline_mask_cubemap_cross.png",
+                "quad_sphere/ocean_depth_cubemap_cross.png",
+            ],
+            "empty_cells": {
+                "color": "black",
+                "normal": "neutral tangent normal RGB 128,128,255",
+                "scalar_maps": "0",
+            },
+        },
         "face_vectors": {
             "px": "normalize(vec3( 1,  v, -u))",
             "nx": "normalize(vec3(-1,  v,  u))",
@@ -623,7 +776,7 @@ def write_quad_sphere_manifest(out_dir, face_size):
         },
         "uv_range": {
             "u": "left to right, -1 to 1, sampled at pixel centers",
-            "v": "bottom to top, -1 to 1, sampled on subdivision boundaries; image row 0 is v=1",
+            "v": "bottom to top, -1 to 1, sampled at pixel centers; image row 0 is near v=1",
         },
         "normal_map": {
             "space": "per-face tangent space",
@@ -776,10 +929,12 @@ def main():
     if args.quad_sphere:
         quad_dir = out_dir / "quad_sphere"
         quad_dir.mkdir(parents=True, exist_ok=True)
-        for face, maps in build_quad_sphere_maps(cfg, face_size).items():
+        quad_faces = build_quad_sphere_maps(cfg, face_size)
+        for face, maps in quad_faces.items():
             face_dir = quad_dir / face
             face_dir.mkdir(parents=True, exist_ok=True)
             save_map_set(face_dir, maps)
+        save_quad_sphere_cubemap_crosses(quad_dir, quad_faces, face_size)
         write_quad_sphere_manifest(out_dir, face_size)
     else:
         maps = build_maps(cfg)
