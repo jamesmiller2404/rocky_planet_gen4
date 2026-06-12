@@ -3,7 +3,7 @@ Standalone rocky/ocean planet texture generator.
 
 This app does not use Blender. It generates baked texture maps and previews:
 
-    python planet_texture_generator.py --preset earthlike --seed 42 --width 2048 --height 1024 --out output/earthlike
+    python rocky_planet_gen.py --preset earthlike --seed 42 --width 2048 --height 1024 --out output/earthlike
 
 Outputs:
     color.png
@@ -16,6 +16,12 @@ Outputs:
     preview.png
     preview.html
     preset.json
+
+Quad-sphere output:
+    python rocky_planet_gen.py --preset earthlike --seed 42 --quad-sphere --face-size 1024 --out output/earthlike_quad
+
+    Writes six face folders under quad_sphere/:
+        px, nx, py, ny, pz, nz
 """
 
 from __future__ import annotations
@@ -369,6 +375,35 @@ def sphere_vectors(width, height):
     return x, y, z, lat_grid, lon_grid
 
 
+def quad_sphere_face_vectors(face, size):
+    u_axis = ((np.arange(size, dtype=np.float32) + 0.5) / size) * 2.0 - 1.0
+    v_axis = np.linspace(-1.0, 1.0, size, dtype=np.float32)
+    u, v = np.meshgrid(u_axis, v_axis[::-1])
+
+    if face == "px":
+        x, y, z = np.ones_like(u), v, -u
+    elif face == "nx":
+        x, y, z = -np.ones_like(u), v, u
+    elif face == "py":
+        x, y, z = u, np.ones_like(u), -v
+    elif face == "ny":
+        x, y, z = u, -np.ones_like(u), v
+    elif face == "pz":
+        x, y, z = u, v, np.ones_like(u)
+    elif face == "nz":
+        x, y, z = -u, v, -np.ones_like(u)
+    else:
+        raise ValueError(f"Unknown quad-sphere face: {face}")
+
+    length = np.sqrt(x * x + y * y + z * z)
+    x = x / length
+    y = y / length
+    z = z / length
+    lat = np.arcsin(np.clip(y, -1.0, 1.0))
+    lon = np.arctan2(z, x)
+    return x, y, z, lat, lon
+
+
 def color_blend(a, b, t):
     return a * (1.0 - t[..., None]) + b * t[..., None]
 
@@ -383,9 +418,15 @@ def save_gray(path, arr):
     Image.fromarray(arr, "L").save(path)
 
 
-def normal_from_height(height, strength=5.0):
-    dx = np.roll(height, -1, axis=1) - np.roll(height, 1, axis=1)
-    dy = np.roll(height, -1, axis=0) - np.roll(height, 1, axis=0)
+def normal_from_height(height, strength=5.0, wrap_x=True):
+    if wrap_x:
+        dx = np.roll(height, -1, axis=1) - np.roll(height, 1, axis=1)
+    else:
+        padded_x = np.pad(height, ((0, 0), (1, 1)), mode="edge")
+        dx = padded_x[:, 2:] - padded_x[:, :-2]
+
+    padded_y = np.pad(height, ((1, 1), (0, 0)), mode="edge")
+    dy = padded_y[2:, :] - padded_y[:-2, :]
     nx = -dx * strength
     ny = -dy * strength
     nz = np.ones_like(height)
@@ -427,8 +468,7 @@ def render_globe_preview(color, height_map, out_path, size=900):
     save_rgb(out_path, img)
 
 
-def build_maps(cfg):
-    x, y, z, lat, lon = sphere_vectors(cfg.width, cfg.height)
+def build_maps_from_vectors(cfg, x, y, z, lat, lon, normal_wrap_x=True):
     lat_abs = np.abs(np.sin(lat))
     colors = vary_palette(cfg.seed, cfg.preset)
 
@@ -491,7 +531,8 @@ def build_maps(cfg):
     mountain_mask = smoothstep(mountain_cut, min(1.0, mountain_cut + 0.28), ridge)
     mountain_mask *= smoothstep(0.45, 0.76, mountain_gate)
 
-    color = np.zeros((cfg.height, cfg.width, 3), dtype=np.float32)
+    map_height, map_width = x.shape
+    color = np.zeros((map_height, map_width, 3), dtype=np.float32)
     ocean_variation = fbm_3d(x, y, z, 18.0, 4, 0.5, cfg.seed + 5111)
     ocean_color = color_blend(colors["deep_ocean"], colors["ocean_mid"], ocean_variation * cfg.ocean_current_strength)
     ocean_color = color_blend(ocean_color, colors["shallow_ocean"], shelf)
@@ -527,12 +568,70 @@ def build_maps(cfg):
     return {
         "color": color,
         "height": height,
-        "normal": normal_from_height(height),
+        "normal": normal_from_height(height, wrap_x=normal_wrap_x),
         "roughness": roughness,
         "land_mask": land.astype(np.float32),
         "shoreline_mask": shoreline,
         "ocean_depth": ocean_depth,
     }
+
+
+def build_maps(cfg):
+    x, y, z, lat, lon = sphere_vectors(cfg.width, cfg.height)
+    return build_maps_from_vectors(cfg, x, y, z, lat, lon, normal_wrap_x=True)
+
+
+def build_quad_sphere_maps(cfg, face_size):
+    faces = {}
+    for face in ("px", "nx", "py", "ny", "pz", "nz"):
+        x, y, z, lat, lon = quad_sphere_face_vectors(face, face_size)
+        faces[face] = build_maps_from_vectors(cfg, x, y, z, lat, lon, normal_wrap_x=False)
+    return faces
+
+
+def save_map_set(out_dir, maps):
+    save_rgb(out_dir / "color.png", maps["color"])
+    save_gray(out_dir / "height.png", maps["height"])
+    save_rgb(out_dir / "normal.png", maps["normal"])
+    save_gray(out_dir / "roughness.png", maps["roughness"])
+    save_gray(out_dir / "land_mask.png", maps["land_mask"])
+    save_gray(out_dir / "shoreline_mask.png", maps["shoreline_mask"])
+    save_gray(out_dir / "ocean_depth.png", maps["ocean_depth"])
+
+
+def write_quad_sphere_manifest(out_dir, face_size):
+    manifest = {
+        "layout": "quad_sphere_cubemap_faces",
+        "face_size": face_size,
+        "faces": ["px", "nx", "py", "ny", "pz", "nz"],
+        "maps": [
+            "color.png",
+            "height.png",
+            "normal.png",
+            "roughness.png",
+            "land_mask.png",
+            "shoreline_mask.png",
+            "ocean_depth.png",
+        ],
+        "face_vectors": {
+            "px": "normalize(vec3( 1,  v, -u))",
+            "nx": "normalize(vec3(-1,  v,  u))",
+            "py": "normalize(vec3( u,  1, -v))",
+            "ny": "normalize(vec3( u, -1,  v))",
+            "pz": "normalize(vec3( u,  v,  1))",
+            "nz": "normalize(vec3(-u,  v, -1))",
+        },
+        "uv_range": {
+            "u": "left to right, -1 to 1, sampled at pixel centers",
+            "v": "bottom to top, -1 to 1, sampled on subdivision boundaries; image row 0 is v=1",
+        },
+        "normal_map": {
+            "space": "per-face tangent space",
+            "channels": "RGB = XYZ remapped from -1..1 to 0..255",
+            "green_channel": "positive Y points toward lower image rows",
+        },
+    }
+    (out_dir / "quad_sphere_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
 
 def write_html_preview(out_dir, title):
@@ -652,6 +751,8 @@ def build_arg_parser():
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--width", type=int, default=2048)
     parser.add_argument("--height", type=int, default=1024)
+    parser.add_argument("--quad-sphere", action="store_true", help="Write six quad-sphere face folders instead of equirectangular maps.")
+    parser.add_argument("--face-size", type=int, default=None, help="Quad-sphere face size in pixels. Defaults to min(width, height).")
     parser.add_argument("--out", type=Path, default=Path("planet_output"))
     for key, value in PRESETS["earthlike"].items():
         arg_type = int if isinstance(value, int) else float
@@ -665,22 +766,31 @@ def main():
     cfg = config_from_args(args)
     if cfg.width < 64 or cfg.height < 32:
         raise SystemExit("Width must be at least 64 and height must be at least 32.")
+    face_size = args.face_size if args.face_size is not None else min(cfg.width, cfg.height)
+    if args.quad_sphere and face_size < 32:
+        raise SystemExit("Quad-sphere face size must be at least 32.")
 
     out_dir = args.out
     out_dir.mkdir(parents=True, exist_ok=True)
-    maps = build_maps(cfg)
 
-    save_rgb(out_dir / "color.png", maps["color"])
-    save_gray(out_dir / "height.png", maps["height"])
-    save_rgb(out_dir / "normal.png", maps["normal"])
-    save_gray(out_dir / "roughness.png", maps["roughness"])
-    save_gray(out_dir / "land_mask.png", maps["land_mask"])
-    save_gray(out_dir / "shoreline_mask.png", maps["shoreline_mask"])
-    save_gray(out_dir / "ocean_depth.png", maps["ocean_depth"])
-    render_globe_preview(maps["color"], maps["height"], out_dir / "preview.png")
-    write_html_preview(out_dir, f"{cfg.preset} planet preview")
+    if args.quad_sphere:
+        quad_dir = out_dir / "quad_sphere"
+        quad_dir.mkdir(parents=True, exist_ok=True)
+        for face, maps in build_quad_sphere_maps(cfg, face_size).items():
+            face_dir = quad_dir / face
+            face_dir.mkdir(parents=True, exist_ok=True)
+            save_map_set(face_dir, maps)
+        write_quad_sphere_manifest(out_dir, face_size)
+    else:
+        maps = build_maps(cfg)
+        save_map_set(out_dir, maps)
+        render_globe_preview(maps["color"], maps["height"], out_dir / "preview.png")
+        write_html_preview(out_dir, f"{cfg.preset} planet preview")
 
     metadata = asdict(cfg)
+    metadata["output_projection"] = "quad_sphere" if args.quad_sphere else "equirectangular"
+    if args.quad_sphere:
+        metadata["quad_sphere_face_size"] = face_size
     metadata["resolved_palette_rgb"] = {
         name: [int(round(channel)) for channel in color]
         for name, color in vary_palette(cfg.seed, cfg.preset).items()
