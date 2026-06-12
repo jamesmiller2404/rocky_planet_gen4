@@ -101,7 +101,12 @@ It also writes cubemap-cross atlases such as `quad_sphere/color_cubemap_cross.pn
 | `--biome-complexity` | `6` | Noise octaves for biome variation. |
 | `--desert-coverage` | `0.27` | Desert/dry terrain bias. Higher values increase tan and ochre regions. |
 | `--forest-coverage` | `0.56` | Forest/wet terrain bias. Higher values increase green and dark wet regions. |
-| `--polar-ice-size` | `0.16` | Size of polar ice caps. Higher values push ice farther from the poles. |
+| `--polar-ice-size` | `0.16` | Overall reach of polar ice formations. Higher values allow ice farther from the poles. |
+| `--polar-ice-scale` | `2.15` | Scale of the broad continent-like ice sheet forms. Lower values create larger sheets; higher values create smaller fields. |
+| `--polar-ice-complexity` | `0.62` | Amount of shoreline-style breakup along polar ice edges. |
+| `--polar-ice-fragmentation` | `0.42` | Amount of detached island/floe formation around the outer ice edge. |
+| `--polar-ice-shelf-strength` | `0.62` | Strength of ocean ice shelves and pack ice color/height contribution. |
+| `--polar-ice-solidity` | `0.62` | Opacity and edge hardness for polar ice. Higher values make caps read as solid white ice sheets instead of translucent haze. |
 | `--snow-threshold` | `0.74` | Threshold for mountain/high-latitude snow. Lower values create more snow. |
 
 ## Mountains And Height
@@ -176,6 +181,11 @@ Examples:
 | `mountain_sharpness` | `0.68` | `0.55` | `0.78` | `0.86` | `0.60` |
 | `mountain_height` | `0.62` | `0.42` | `0.78` | `0.86` | `0.38` |
 | `polar_ice_size` | `0.16` | `0.08` | `0.20` | `0.04` | `0.48` |
+| `polar_ice_scale` | `2.15` | `2.80` | `1.65` | `2.40` | `1.30` |
+| `polar_ice_complexity` | `0.62` | `0.76` | `0.48` | `0.56` | `0.58` |
+| `polar_ice_fragmentation` | `0.42` | `0.68` | `0.30` | `0.36` | `0.48` |
+| `polar_ice_shelf_strength` | `0.62` | `0.52` | `0.70` | `0.34` | `0.88` |
+| `polar_ice_solidity` | `0.62` | `0.56` | `0.74` | `0.44` | `0.82` |
 | `snow_threshold` | `0.74` | `0.82` | `0.70` | `0.88` | `0.48` |
 | `ocean_current_strength` | `0.18` | `0.24` | `0.12` | `0.08` | `0.10` |
 | `land_color_variation` | `0.22` | `0.26` | `0.24` | `0.34` | `0.16` |

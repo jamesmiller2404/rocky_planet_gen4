@@ -67,6 +67,11 @@ PRESETS = {
         "mountain_sharpness": 0.68,
         "mountain_height": 0.62,
         "polar_ice_size": 0.16,
+        "polar_ice_scale": 2.15,
+        "polar_ice_complexity": 0.62,
+        "polar_ice_fragmentation": 0.42,
+        "polar_ice_shelf_strength": 0.62,
+        "polar_ice_solidity": 0.62,
         "snow_threshold": 0.74,
         "ocean_current_strength": 0.18,
         "land_color_variation": 0.22,
@@ -99,6 +104,11 @@ PRESETS = {
         "mountain_sharpness": 0.55,
         "mountain_height": 0.42,
         "polar_ice_size": 0.08,
+        "polar_ice_scale": 2.80,
+        "polar_ice_complexity": 0.76,
+        "polar_ice_fragmentation": 0.68,
+        "polar_ice_shelf_strength": 0.52,
+        "polar_ice_solidity": 0.56,
         "snow_threshold": 0.82,
         "ocean_current_strength": 0.24,
         "land_color_variation": 0.26,
@@ -131,6 +141,11 @@ PRESETS = {
         "mountain_sharpness": 0.78,
         "mountain_height": 0.78,
         "polar_ice_size": 0.20,
+        "polar_ice_scale": 1.65,
+        "polar_ice_complexity": 0.48,
+        "polar_ice_fragmentation": 0.30,
+        "polar_ice_shelf_strength": 0.70,
+        "polar_ice_solidity": 0.74,
         "snow_threshold": 0.70,
         "ocean_current_strength": 0.12,
         "land_color_variation": 0.24,
@@ -163,6 +178,11 @@ PRESETS = {
         "mountain_sharpness": 0.86,
         "mountain_height": 0.86,
         "polar_ice_size": 0.04,
+        "polar_ice_scale": 2.40,
+        "polar_ice_complexity": 0.56,
+        "polar_ice_fragmentation": 0.36,
+        "polar_ice_shelf_strength": 0.34,
+        "polar_ice_solidity": 0.44,
         "snow_threshold": 0.88,
         "ocean_current_strength": 0.08,
         "land_color_variation": 0.34,
@@ -195,6 +215,11 @@ PRESETS = {
         "mountain_sharpness": 0.60,
         "mountain_height": 0.38,
         "polar_ice_size": 0.48,
+        "polar_ice_scale": 1.30,
+        "polar_ice_complexity": 0.58,
+        "polar_ice_fragmentation": 0.48,
+        "polar_ice_shelf_strength": 0.88,
+        "polar_ice_solidity": 0.82,
         "snow_threshold": 0.48,
         "ocean_current_strength": 0.10,
         "land_color_variation": 0.16,
@@ -311,6 +336,11 @@ class PlanetConfig:
     mountain_sharpness: float
     mountain_height: float
     polar_ice_size: float
+    polar_ice_scale: float
+    polar_ice_complexity: float
+    polar_ice_fragmentation: float
+    polar_ice_shelf_strength: float
+    polar_ice_solidity: float
     snow_threshold: float
     ocean_current_strength: float
     land_color_variation: float
@@ -393,6 +423,69 @@ def fbm_3d(x, y, z, scale, octaves, roughness, seed, lacunarity=2.03):
         amp *= roughness
         freq *= lacunarity
     return total / max(amp_sum, 1e-6)
+
+
+def build_polar_ice_formation(cfg, x, y, z, lat, lon):
+    if cfg.polar_ice_size <= 0.0:
+        empty = np.zeros_like(x, dtype=np.float32)
+        return empty, empty
+
+    lat_abs = np.abs(np.sin(lat))
+    ice_start = max(0.02, 1.0 - cfg.polar_ice_size)
+    complexity = np.clip(cfg.polar_ice_complexity, 0.0, 1.0)
+    fragmentation = np.clip(cfg.polar_ice_fragmentation, 0.0, 1.0)
+    solidity = np.clip(cfg.polar_ice_solidity, 0.0, 1.0)
+    sheet_scale = max(0.35, cfg.polar_ice_scale)
+
+    sheet_field = fbm_3d(
+        x,
+        y,
+        z,
+        sheet_scale,
+        cfg.continent_detail,
+        cfg.continent_roughness,
+        cfg.seed + 7111,
+    )
+    edge_detail = fbm_3d(
+        x,
+        y,
+        z,
+        max(2.0, cfg.shoreline_noise_scale * (0.28 + complexity * 0.55)),
+        cfg.shoreline_detail,
+        0.62,
+        cfg.seed + 7221,
+    )
+    ice_field = sheet_field + (edge_detail - 0.5) * complexity * 0.42
+    sheet_cut = 0.48 + (1.0 - complexity) * 0.10
+    sheet_mask = smoothstep(sheet_cut - 0.12, sheet_cut + 0.16, ice_field)
+
+    floe_noise = fbm_3d(x, y, z, max(5.0, sheet_scale * 13.0), 5, 0.66, cfg.seed + 7331)
+    floe_chain = 0.5 + 0.5 * np.sin(
+        lon * (2.0 + sheet_scale * 1.8)
+        + y * (13.0 + sheet_scale * 1.4)
+        + cfg.seed * 0.017
+    )
+    floe_field = lerp(floe_noise, floe_noise * 0.72 + floe_chain * 0.28, cfg.island_chain_strength)
+    floe_gate = fbm_3d(x, y, z, max(1.5, sheet_scale * 2.7), 3, 0.54, cfg.seed + 7441)
+    floe_cut = 0.76 - fragmentation * 0.20
+    floes = smoothstep(floe_cut, min(0.99, floe_cut + 0.10), floe_field)
+    floes *= smoothstep(0.38, 0.58, floe_gate)
+
+    edge_width = 0.08 + complexity * 0.06
+    outer_gate = smoothstep(max(0.0, ice_start - fragmentation * 0.20), ice_start + edge_width, lat_abs)
+    core_gate = smoothstep(min(0.99, ice_start + edge_width * 0.95), 1.0, lat_abs)
+    sheet_gate = smoothstep(max(0.0, ice_start - complexity * 0.10), ice_start + edge_width * 1.25, lat_abs)
+    floe_gate_lat = smoothstep(max(0.0, ice_start - fragmentation * 0.28), ice_start + edge_width * 0.50, lat_abs)
+
+    sheet_ice = np.maximum(core_gate, sheet_mask * sheet_gate)
+    fragmented_ice = floes * floe_gate_lat * fragmentation
+    polar_ice = np.clip(np.maximum(sheet_ice, fragmented_ice) * outer_gate, 0.0, 1.0)
+    hard_edge_width = 0.42 - solidity * 0.32
+    solid_ice = smoothstep(0.025, max(0.08, hard_edge_width), polar_ice)
+    fill_boost = smoothstep(0.02, 0.18, polar_ice) * solidity * 0.36
+    polar_ice = np.clip(lerp(polar_ice, solid_ice, solidity) + fill_boost, 0.0, 1.0)
+    ice_texture = np.clip(edge_detail * 0.65 + floe_noise * 0.35, 0.0, 1.0)
+    return polar_ice.astype(np.float32), ice_texture.astype(np.float32)
 
 
 def sphere_vectors(width, height):
@@ -620,8 +713,7 @@ def build_maps_from_vectors(
     land_color = color_blend(land_color, colors["beach"], shoreline * 0.78)
 
     snow_mask = smoothstep(cfg.snow_threshold, 1.0, mountain_mask * 0.72 + lat_abs * 0.38)
-    ice_start = max(0.02, 1.0 - cfg.polar_ice_size)
-    polar_ice = smoothstep(ice_start, min(1.0, ice_start + 0.12), lat_abs)
+    polar_ice, ice_texture = build_polar_ice_formation(cfg, x, y, z, lat, lon)
     ice_mask = np.maximum(snow_mask, polar_ice)
 
     soil_noise = fbm_3d(x, y, z, cfg.biome_scale * 2.4, 4, 0.52, cfg.seed + 6221)
@@ -659,20 +751,40 @@ def build_maps_from_vectors(
         pale_highland_tint,
         np.clip(mountain_mask * mineral_noise * cfg.land_color_variation * 0.72 * non_ice_land, 0.0, 0.22),
     )
+    ice_solidity = np.clip(cfg.polar_ice_solidity, 0.0, 1.0)
+    solid_ice_tint = np.array([244, 248, 248], dtype=np.float32)
+    ice_highlight = color_blend(
+        colors["ice"],
+        colors["snow"],
+        np.clip(ice_texture * 0.20 + ice_solidity * 0.54, 0.0, 0.76),
+    )
+    ice_highlight = color_blend(ice_highlight, solid_ice_tint, ice_solidity * 0.35)
     land_color = color_blend(land_color, colors["snow"], snow_mask)
-    land_color = color_blend(land_color, colors["ice"], polar_ice)
-    ocean_color_with_ice = color_blend(color, colors["ice"], np.where(~land, polar_ice * 0.72, 0.0))
+    land_ice_strength = np.clip(polar_ice * (0.70 + ice_solidity * 0.42), 0.0, 1.0)
+    land_color = color_blend(land_color, ice_highlight, land_ice_strength)
+    ocean_ice_strength = np.clip(
+        polar_ice * (0.30 + cfg.polar_ice_shelf_strength * 0.45 + ice_solidity * 0.46),
+        0.0,
+        1.0,
+    )
+    ocean_color_with_ice = color_blend(color, ice_highlight, np.where(~land, ocean_ice_strength, 0.0))
     color = np.where(land[..., None], land_color, ocean_color_with_ice)
 
     base_land_height = smoothstep(threshold - cfg.continent_contrast, threshold + cfg.continent_contrast, land_field)
     height = np.where(land, 0.38 + base_land_height * 0.20, 0.18 - ocean_depth * 0.18)
     height += np.where(land, mountain_mask * cfg.mountain_height * 0.36, 0.0)
     height += np.where(land, shoreline * 0.025, 0.0)
+    height += np.where(
+        land,
+        polar_ice * (0.018 + ice_solidity * 0.034 + ice_texture * 0.026),
+        polar_ice * cfg.polar_ice_shelf_strength * (0.008 + ice_solidity * 0.014),
+    )
     raw_height = height
     height = normalize01(raw_height, height_range)
 
     roughness = np.where(land, 0.72, 0.24)
     roughness = roughness + mountain_mask * 0.12 - shelf * 0.07
+    roughness = roughness + polar_ice * (0.06 + ice_solidity * 0.12 + ice_texture * 0.16)
     roughness = np.clip(roughness, 0.0, 1.0)
 
     maps = {
