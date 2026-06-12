@@ -23,7 +23,8 @@ Quad-sphere output:
     Writes six face folders under quad_sphere/:
         px, nx, py, ny, pz, nz
 
-    Also writes 4x3 cubemap-cross atlases under quad_sphere/:
+    Also writes transparent 3x4 cubemap-cross atlases under quad_sphere/,
+    rotated 90 degrees clockwise from the original 4x3 layout:
         color_cubemap_cross.png, height_cubemap_cross.png, ...
 """
 
@@ -425,6 +426,16 @@ def save_gray(path, arr):
     Image.fromarray(arr, "L").save(path)
 
 
+def save_rgba(path, arr):
+    arr = np.clip(arr, 0, 255).astype(np.uint8)
+    Image.fromarray(arr, "RGBA").save(path)
+
+
+def save_luminance_alpha(path, arr):
+    arr = np.clip(arr * 255.0, 0, 255).astype(np.uint8)
+    Image.fromarray(arr, "LA").save(path)
+
+
 def normal_from_height(height, strength=5.0, wrap_x=True):
     if wrap_x:
         dx = np.roll(height, -1, axis=1) - np.roll(height, 1, axis=1)
@@ -700,27 +711,32 @@ CUBEMAP_CROSS_LAYOUT = {
 def build_cubemap_cross(faces, map_name, face_size):
     sample = faces["px"][map_name]
     if sample.ndim == 3:
-        cross = np.zeros((face_size * 3, face_size * 4, sample.shape[2]), dtype=sample.dtype)
+        cross = np.zeros((face_size * 3, face_size * 4, sample.shape[2] + 1), dtype=sample.dtype)
         if map_name == "normal":
-            cross[:, :] = np.array([128.0, 128.0, 255.0], dtype=sample.dtype)
+            cross[:, :, :3] = np.array([128.0, 128.0, 255.0], dtype=sample.dtype)
     else:
-        cross = np.zeros((face_size * 3, face_size * 4), dtype=sample.dtype)
+        cross = np.zeros((face_size * 3, face_size * 4, 2), dtype=sample.dtype)
 
     for face, (col, row) in CUBEMAP_CROSS_LAYOUT.items():
         y0 = row * face_size
         x0 = col * face_size
-        cross[y0 : y0 + face_size, x0 : x0 + face_size] = faces[face][map_name]
-    return cross
+        if sample.ndim == 3:
+            cross[y0 : y0 + face_size, x0 : x0 + face_size, :3] = faces[face][map_name]
+            cross[y0 : y0 + face_size, x0 : x0 + face_size, 3] = 255.0
+        else:
+            cross[y0 : y0 + face_size, x0 : x0 + face_size, 0] = faces[face][map_name]
+            cross[y0 : y0 + face_size, x0 : x0 + face_size, 1] = 1.0
+    return np.rot90(cross, k=3)
 
 
 def save_quad_sphere_cubemap_crosses(out_dir, faces, face_size):
     for map_name in QUAD_SPHERE_MAP_NAMES:
         cross = build_cubemap_cross(faces, map_name, face_size)
         path = out_dir / f"{map_name}_cubemap_cross.png"
-        if cross.ndim == 3:
-            save_rgb(path, cross)
+        if cross.shape[2] == 4:
+            save_rgba(path, cross)
         else:
-            save_gray(path, cross)
+            save_luminance_alpha(path, cross)
 
 
 def write_quad_sphere_manifest(out_dir, face_size):
@@ -738,18 +754,18 @@ def write_quad_sphere_manifest(out_dir, face_size):
             "ocean_depth.png",
         ],
         "cubemap_cross": {
-            "layout": "horizontal_cross_4x3",
+            "layout": "horizontal_cross_4x3_rotated_clockwise",
             "size": {
-                "width": face_size * 4,
-                "height": face_size * 3,
+                "width": face_size * 3,
+                "height": face_size * 4,
             },
             "face_cells": {
-                "py": {"column": 1, "row": 0},
-                "nx": {"column": 0, "row": 1},
+                "py": {"column": 2, "row": 1},
+                "nx": {"column": 1, "row": 0},
                 "pz": {"column": 1, "row": 1},
-                "px": {"column": 2, "row": 1},
-                "nz": {"column": 3, "row": 1},
-                "ny": {"column": 1, "row": 2},
+                "px": {"column": 1, "row": 2},
+                "nz": {"column": 1, "row": 3},
+                "ny": {"column": 0, "row": 1},
             },
             "maps": [
                 "quad_sphere/color_cubemap_cross.png",
@@ -761,9 +777,7 @@ def write_quad_sphere_manifest(out_dir, face_size):
                 "quad_sphere/ocean_depth_cubemap_cross.png",
             ],
             "empty_cells": {
-                "color": "black",
-                "normal": "neutral tangent normal RGB 128,128,255",
-                "scalar_maps": "0",
+                "all_maps": "transparent alpha 0",
             },
         },
         "face_vectors": {
