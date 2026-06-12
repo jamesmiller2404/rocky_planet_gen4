@@ -1,0 +1,836 @@
+r"""
+Local browser UI for tuning rocky planet texture parameters.
+
+Run:
+    .\.venv\Scripts\python.exe planet_texture_ui.py
+
+Then open:
+    http://127.0.0.1:8765
+"""
+
+from __future__ import annotations
+
+import base64
+import json
+import re
+import time
+from dataclasses import asdict
+from http import HTTPStatus
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from io import BytesIO
+from pathlib import Path
+from urllib.parse import urlparse
+
+import numpy as np
+from PIL import Image
+
+from rocky_planet_gen import (
+    PRESETS,
+    PlanetConfig,
+    build_maps,
+    build_quad_sphere_maps,
+    render_globe_preview,
+    save_map_set,
+    save_quad_sphere_cubemap_crosses,
+    vary_palette,
+    write_html_preview,
+    write_quad_sphere_manifest,
+)
+
+
+HOST = "127.0.0.1"
+PORT = 8765
+OUTPUT_ROOT = Path("output")
+PREVIEW_GLOBE_SIZE = 560
+
+
+PARAM_GROUPS = [
+    {
+        "name": "Land And Ocean Shape",
+        "params": [
+            ("land_coverage", 0.05, 0.90, 0.01),
+            ("continent_scale", 0.25, 5.00, 0.05),
+            ("continent_detail", 1, 10, 1),
+            ("continent_roughness", 0.20, 0.90, 0.01),
+            ("continent_contrast", 0.05, 0.45, 0.01),
+            ("island_density", 0.00, 1.00, 0.01),
+            ("island_scale", 4.00, 80.00, 0.50),
+            ("island_threshold", 0.20, 0.95, 0.01),
+            ("island_chain_strength", 0.00, 1.00, 0.01),
+        ],
+    },
+    {
+        "name": "Shorelines And Shelves",
+        "params": [
+            ("shoreline_complexity", 0.00, 1.00, 0.01),
+            ("shoreline_noise_scale", 2.00, 60.00, 0.50),
+            ("shoreline_detail", 1, 10, 1),
+            ("shoreline_erosion", 0.00, 0.70, 0.01),
+            ("beach_width", 0.005, 0.120, 0.005),
+            ("shelf_width", 0.02, 0.35, 0.01),
+        ],
+    },
+    {
+        "name": "Biomes And Climate",
+        "params": [
+            ("biome_scale", 1.00, 24.00, 0.25),
+            ("biome_complexity", 1, 10, 1),
+            ("desert_coverage", 0.00, 1.00, 0.01),
+            ("forest_coverage", 0.00, 1.00, 0.01),
+            ("polar_ice_size", 0.00, 0.75, 0.01),
+            ("snow_threshold", 0.20, 1.00, 0.01),
+        ],
+    },
+    {
+        "name": "Mountains And Height",
+        "params": [
+            ("mountain_density", 0.00, 1.00, 0.01),
+            ("mountain_scale", 2.00, 40.00, 0.50),
+            ("mountain_sharpness", 0.00, 1.00, 0.01),
+            ("mountain_height", 0.00, 1.20, 0.01),
+        ],
+    },
+    {
+        "name": "Color Variation",
+        "params": [
+            ("ocean_current_strength", 0.00, 0.60, 0.01),
+            ("land_color_variation", 0.00, 0.70, 0.01),
+            ("ocean_color_variation", 0.00, 0.70, 0.01),
+            ("mineral_tint_strength", 0.00, 0.80, 0.01),
+            ("wetland_tint_strength", 0.00, 0.60, 0.01),
+        ],
+    },
+]
+
+INT_PARAMS = {
+    key
+    for group in PARAM_GROUPS
+    for key, _minimum, _maximum, step in group["params"]
+    if isinstance(step, int)
+}
+
+
+def image_data_url(arr: np.ndarray) -> str:
+    image = Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8), "RGB")
+    buffer = BytesIO()
+    image.save(buffer, format="PNG")
+    encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+    return f"data:image/png;base64,{encoded}"
+
+
+def sanitized_name(value: str, fallback: str) -> str:
+    clean = re.sub(r"[^a-zA-Z0-9_.-]+", "_", value.strip()).strip("._-")
+    return clean or fallback
+
+
+def unique_output_dir(name: str) -> Path:
+    OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
+    base = OUTPUT_ROOT / name
+    if not base.exists():
+        return base
+    suffix = time.strftime("%H%M%S")
+    candidate = OUTPUT_ROOT / f"{name}_{suffix}"
+    counter = 2
+    while candidate.exists():
+        candidate = OUTPUT_ROOT / f"{name}_{suffix}_{counter}"
+        counter += 1
+    return candidate
+
+
+def config_from_payload(payload: dict, preview: bool) -> PlanetConfig:
+    preset = str(payload.get("preset", "earthlike"))
+    if preset not in PRESETS:
+        raise ValueError(f"Unknown preset: {preset}")
+
+    data = dict(PRESETS[preset])
+    params = payload.get("params", {})
+    if not isinstance(params, dict):
+        raise ValueError("params must be an object")
+
+    for key in data:
+        if key in params:
+            value = params[key]
+            data[key] = int(value) if key in INT_PARAMS else float(value)
+
+    if preview:
+        width = int(payload.get("preview_width", 512))
+        height = max(32, width // 2)
+    else:
+        width = int(payload.get("width", 2048))
+        height = int(payload.get("height", 1024))
+
+    if width < 64 or height < 32:
+        raise ValueError("Width must be at least 64 and height must be at least 32.")
+
+    return PlanetConfig(
+        preset=preset,
+        seed=int(payload.get("seed", 42)),
+        width=width,
+        height=height,
+        **data,
+    )
+
+
+def metadata_for_config(cfg: PlanetConfig, projection: str, face_size: int | None = None) -> dict:
+    metadata = asdict(cfg)
+    metadata["output_projection"] = projection
+    if face_size is not None:
+        metadata["quad_sphere_face_size"] = face_size
+    metadata["resolved_palette_rgb"] = {
+        name: [int(round(channel)) for channel in color]
+        for name, color in vary_palette(cfg.seed, cfg.preset).items()
+    }
+    return metadata
+
+
+def save_planet_output(payload: dict) -> Path:
+    cfg = config_from_payload(payload, preview=False)
+    projection = str(payload.get("projection", "equirectangular"))
+    output_name = sanitized_name(
+        str(payload.get("output_name", "")),
+        f"{cfg.preset}_{cfg.seed}_{time.strftime('%Y%m%d_%H%M%S')}",
+    )
+    out_dir = unique_output_dir(output_name)
+    out_dir.mkdir(parents=True, exist_ok=False)
+
+    if projection == "quad_sphere":
+        face_size = int(payload.get("face_size") or min(cfg.width, cfg.height))
+        if face_size < 32:
+            raise ValueError("Quad-sphere face size must be at least 32.")
+        quad_dir = out_dir / "quad_sphere"
+        quad_dir.mkdir(parents=True, exist_ok=True)
+        quad_faces = build_quad_sphere_maps(cfg, face_size)
+        for face, maps in quad_faces.items():
+            face_dir = quad_dir / face
+            face_dir.mkdir(parents=True, exist_ok=True)
+            save_map_set(face_dir, maps)
+        save_quad_sphere_cubemap_crosses(quad_dir, quad_faces, face_size)
+        write_quad_sphere_manifest(out_dir, face_size)
+        metadata = metadata_for_config(cfg, "quad_sphere", face_size)
+    else:
+        maps = build_maps(cfg)
+        save_map_set(out_dir, maps)
+        render_globe_preview(maps["color"], maps["height"], out_dir / "preview.png")
+        write_html_preview(out_dir, f"{cfg.preset} planet preview")
+        metadata = metadata_for_config(cfg, "equirectangular")
+
+    (out_dir / "preset.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    return out_dir
+
+
+def load_preset_json(path_text: str) -> dict:
+    path = Path(path_text)
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    if not path.exists() or path.name != "preset.json":
+        raise ValueError("Choose an existing preset.json file.")
+
+    data = json.loads(path.read_text(encoding="utf-8"))
+    preset = str(data.get("preset", "earthlike"))
+    if preset not in PRESETS:
+        preset = "earthlike"
+    params = {key: data[key] for key in PRESETS[preset] if key in data}
+    return {
+        "preset": preset,
+        "seed": int(data.get("seed", 42)),
+        "width": int(data.get("width", 2048)),
+        "height": int(data.get("height", 1024)),
+        "projection": data.get("output_projection", "equirectangular"),
+        "face_size": int(data.get("quad_sphere_face_size", min(int(data.get("width", 2048)), int(data.get("height", 1024))))),
+        "params": params,
+    }
+
+
+def default_payload() -> dict:
+    return {
+        "presets": sorted(PRESETS),
+        "defaults": PRESETS,
+        "param_groups": [
+            {
+                "name": group["name"],
+                "params": [
+                    {
+                        "key": key,
+                        "label": key.replace("_", " ").title(),
+                        "min": minimum,
+                        "max": maximum,
+                        "step": step,
+                        "integer": key in INT_PARAMS,
+                    }
+                    for key, minimum, maximum, step in group["params"]
+                ],
+            }
+            for group in PARAM_GROUPS
+        ],
+    }
+
+
+class PlanetUiHandler(BaseHTTPRequestHandler):
+    server_version = "PlanetTextureUI/1.0"
+
+    def do_GET(self) -> None:
+        parsed = urlparse(self.path)
+        if parsed.path == "/":
+            self.write_text(UI_HTML, "text/html")
+        elif parsed.path == "/api/defaults":
+            self.write_json(default_payload())
+        else:
+            self.send_error(HTTPStatus.NOT_FOUND)
+
+    def do_POST(self) -> None:
+        parsed = urlparse(self.path)
+        try:
+            payload = self.read_json()
+            if parsed.path == "/api/preview":
+                cfg = config_from_payload(payload, preview=True)
+                maps = build_maps(cfg)
+                tmp_preview = OUTPUT_ROOT / "_ui_preview_globe.png"
+                tmp_preview.parent.mkdir(parents=True, exist_ok=True)
+                render_globe_preview(maps["color"], maps["height"], tmp_preview, size=PREVIEW_GLOBE_SIZE)
+                self.write_json(
+                    {
+                        "color": image_data_url(maps["color"]),
+                        "globe": f"data:image/png;base64,{base64.b64encode(tmp_preview.read_bytes()).decode('ascii')}",
+                        "summary": {
+                            "preset": cfg.preset,
+                            "seed": cfg.seed,
+                            "preview_size": f"{cfg.width}x{cfg.height}",
+                        },
+                    }
+                )
+            elif parsed.path == "/api/save":
+                out_dir = save_planet_output(payload)
+                self.write_json({"output_dir": str(out_dir.resolve())})
+            elif parsed.path == "/api/load":
+                self.write_json(load_preset_json(str(payload.get("path", ""))))
+            else:
+                self.send_error(HTTPStatus.NOT_FOUND)
+        except Exception as exc:
+            self.write_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+
+    def read_json(self) -> dict:
+        length = int(self.headers.get("content-length", "0"))
+        raw = self.rfile.read(length)
+        if not raw:
+            return {}
+        return json.loads(raw.decode("utf-8"))
+
+    def write_json(self, payload: dict, status: HTTPStatus = HTTPStatus.OK) -> None:
+        raw = json.dumps(payload).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+
+    def write_text(self, text: str, content_type: str) -> None:
+        raw = text.encode("utf-8")
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", f"{content_type}; charset=utf-8")
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+
+    def log_message(self, fmt: str, *args) -> None:
+        print(f"{self.address_string()} - {fmt % args}")
+
+
+UI_HTML = r"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rocky Planet Texture UI</title>
+<style>
+:root {
+  color-scheme: dark;
+  --bg: #111214;
+  --panel: #191b1f;
+  --panel-2: #22252b;
+  --line: #343840;
+  --text: #f1f2f3;
+  --muted: #a9b0ba;
+  --accent: #55b7a5;
+  --warn: #e8b85a;
+  --error: #ee6b6e;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+main {
+  display: grid;
+  grid-template-columns: minmax(320px, 410px) minmax(0, 1fr);
+  min-height: 100vh;
+}
+aside {
+  border-right: 1px solid var(--line);
+  background: var(--panel);
+  padding: 16px;
+  overflow: auto;
+  max-height: 100vh;
+}
+.preview {
+  padding: 18px;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 16px;
+}
+h1 {
+  margin: 0 0 14px;
+  font-size: 18px;
+  font-weight: 650;
+}
+h2 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--muted);
+}
+.row {
+  display: grid;
+  grid-template-columns: 1fr 120px;
+  gap: 10px;
+  align-items: center;
+  margin: 10px 0;
+}
+.row label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.row input[type="number"],
+.row input[type="text"],
+select {
+  width: 100%;
+  min-height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #101115;
+  color: var(--text);
+  padding: 6px 8px;
+}
+input[type="range"] {
+  width: 100%;
+}
+details {
+  border-top: 1px solid var(--line);
+  padding: 10px 0;
+}
+summary {
+  cursor: pointer;
+  color: var(--text);
+  font-weight: 650;
+}
+.slider-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 76px;
+  gap: 10px;
+  align-items: center;
+  margin-top: 10px;
+}
+.slider-head span {
+  color: var(--muted);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 14px;
+}
+button {
+  min-height: 36px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel-2);
+  color: var(--text);
+  cursor: pointer;
+}
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #071210;
+  font-weight: 700;
+}
+button:disabled {
+  opacity: 0.55;
+  cursor: progress;
+}
+.image-grid {
+  display: grid;
+  grid-template-columns: minmax(280px, 2fr) minmax(260px, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+figure {
+  margin: 0;
+  background: #07080a;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+figcaption {
+  padding: 8px 10px;
+  color: var(--muted);
+  border-top: 1px solid var(--line);
+}
+img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.status {
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--muted);
+  padding: 10px 12px;
+  overflow-wrap: anywhere;
+}
+.status.error { color: var(--error); }
+.status.ok { color: var(--accent); }
+.status.busy { color: var(--warn); }
+.load-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 76px;
+  gap: 8px;
+  margin-top: 8px;
+}
+@media (max-width: 900px) {
+  main { grid-template-columns: 1fr; }
+  aside { max-height: none; border-right: 0; border-bottom: 1px solid var(--line); }
+  .image-grid { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<main>
+  <aside>
+    <h1>Rocky Planet Texture UI</h1>
+    <section>
+      <div class="row">
+        <label for="preset">Preset</label>
+        <select id="preset"></select>
+      </div>
+      <div class="row">
+        <label for="seed">Seed</label>
+        <input id="seed" type="number" min="0" step="1" value="42">
+      </div>
+      <div class="row">
+        <label for="previewWidth">Preview width</label>
+        <select id="previewWidth">
+          <option>384</option>
+          <option selected>512</option>
+          <option>768</option>
+          <option>1024</option>
+        </select>
+      </div>
+    </section>
+    <div id="paramGroups"></div>
+    <details open>
+      <summary>Save Output</summary>
+      <div class="row">
+        <label for="projection">Projection</label>
+        <select id="projection">
+          <option value="equirectangular">Equirectangular</option>
+          <option value="quad_sphere">Quad-sphere</option>
+        </select>
+      </div>
+      <div class="row">
+        <label for="width">Width</label>
+        <input id="width" type="number" min="64" step="64" value="2048">
+      </div>
+      <div class="row">
+        <label for="height">Height</label>
+        <input id="height" type="number" min="32" step="32" value="1024">
+      </div>
+      <div class="row">
+        <label for="faceSize">Quad face size</label>
+        <input id="faceSize" type="number" min="32" step="32" value="1024">
+      </div>
+      <div class="row">
+        <label for="outputName">Folder name</label>
+        <input id="outputName" type="text" placeholder="auto timestamp">
+      </div>
+      <div class="actions">
+        <button id="resetBtn">Reset Preset</button>
+        <button id="randomSeedBtn">Random Seed</button>
+        <button id="previewBtn">Render Preview</button>
+        <button id="saveBtn" class="primary">Save Texture Output</button>
+      </div>
+      <div class="load-row">
+        <input id="loadPath" type="text" placeholder="output/example/preset.json">
+        <button id="loadBtn">Load</button>
+      </div>
+    </details>
+  </aside>
+  <section class="preview">
+    <div class="status" id="status">Loading controls...</div>
+    <div class="image-grid">
+      <figure>
+        <img id="colorPreview" alt="Color texture preview">
+        <figcaption>color texture preview</figcaption>
+      </figure>
+      <figure>
+        <img id="globePreview" alt="Globe preview">
+        <figcaption>globe preview</figcaption>
+      </figure>
+    </div>
+  </section>
+</main>
+<script>
+let schema = null;
+let debounceTimer = null;
+let inFlight = false;
+
+const els = {
+  preset: document.getElementById("preset"),
+  seed: document.getElementById("seed"),
+  previewWidth: document.getElementById("previewWidth"),
+  width: document.getElementById("width"),
+  height: document.getElementById("height"),
+  projection: document.getElementById("projection"),
+  faceSize: document.getElementById("faceSize"),
+  outputName: document.getElementById("outputName"),
+  status: document.getElementById("status"),
+  colorPreview: document.getElementById("colorPreview"),
+  globePreview: document.getElementById("globePreview"),
+  paramGroups: document.getElementById("paramGroups"),
+  loadPath: document.getElementById("loadPath"),
+};
+
+function setStatus(text, kind = "") {
+  els.status.className = `status ${kind}`;
+  els.status.textContent = text;
+}
+
+function sliderId(key) {
+  return `param_${key}`;
+}
+
+function valueId(key) {
+  return `value_${key}`;
+}
+
+function getDefaults() {
+  return schema.defaults[els.preset.value];
+}
+
+function renderControls() {
+  els.preset.innerHTML = "";
+  for (const preset of schema.presets) {
+    const option = document.createElement("option");
+    option.value = preset;
+    option.textContent = preset;
+    els.preset.appendChild(option);
+  }
+  els.preset.value = "earthlike";
+
+  els.paramGroups.innerHTML = "";
+  for (const group of schema.param_groups) {
+    const details = document.createElement("details");
+    details.open = true;
+    const summary = document.createElement("summary");
+    summary.textContent = group.name;
+    details.appendChild(summary);
+
+    for (const param of group.params) {
+      const head = document.createElement("div");
+      head.className = "slider-head";
+      const label = document.createElement("label");
+      label.htmlFor = sliderId(param.key);
+      label.textContent = param.label;
+      const value = document.createElement("span");
+      value.id = valueId(param.key);
+      head.append(label, value);
+
+      const slider = document.createElement("input");
+      slider.type = "range";
+      slider.id = sliderId(param.key);
+      slider.min = param.min;
+      slider.max = param.max;
+      slider.step = param.step;
+      slider.dataset.key = param.key;
+      slider.dataset.integer = param.integer ? "1" : "0";
+      slider.addEventListener("input", () => {
+        syncValue(param.key);
+        schedulePreview();
+      });
+
+      details.append(head, slider);
+    }
+    els.paramGroups.appendChild(details);
+  }
+  applyPresetDefaults();
+}
+
+function syncValue(key) {
+  const slider = document.getElementById(sliderId(key));
+  const value = document.getElementById(valueId(key));
+  value.textContent = slider.dataset.integer === "1"
+    ? String(parseInt(slider.value, 10))
+    : Number(slider.value).toFixed(3).replace(/0+$/, "").replace(/\.$/, "");
+}
+
+function applyPresetDefaults() {
+  const defaults = getDefaults();
+  for (const key of Object.keys(defaults)) {
+    const slider = document.getElementById(sliderId(key));
+    if (slider) {
+      slider.value = defaults[key];
+      syncValue(key);
+    }
+  }
+  els.outputName.value = "";
+  schedulePreview(0);
+}
+
+function getParams() {
+  const params = {};
+  for (const group of schema.param_groups) {
+    for (const param of group.params) {
+      const slider = document.getElementById(sliderId(param.key));
+      params[param.key] = param.integer ? parseInt(slider.value, 10) : parseFloat(slider.value);
+    }
+  }
+  return params;
+}
+
+function getPayload() {
+  return {
+    preset: els.preset.value,
+    seed: parseInt(els.seed.value, 10) || 0,
+    preview_width: parseInt(els.previewWidth.value, 10),
+    width: parseInt(els.width.value, 10),
+    height: parseInt(els.height.value, 10),
+    projection: els.projection.value,
+    face_size: parseInt(els.faceSize.value, 10),
+    output_name: els.outputName.value,
+    params: getParams(),
+  };
+}
+
+async function postJson(path, payload) {
+  const response = await fetch(path, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(payload),
+  });
+  const data = await response.json();
+  if (!response.ok || data.error) {
+    throw new Error(data.error || `Request failed: ${response.status}`);
+  }
+  return data;
+}
+
+function schedulePreview(delay = 350) {
+  clearTimeout(debounceTimer);
+  debounceTimer = setTimeout(renderPreview, delay);
+}
+
+async function renderPreview() {
+  if (inFlight) {
+    schedulePreview(500);
+    return;
+  }
+  inFlight = true;
+  setButtons(true);
+  setStatus("Rendering preview...", "busy");
+  try {
+    const data = await postJson("/api/preview", getPayload());
+    els.colorPreview.src = data.color;
+    els.globePreview.src = data.globe;
+    setStatus(`Preview ready: ${data.summary.preset}, seed ${data.summary.seed}, ${data.summary.preview_size}`, "ok");
+  } catch (error) {
+    setStatus(error.message, "error");
+  } finally {
+    inFlight = false;
+    setButtons(false);
+  }
+}
+
+function setButtons(disabled) {
+  for (const id of ["previewBtn", "saveBtn", "resetBtn", "randomSeedBtn", "loadBtn"]) {
+    document.getElementById(id).disabled = disabled;
+  }
+}
+
+async function saveOutput() {
+  setButtons(true);
+  setStatus("Saving full texture output...", "busy");
+  try {
+    const data = await postJson("/api/save", getPayload());
+    setStatus(`Saved texture output: ${data.output_dir}`, "ok");
+  } catch (error) {
+    setStatus(error.message, "error");
+  } finally {
+    setButtons(false);
+  }
+}
+
+async function loadPresetJson() {
+  setButtons(true);
+  setStatus("Loading preset.json...", "busy");
+  try {
+    const data = await postJson("/api/load", {path: els.loadPath.value});
+    els.preset.value = data.preset;
+    els.seed.value = data.seed;
+    els.width.value = data.width;
+    els.height.value = data.height;
+    els.projection.value = data.projection === "quad_sphere" ? "quad_sphere" : "equirectangular";
+    els.faceSize.value = data.face_size;
+    for (const [key, value] of Object.entries(data.params)) {
+      const slider = document.getElementById(sliderId(key));
+      if (slider) {
+        slider.value = value;
+        syncValue(key);
+      }
+    }
+    setStatus("Loaded settings.", "ok");
+    schedulePreview(0);
+  } catch (error) {
+    setStatus(error.message, "error");
+  } finally {
+    setButtons(false);
+  }
+}
+
+async function boot() {
+  const response = await fetch("/api/defaults");
+  schema = await response.json();
+  renderControls();
+
+  els.preset.addEventListener("change", applyPresetDefaults);
+  els.seed.addEventListener("change", () => schedulePreview(0));
+  els.previewWidth.addEventListener("change", () => schedulePreview(0));
+  document.getElementById("previewBtn").addEventListener("click", () => schedulePreview(0));
+  document.getElementById("saveBtn").addEventListener("click", saveOutput);
+  document.getElementById("resetBtn").addEventListener("click", applyPresetDefaults);
+  document.getElementById("randomSeedBtn").addEventListener("click", () => {
+    els.seed.value = Math.floor(Math.random() * 1000000);
+    schedulePreview(0);
+  });
+  document.getElementById("loadBtn").addEventListener("click", loadPresetJson);
+}
+
+boot().catch(error => setStatus(error.message, "error"));
+</script>
+</body>
+</html>
+"""
+
+
+def main() -> None:
+    server = ThreadingHTTPServer((HOST, PORT), PlanetUiHandler)
+    print(f"Rocky Planet Texture UI running at http://{HOST}:{PORT}")
+    print("Press Ctrl+C to stop the server.")
+    server.serve_forever()
+
+
+if __name__ == "__main__":
+    main()

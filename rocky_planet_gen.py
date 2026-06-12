@@ -69,6 +69,10 @@ PRESETS = {
         "polar_ice_size": 0.16,
         "snow_threshold": 0.74,
         "ocean_current_strength": 0.18,
+        "land_color_variation": 0.22,
+        "ocean_color_variation": 0.18,
+        "mineral_tint_strength": 0.26,
+        "wetland_tint_strength": 0.16,
     },
     "archipelago": {
         "land_coverage": 0.32,
@@ -97,6 +101,10 @@ PRESETS = {
         "polar_ice_size": 0.08,
         "snow_threshold": 0.82,
         "ocean_current_strength": 0.24,
+        "land_color_variation": 0.26,
+        "ocean_color_variation": 0.24,
+        "mineral_tint_strength": 0.18,
+        "wetland_tint_strength": 0.20,
     },
     "supercontinent": {
         "land_coverage": 0.58,
@@ -125,6 +133,10 @@ PRESETS = {
         "polar_ice_size": 0.20,
         "snow_threshold": 0.70,
         "ocean_current_strength": 0.12,
+        "land_color_variation": 0.24,
+        "ocean_color_variation": 0.14,
+        "mineral_tint_strength": 0.28,
+        "wetland_tint_strength": 0.12,
     },
     "dry_rocky": {
         "land_coverage": 0.68,
@@ -153,6 +165,10 @@ PRESETS = {
         "polar_ice_size": 0.04,
         "snow_threshold": 0.88,
         "ocean_current_strength": 0.08,
+        "land_color_variation": 0.34,
+        "ocean_color_variation": 0.08,
+        "mineral_tint_strength": 0.38,
+        "wetland_tint_strength": 0.06,
     },
     "frozen_ocean": {
         "land_coverage": 0.28,
@@ -181,6 +197,10 @@ PRESETS = {
         "polar_ice_size": 0.48,
         "snow_threshold": 0.48,
         "ocean_current_strength": 0.10,
+        "land_color_variation": 0.16,
+        "ocean_color_variation": 0.16,
+        "mineral_tint_strength": 0.14,
+        "wetland_tint_strength": 0.08,
     },
 }
 
@@ -293,6 +313,10 @@ class PlanetConfig:
     polar_ice_size: float
     snow_threshold: float
     ocean_current_strength: float
+    land_color_variation: float
+    ocean_color_variation: float
+    mineral_tint_strength: float
+    wetland_tint_strength: float
 
 
 def smoothstep(edge0, edge1, x):
@@ -571,6 +595,20 @@ def build_maps_from_vectors(
     ocean_variation = fbm_3d(x, y, z, 18.0, 4, 0.5, cfg.seed + 5111)
     ocean_color = color_blend(colors["deep_ocean"], colors["ocean_mid"], ocean_variation * cfg.ocean_current_strength)
     ocean_color = color_blend(ocean_color, colors["shallow_ocean"], shelf)
+    ocean_texture = fbm_3d(x, y, z, 32.0, 4, 0.52, cfg.seed + 5221)
+    warm_shallow = np.array([46, 168, 150], dtype=np.float32)
+    cold_deep = np.array([8, 28, 78], dtype=np.float32)
+    equator = 1.0 - lat_abs
+    ocean_color = color_blend(
+        ocean_color,
+        warm_shallow,
+        np.clip(shelf * equator * ocean_texture * cfg.ocean_color_variation, 0.0, 0.28),
+    )
+    ocean_color = color_blend(
+        ocean_color,
+        cold_deep,
+        np.clip(ocean_depth * lat_abs * cfg.ocean_color_variation, 0.0, 0.24),
+    )
     color[:] = ocean_color
 
     land_color = color_blend(colors["grass"], colors["dry_plain"], np.clip(biome + desert_bias - 0.45, 0.0, 1.0))
@@ -585,6 +623,42 @@ def build_maps_from_vectors(
     ice_start = max(0.02, 1.0 - cfg.polar_ice_size)
     polar_ice = smoothstep(ice_start, min(1.0, ice_start + 0.12), lat_abs)
     ice_mask = np.maximum(snow_mask, polar_ice)
+
+    soil_noise = fbm_3d(x, y, z, cfg.biome_scale * 2.4, 4, 0.52, cfg.seed + 6221)
+    mineral_noise = fbm_3d(x, y, z, cfg.mountain_scale * 1.7, 4, 0.58, cfg.seed + 6331)
+    cold_lat = smoothstep(0.42, 0.88, lat_abs)
+    arid = np.clip(desert_bias + (1.0 - moisture) * 0.45, 0.0, 1.0)
+    non_ice_land = 1.0 - np.clip(ice_mask, 0.0, 1.0)
+    ochre_tint = np.array([174, 142, 82], dtype=np.float32)
+    rust_tint = np.array([150, 82, 48], dtype=np.float32)
+    dark_wet_tint = np.array([42, 64, 38], dtype=np.float32)
+    cool_tundra_tint = np.array([105, 122, 96], dtype=np.float32)
+    pale_highland_tint = np.array([150, 145, 126], dtype=np.float32)
+    land_color = color_blend(
+        land_color,
+        ochre_tint,
+        np.clip(arid * soil_noise * cfg.land_color_variation * non_ice_land, 0.0, 0.28),
+    )
+    land_color = color_blend(
+        land_color,
+        rust_tint,
+        np.clip(arid * mineral_noise * mountain_mask * cfg.mineral_tint_strength * non_ice_land, 0.0, 0.32),
+    )
+    land_color = color_blend(
+        land_color,
+        dark_wet_tint,
+        np.clip(moisture * (1.0 - mountain_mask) * soil_noise * cfg.wetland_tint_strength * non_ice_land, 0.0, 0.22),
+    )
+    land_color = color_blend(
+        land_color,
+        cool_tundra_tint,
+        np.clip(cold_lat * cfg.land_color_variation * 0.72 * non_ice_land, 0.0, 0.20),
+    )
+    land_color = color_blend(
+        land_color,
+        pale_highland_tint,
+        np.clip(mountain_mask * mineral_noise * cfg.land_color_variation * 0.72 * non_ice_land, 0.0, 0.22),
+    )
     land_color = color_blend(land_color, colors["snow"], snow_mask)
     land_color = color_blend(land_color, colors["ice"], polar_ice)
     ocean_color_with_ice = color_blend(color, colors["ice"], np.where(~land, polar_ice * 0.72, 0.0))

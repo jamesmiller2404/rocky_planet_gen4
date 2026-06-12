@@ -1,0 +1,194 @@
+# Rocky Planet Generator Options
+
+This file documents the command-line options for `rocky_planet_gen.py`.
+
+Basic usage:
+
+```powershell
+.\.venv\Scripts\python.exe rocky_planet_gen.py --preset earthlike --seed 42 --width 2048 --height 1024 --out output/earthlike
+```
+
+The generator writes baked texture maps and preview files. All preset options can be overridden from the command line by using the option name with hyphens instead of underscores.
+
+Example:
+
+```powershell
+.\.venv\Scripts\python.exe rocky_planet_gen.py --preset dry_rocky --land-coverage 0.72 --mineral-tint-strength 0.50 --out output/dry_custom
+```
+
+## Core Options
+
+| Option | Default | Description |
+| --- | ---: | --- |
+| `--preset` | `earthlike` | Starting planet recipe. Choices: `archipelago`, `dry_rocky`, `earthlike`, `frozen_ocean`, `supercontinent`. |
+| `--seed` | `42` | Random seed. Same seed and same options produce the same maps. |
+| `--width` | `2048` | Equirectangular output width in pixels. Minimum `64`. |
+| `--height` | `1024` | Equirectangular output height in pixels. Minimum `32`. |
+| `--out` | `planet_output` | Output directory. Created if it does not exist. |
+| `--quad-sphere` | off | Writes six cube/quad-sphere face folders instead of only equirectangular maps. |
+| `--face-size` | `min(width, height)` | Quad-sphere face size in pixels. Minimum `32` when `--quad-sphere` is used. |
+
+## Outputs
+
+For normal equirectangular output:
+
+| File | Description |
+| --- | --- |
+| `color.png` | Main color/albedo texture. |
+| `height.png` | Normalized height map. |
+| `normal.png` | Normal map derived from height. |
+| `roughness.png` | Roughness map. Land is rougher; water is smoother. |
+| `land_mask.png` | White land, black ocean. |
+| `shoreline_mask.png` | Shoreline/beach influence mask. |
+| `ocean_depth.png` | Ocean depth mask. |
+| `preview.png` | Rendered globe preview. |
+| `preview.html` | Interactive rotating globe preview using `color.png`. |
+| `preset.json` | Resolved config, output projection, and seed-varied palette. |
+
+For quad-sphere output, the generator writes face folders under `quad_sphere/`:
+
+```text
+quad_sphere/px
+quad_sphere/nx
+quad_sphere/py
+quad_sphere/ny
+quad_sphere/pz
+quad_sphere/nz
+```
+
+It also writes cubemap-cross atlases such as `quad_sphere/color_cubemap_cross.png`.
+
+## Presets
+
+| Preset | Best For |
+| --- | --- |
+| `earthlike` | Balanced continents, oceans, forests, deserts, mountains, and ice. |
+| `archipelago` | Many islands, complex shorelines, shallow-water color variation. |
+| `supercontinent` | Large landmass, fewer islands, more dry interior terrain. |
+| `dry_rocky` | High land coverage, strong deserts, exposed rock, minimal ice and wetland tinting. |
+| `frozen_ocean` | Low land coverage, large polar ice, cold terrain, subdued land color variation. |
+
+## Land And Ocean Shape
+
+| Option | Earthlike Default | Description |
+| --- | ---: | --- |
+| `--land-coverage` | `0.46` | Approximate fraction of the planet covered by land. Higher values create more land. |
+| `--continent-scale` | `1.55` | Size of major continent forms. Lower values create broader continents; higher values create smaller, busier continents. |
+| `--continent-detail` | `7` | Number of noise octaves used for continent shape. Higher values add finer detail. |
+| `--continent-roughness` | `0.58` | How strongly continent detail persists across octaves. Higher values make more rugged coastlines. |
+| `--continent-contrast` | `0.19` | Height transition range around land. Higher values broaden elevation variation. |
+| `--island-density` | `0.38` | Amount of island land outside the main continents. |
+| `--island-scale` | `34.0` | Island pattern scale. Higher values create smaller, more frequent island features. |
+| `--island-threshold` | `0.73` | Noise cutoff for island creation. Lower values create more islands. |
+| `--island-chain-strength` | `0.35` | Strength of chain-like island alignment. |
+
+## Shorelines And Shelves
+
+| Option | Earthlike Default | Description |
+| --- | ---: | --- |
+| `--shoreline-complexity` | `0.62` | How much extra noise distorts coastlines. |
+| `--shoreline-noise-scale` | `18.0` | Scale of shoreline detail. Higher values create smaller coastal features. |
+| `--shoreline-detail` | `5` | Number of noise octaves used for coast detail. |
+| `--shoreline-erosion` | `0.18` | Pulls back land around shorelines. Higher values can reduce land and roughen coast shape. |
+| `--beach-width` | `0.045` | Width of the beach/shoreline color band on land. |
+| `--shelf-width` | `0.14` | Width of shallow ocean shelves around land. Affects shallow-water color and ocean depth. |
+
+## Biomes And Climate
+
+| Option | Earthlike Default | Description |
+| --- | ---: | --- |
+| `--biome-scale` | `8.0` | Scale of biome patches. Higher values create smaller, more frequent climate regions. |
+| `--biome-complexity` | `6` | Noise octaves for biome variation. |
+| `--desert-coverage` | `0.27` | Desert/dry terrain bias. Higher values increase tan and ochre regions. |
+| `--forest-coverage` | `0.56` | Forest/wet terrain bias. Higher values increase green and dark wet regions. |
+| `--polar-ice-size` | `0.16` | Size of polar ice caps. Higher values push ice farther from the poles. |
+| `--snow-threshold` | `0.74` | Threshold for mountain/high-latitude snow. Lower values create more snow. |
+
+## Mountains And Height
+
+| Option | Earthlike Default | Description |
+| --- | ---: | --- |
+| `--mountain-density` | `0.42` | Amount of mountainous terrain. Higher values create more mountains. |
+| `--mountain-scale` | `16.0` | Scale of mountain ridge patterns. Higher values create smaller, more frequent ridges. |
+| `--mountain-sharpness` | `0.68` | Ridge sharpness. Higher values make tighter, sharper mountain features. |
+| `--mountain-height` | `0.62` | Height contribution from mountains. Higher values make stronger height-map relief. |
+
+## Color Variation
+
+These controls affect `color.png` only. They do not change land shape, height, normal, masks, or roughness.
+
+| Option | Earthlike Default | Description |
+| --- | ---: | --- |
+| `--ocean-current-strength` | `0.18` | Existing broad ocean color variation between deep and mid ocean colors. |
+| `--land-color-variation` | `0.22` | Overall strength of contextual land tints such as ochre soil, tundra, and pale highlands. |
+| `--ocean-color-variation` | `0.18` | Strength of warm shallow equatorial water and cold deep/polar water tinting. |
+| `--mineral-tint-strength` | `0.26` | Rust/mineral tint on dry mountainous terrain. |
+| `--wetland-tint-strength` | `0.16` | Darker wet lowland tint in moist regions. |
+
+Useful color variation ranges:
+
+| Value | Effect |
+| ---: | --- |
+| `0.00` | Disable that variation. |
+| `0.10` | Subtle. |
+| `0.20` | Normal. |
+| `0.35` | Strong. |
+| `0.50` or higher | Stylized; may overpower the base palette. |
+
+Examples:
+
+```powershell
+# Strong rusty dry world
+.\.venv\Scripts\python.exe rocky_planet_gen.py --preset dry_rocky --seed 77 --land-color-variation 0.45 --mineral-tint-strength 0.55 --wetland-tint-strength 0.02 --out output/dry_rusty
+
+# Lush island world with stronger shallow-water and wetland color
+.\.venv\Scripts\python.exe rocky_planet_gen.py --preset archipelago --seed 88 --land-color-variation 0.30 --ocean-color-variation 0.30 --wetland-tint-strength 0.28 --out output/lush_archipelago
+
+# Disable the new contextual color variation while keeping the base palette randomization
+.\.venv\Scripts\python.exe rocky_planet_gen.py --preset earthlike --land-color-variation 0 --ocean-color-variation 0 --mineral-tint-strength 0 --wetland-tint-strength 0 --out output/plain_color
+```
+
+## Preset Defaults
+
+| Option | earthlike | archipelago | supercontinent | dry_rocky | frozen_ocean |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `land_coverage` | `0.46` | `0.32` | `0.58` | `0.68` | `0.28` |
+| `continent_scale` | `1.55` | `2.75` | `0.95` | `1.35` | `1.85` |
+| `continent_detail` | `7` | `8` | `7` | `8` | `6` |
+| `continent_roughness` | `0.58` | `0.66` | `0.52` | `0.64` | `0.50` |
+| `continent_contrast` | `0.19` | `0.15` | `0.23` | `0.20` | `0.18` |
+| `shoreline_complexity` | `0.62` | `0.86` | `0.48` | `0.55` | `0.40` |
+| `shoreline_noise_scale` | `18.0` | `28.0` | `13.0` | `21.0` | `12.0` |
+| `shoreline_detail` | `5` | `6` | `5` | `6` | `4` |
+| `shoreline_erosion` | `0.18` | `0.34` | `0.12` | `0.22` | `0.10` |
+| `beach_width` | `0.045` | `0.06` | `0.035` | `0.025` | `0.02` |
+| `shelf_width` | `0.14` | `0.18` | `0.11` | `0.08` | `0.10` |
+| `island_density` | `0.38` | `0.82` | `0.16` | `0.12` | `0.18` |
+| `island_scale` | `34.0` | `48.0` | `26.0` | `30.0` | `22.0` |
+| `island_threshold` | `0.73` | `0.64` | `0.80` | `0.82` | `0.78` |
+| `island_chain_strength` | `0.35` | `0.74` | `0.22` | `0.28` | `0.24` |
+| `biome_scale` | `8.0` | `12.0` | `6.5` | `10.0` | `7.0` |
+| `biome_complexity` | `6` | `7` | `6` | `7` | `5` |
+| `desert_coverage` | `0.27` | `0.18` | `0.46` | `0.72` | `0.10` |
+| `forest_coverage` | `0.56` | `0.66` | `0.36` | `0.12` | `0.18` |
+| `mountain_density` | `0.42` | `0.34` | `0.55` | `0.62` | `0.38` |
+| `mountain_scale` | `16.0` | `20.0` | `11.0` | `18.0` | `13.0` |
+| `mountain_sharpness` | `0.68` | `0.55` | `0.78` | `0.86` | `0.60` |
+| `mountain_height` | `0.62` | `0.42` | `0.78` | `0.86` | `0.38` |
+| `polar_ice_size` | `0.16` | `0.08` | `0.20` | `0.04` | `0.48` |
+| `snow_threshold` | `0.74` | `0.82` | `0.70` | `0.88` | `0.48` |
+| `ocean_current_strength` | `0.18` | `0.24` | `0.12` | `0.08` | `0.10` |
+| `land_color_variation` | `0.22` | `0.26` | `0.24` | `0.34` | `0.16` |
+| `ocean_color_variation` | `0.18` | `0.24` | `0.14` | `0.08` | `0.16` |
+| `mineral_tint_strength` | `0.26` | `0.18` | `0.28` | `0.38` | `0.14` |
+| `wetland_tint_strength` | `0.16` | `0.20` | `0.12` | `0.06` | `0.08` |
+
+## Tuning Notes
+
+- Start with a preset, then change only one or two options at a time.
+- Use `--seed` to explore different layouts without changing the planet recipe.
+- Use `--land-coverage`, `--continent-scale`, and `--island-density` for large-scale layout changes.
+- Use `--biome-scale`, `--desert-coverage`, and `--forest-coverage` for climate and surface character.
+- Use `--mountain-density`, `--mountain-scale`, and `--mountain-height` for relief and ruggedness.
+- Use the color variation options when the shape is good but the texture feels too uniform.
+- The resolved settings for each run are saved in `preset.json`, which is the easiest way to reproduce or compare outputs.
