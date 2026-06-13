@@ -39,6 +39,7 @@ from pathlib import Path
 
 import numpy as np
 from PIL import Image
+from scipy import ndimage
 
 
 PRESETS = {
@@ -58,6 +59,10 @@ PRESETS = {
         "island_scale": 34.0,
         "island_threshold": 0.73,
         "island_chain_strength": 0.35,
+        "island_min_continent_distance": 0.012,
+        "island_max_continent_distance": 0.0,
+        "island_min_area": 0.00001,
+        "island_max_area": 0.006,
         "biome_scale": 8.0,
         "biome_complexity": 6,
         "desert_coverage": 0.27,
@@ -99,6 +104,10 @@ PRESETS = {
         "island_scale": 48.0,
         "island_threshold": 0.64,
         "island_chain_strength": 0.74,
+        "island_min_continent_distance": 0.008,
+        "island_max_continent_distance": 0.0,
+        "island_min_area": 0.000005,
+        "island_max_area": 0.004,
         "biome_scale": 12.0,
         "biome_complexity": 7,
         "desert_coverage": 0.18,
@@ -140,6 +149,10 @@ PRESETS = {
         "island_scale": 26.0,
         "island_threshold": 0.80,
         "island_chain_strength": 0.22,
+        "island_min_continent_distance": 0.018,
+        "island_max_continent_distance": 0.0,
+        "island_min_area": 0.00002,
+        "island_max_area": 0.010,
         "biome_scale": 6.5,
         "biome_complexity": 6,
         "desert_coverage": 0.46,
@@ -181,6 +194,10 @@ PRESETS = {
         "island_scale": 30.0,
         "island_threshold": 0.82,
         "island_chain_strength": 0.28,
+        "island_min_continent_distance": 0.018,
+        "island_max_continent_distance": 0.0,
+        "island_min_area": 0.00002,
+        "island_max_area": 0.008,
         "biome_scale": 10.0,
         "biome_complexity": 7,
         "desert_coverage": 0.72,
@@ -222,6 +239,10 @@ PRESETS = {
         "island_scale": 22.0,
         "island_threshold": 0.78,
         "island_chain_strength": 0.24,
+        "island_min_continent_distance": 0.014,
+        "island_max_continent_distance": 0.0,
+        "island_min_area": 0.00002,
+        "island_max_area": 0.007,
         "biome_scale": 7.0,
         "biome_complexity": 5,
         "desert_coverage": 0.10,
@@ -347,6 +368,10 @@ class PlanetConfig:
     island_scale: float
     island_threshold: float
     island_chain_strength: float
+    island_min_continent_distance: float
+    island_max_continent_distance: float
+    island_min_area: float
+    island_max_area: float
     biome_scale: float
     biome_complexity: int
     desert_coverage: float
@@ -391,6 +416,34 @@ def normalize01(a, value_range=None):
     if amax - amin < 1e-9:
         return np.zeros_like(a)
     return (a - amin) / (amax - amin)
+
+
+def distance_from_mask(mask, wrap_x=False):
+    if not np.any(mask):
+        return np.full(mask.shape, np.inf, dtype=np.float32)
+    if wrap_x:
+        tiled = np.concatenate([mask, mask, mask], axis=1)
+        distances = ndimage.distance_transform_edt(~tiled)
+        width = mask.shape[1]
+        return distances[:, width : width * 2].astype(np.float32)
+    return ndimage.distance_transform_edt(~mask).astype(np.float32)
+
+
+def filter_land_components(mask, min_area_fraction, max_area_fraction):
+    if not np.any(mask):
+        return mask
+    structure = np.ones((3, 3), dtype=np.uint8)
+    labels, label_count = ndimage.label(mask, structure=structure)
+    if label_count == 0:
+        return np.zeros_like(mask, dtype=bool)
+
+    counts = np.bincount(labels.ravel())
+    total = float(mask.size)
+    min_pixels = max(1, int(math.ceil(max(0.0, min_area_fraction) * total)))
+    max_pixels = math.inf if max_area_fraction <= 0.0 else max(1, int(math.floor(max_area_fraction * total)))
+    keep = (counts >= min_pixels) & (counts <= max_pixels)
+    keep[0] = False
+    return keep[labels]
 
 
 def hash_noise(ix, iy, iz, seed):
@@ -679,14 +732,34 @@ def build_maps_from_vectors(
     )
     island_field = lerp(island_noise, island_noise * 0.72 + chain * 0.28, cfg.island_chain_strength)
     island_gate = fbm_3d(x, y, z, max(2.0, cfg.island_scale * 0.18), 3, 0.54, cfg.seed + 1881)
+    map_height, map_width = x.shape
+    distance_unit = float(max(1, min(map_height, map_width)))
+    continent_distance = distance_from_mask(continent_land, wrap_x=normal_wrap_x) / distance_unit
+    island_zone = continent_distance >= max(0.0, cfg.island_min_continent_distance)
+    if cfg.island_max_continent_distance > 0.0:
+        island_zone &= continent_distance <= cfg.island_max_continent_distance
+
     island_cutoff = np.clip(cfg.island_threshold - cfg.island_density * 0.22, 0.20, 0.96)
-    island_land = (island_field > island_cutoff) & (island_gate > 0.42) & (~continent_land)
+    island_candidate = (island_field > island_cutoff) & (island_gate > 0.42) & island_zone & (~continent_land)
+    island_land = filter_land_components(island_candidate, cfg.island_min_area, cfg.island_max_area)
     land = continent_land | island_land
 
-    shoreline_distance = np.abs(land_field - threshold)
-    shoreline = 1.0 - smoothstep(0.0, max(cfg.beach_width, 0.005), shoreline_distance)
-    shoreline = np.where(land, shoreline, shoreline * 0.55)
-    shelf = 1.0 - smoothstep(0.0, max(cfg.shelf_width, 0.005), np.clip(threshold - land_field, 0.0, 10.0))
+    continent_shoreline_distance = np.abs(land_field - threshold)
+    continent_shoreline = 1.0 - smoothstep(0.0, max(cfg.beach_width, 0.005), continent_shoreline_distance)
+    island_distance = distance_from_mask(island_land, wrap_x=normal_wrap_x) / distance_unit
+    island_interior_distance = distance_from_mask(~island_land, wrap_x=normal_wrap_x) / distance_unit
+    island_shoreline = np.maximum(
+        np.where(island_land, 1.0 - smoothstep(0.0, max(cfg.beach_width, 0.005), island_interior_distance), 0.0),
+        np.where(~land, 1.0 - smoothstep(0.0, max(cfg.beach_width, 0.005), island_distance), 0.0),
+    )
+    shoreline = np.maximum(
+        np.where(continent_land, continent_shoreline, continent_shoreline * 0.55),
+        np.where(land, island_shoreline, island_shoreline * 0.55),
+    )
+
+    continent_shelf = 1.0 - smoothstep(0.0, max(cfg.shelf_width, 0.005), np.clip(threshold - land_field, 0.0, 10.0))
+    island_shelf = 1.0 - smoothstep(0.0, max(cfg.shelf_width, 0.005), island_distance)
+    shelf = np.maximum(continent_shelf, island_shelf)
     shelf = np.where(~land, shelf, 0.0)
     ocean_depth = np.where(land, 0.0, 1.0 - shelf * 0.75)
 
@@ -707,7 +780,6 @@ def build_maps_from_vectors(
     mountain_mask = smoothstep(mountain_cut, min(1.0, mountain_cut + 0.28), ridge)
     mountain_mask *= smoothstep(0.45, 0.76, mountain_gate)
 
-    map_height, map_width = x.shape
     color = np.zeros((map_height, map_width, 3), dtype=np.float32)
     ocean_variation = fbm_3d(x, y, z, 18.0, 4, 0.5, cfg.seed + 5111)
     ocean_color = color_blend(colors["deep_ocean"], colors["ocean_mid"], ocean_variation * cfg.ocean_current_strength)
@@ -780,7 +852,10 @@ def build_maps_from_vectors(
         rust_tint,
         np.clip(mineral_noise * mineral_exposure * cfg.mineral_tint_strength * non_ice_land, 0.0, 0.58),
     )
-    lowland = 1.0 - smoothstep(threshold, threshold + cfg.continent_contrast * 1.8, land_field)
+    island_base = smoothstep(island_cutoff, min(1.0, island_cutoff + cfg.continent_contrast * 1.8), island_field)
+    continent_lowland = 1.0 - smoothstep(threshold, threshold + cfg.continent_contrast * 1.8, land_field)
+    island_lowland = 1.0 - island_base
+    lowland = np.where(island_land, island_lowland, continent_lowland)
     exposed_dry = np.clip(arid * (0.65 + mountain_mask * 0.35) * (0.45 + soil_noise * 0.55), 0.0, 1.0)
     basalt_exposure = np.clip((mountain_mask * 0.65 + mineral_noise * 0.35) * smoothstep(0.48, 0.90, mineral_noise), 0.0, 1.0)
     salt_basin = np.clip(arid * lowland * smoothstep(0.45, 0.95, soil_noise) * (1.0 - moisture * 0.55), 0.0, 1.0)
@@ -824,7 +899,8 @@ def build_maps_from_vectors(
     ocean_color_with_ice = color_blend(color, ice_highlight, np.where(~land, ocean_ice_strength, 0.0))
     color = np.where(land[..., None], land_color, ocean_color_with_ice)
 
-    base_land_height = smoothstep(threshold - cfg.continent_contrast, threshold + cfg.continent_contrast, land_field)
+    continent_base_land_height = smoothstep(threshold - cfg.continent_contrast, threshold + cfg.continent_contrast, land_field)
+    base_land_height = np.where(island_land, island_base, continent_base_land_height)
     height = np.where(land, 0.38 + base_land_height * 0.20, 0.18 - ocean_depth * 0.18)
     height += np.where(land, mountain_mask * cfg.mountain_height * 0.36, 0.0)
     height += np.where(land, shoreline * 0.025, 0.0)
@@ -854,6 +930,8 @@ def build_maps_from_vectors(
         maps["_land_field"] = land_field
         maps["_moisture_input"] = moisture_input
         maps["_raw_height"] = raw_height
+        maps["_continent_land"] = continent_land.astype(np.float32)
+        maps["_island_land"] = island_land.astype(np.float32)
     return maps
 
 

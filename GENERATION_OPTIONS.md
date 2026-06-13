@@ -79,8 +79,12 @@ It also writes cubemap-cross atlases such as `quad_sphere/color_cubemap_cross.pn
 | `--continent-contrast` | `0.19` | Height transition range around land. Higher values broaden elevation variation. |
 | `--island-density` | `0.38` | Amount of island land outside the main continents. |
 | `--island-scale` | `34.0` | Island pattern scale. Higher values create smaller, more frequent island features. |
-| `--island-threshold` | `0.73` | Noise cutoff for island creation. Lower values create more islands. |
+| `--island-threshold` | `0.73` | Noise cutoff for detached island candidates. Lower values create more candidates before distance and size filtering. |
 | `--island-chain-strength` | `0.35` | Strength of chain-like island alignment. |
+| `--island-min-continent-distance` | `0.012` | Minimum normalized map distance from continent land. Higher values keep islands farther from mainland coastlines. |
+| `--island-max-continent-distance` | `0.0` | Optional maximum normalized map distance from continent land. `0.0` disables the limit; positive values form coastal island belts. |
+| `--island-min-area` | `0.00001` | Minimum island component area as a fraction of the map. Smaller detached specks are discarded. |
+| `--island-max-area` | `0.006` | Maximum island component area as a fraction of the map. Larger detached masses are suppressed instead of becoming continents. |
 
 ## Shorelines And Shelves
 
@@ -176,6 +180,10 @@ Examples:
 | `island_scale` | `34.0` | `48.0` | `26.0` | `30.0` | `22.0` |
 | `island_threshold` | `0.73` | `0.64` | `0.80` | `0.82` | `0.78` |
 | `island_chain_strength` | `0.35` | `0.74` | `0.22` | `0.28` | `0.24` |
+| `island_min_continent_distance` | `0.012` | `0.008` | `0.018` | `0.018` | `0.014` |
+| `island_max_continent_distance` | `0.0` | `0.0` | `0.0` | `0.0` | `0.0` |
+| `island_min_area` | `0.00001` | `0.000005` | `0.00002` | `0.00002` | `0.00002` |
+| `island_max_area` | `0.006` | `0.004` | `0.010` | `0.008` | `0.007` |
 | `biome_scale` | `8.0` | `12.0` | `6.5` | `10.0` | `7.0` |
 | `biome_complexity` | `6` | `7` | `6` | `7` | `5` |
 | `desert_coverage` | `0.27` | `0.18` | `0.46` | `0.72` | `0.10` |
@@ -205,7 +213,7 @@ Examples:
 
 - Start with a preset, then change only one or two options at a time.
 - Use `--seed` to explore different layouts without changing the planet recipe.
-- Use `--land-coverage`, `--continent-scale`, and `--island-density` for large-scale layout changes.
+- Use `--land-coverage` and `--continent-scale` for main continent layout. Use `--island-density`, `--island-threshold`, continent-distance limits, and island area limits for detached island systems.
 - Use `--biome-scale`, `--desert-coverage`, and `--forest-coverage` for climate and surface character.
 - Use `--mountain-density`, `--mountain-scale`, and `--mountain-height` for relief and ruggedness.
 - Use the color variation options when the shape is good but the texture feels too uniform.

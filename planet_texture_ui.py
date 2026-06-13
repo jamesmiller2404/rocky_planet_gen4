@@ -57,6 +57,10 @@ PARAM_GROUPS = [
             ("island_scale", 4.00, 80.00, 0.50),
             ("island_threshold", 0.20, 0.95, 0.01),
             ("island_chain_strength", 0.00, 1.00, 0.01),
+            ("island_min_continent_distance", 0.00, 0.08, 0.001),
+            ("island_max_continent_distance", 0.00, 0.50, 0.005),
+            ("island_min_area", 0.00, 0.002, 0.00001),
+            ("island_max_area", 0.0001, 0.05, 0.0001),
         ],
     },
     {
@@ -604,12 +608,33 @@ img {
       </div>
       <p class="hint" id="projectionHint">Quad-sphere saves six face folders and stitched *_cubemap_cross.png atlases, matching the CLI --quad-sphere output.</p>
       <div class="row">
+        <label for="resolutionPreset">Map size preset</label>
+        <select id="resolutionPreset">
+          <option value="1024x512">1024 x 512</option>
+          <option value="2048x1024" selected>2048 x 1024</option>
+          <option value="4096x2048">4096 x 2048</option>
+          <option value="8192x4096">8192 x 4096</option>
+          <option value="custom">Custom</option>
+        </select>
+      </div>
+      <div class="row">
         <label for="width">Width</label>
         <input id="width" type="number" min="64" step="64" value="2048">
       </div>
       <div class="row">
         <label for="height">Height</label>
         <input id="height" type="number" min="32" step="32" value="1024">
+      </div>
+      <div class="row">
+        <label for="faceSizePreset">Quad face preset</label>
+        <select id="faceSizePreset">
+          <option value="256">256</option>
+          <option value="512">512</option>
+          <option value="1024" selected>1024</option>
+          <option value="2048">2048</option>
+          <option value="4096">4096</option>
+          <option value="custom">Custom</option>
+        </select>
       </div>
       <div class="row">
         <label for="faceSize">Quad face size</label>
@@ -662,9 +687,11 @@ const els = {
   preset: document.getElementById("preset"),
   seed: document.getElementById("seed"),
   previewWidth: document.getElementById("previewWidth"),
+  resolutionPreset: document.getElementById("resolutionPreset"),
   width: document.getElementById("width"),
   height: document.getElementById("height"),
   projection: document.getElementById("projection"),
+  faceSizePreset: document.getElementById("faceSizePreset"),
   faceSize: document.getElementById("faceSize"),
   outputName: document.getElementById("outputName"),
   status: document.getElementById("status"),
@@ -693,6 +720,30 @@ const globe = {
   speed: parseFloat(els.globeSpeed.value),
 };
 globe.textureCtx = globe.textureCanvas.getContext("2d", {willReadFrequently: true});
+
+function syncResolutionPreset() {
+  const value = `${parseInt(els.width.value, 10)}x${parseInt(els.height.value, 10)}`;
+  const match = Array.from(els.resolutionPreset.options).some((option) => option.value === value);
+  els.resolutionPreset.value = match ? value : "custom";
+}
+
+function applyResolutionPreset() {
+  if (els.resolutionPreset.value === "custom") return;
+  const [width, height] = els.resolutionPreset.value.split("x");
+  els.width.value = width;
+  els.height.value = height;
+}
+
+function syncFaceSizePreset() {
+  const value = String(parseInt(els.faceSize.value, 10));
+  const match = Array.from(els.faceSizePreset.options).some((option) => option.value === value);
+  els.faceSizePreset.value = match ? value : "custom";
+}
+
+function applyFaceSizePreset() {
+  if (els.faceSizePreset.value === "custom") return;
+  els.faceSize.value = els.faceSizePreset.value;
+}
 
 function setStatus(text, kind = "") {
   els.status.className = `status ${kind}`;
@@ -1032,6 +1083,8 @@ async function loadPresetJson() {
     els.height.value = data.height;
     els.projection.value = data.projection === "quad_sphere" ? "quad_sphere" : "equirectangular";
     els.faceSize.value = data.face_size;
+    syncResolutionPreset();
+    syncFaceSizePreset();
     for (const [key, value] of Object.entries(data.params)) {
       const slider = document.getElementById(sliderId(key));
       if (slider) {
@@ -1057,6 +1110,11 @@ async function boot() {
   els.preset.addEventListener("change", applyPresetDefaults);
   els.seed.addEventListener("change", () => schedulePreview(0));
   els.previewWidth.addEventListener("change", () => schedulePreview(0));
+  els.resolutionPreset.addEventListener("change", applyResolutionPreset);
+  els.width.addEventListener("change", syncResolutionPreset);
+  els.height.addEventListener("change", syncResolutionPreset);
+  els.faceSizePreset.addEventListener("change", applyFaceSizePreset);
+  els.faceSize.addEventListener("change", syncFaceSizePreset);
   document.getElementById("previewBtn").addEventListener("click", () => schedulePreview(0));
   document.getElementById("saveBtn").addEventListener("click", saveOutput);
   document.getElementById("resetBtn").addEventListener("click", applyPresetDefaults);
