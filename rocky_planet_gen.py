@@ -570,7 +570,7 @@ def build_polar_ice_formation(cfg, x, y, z, lat, lon):
         + y * (13.0 + sheet_scale * 1.4)
         + cfg.seed * 0.017
     )
-    floe_field = lerp(floe_noise, floe_noise * 0.72 + floe_chain * 0.28, cfg.island_chain_strength)
+    floe_field = lerp(floe_noise, floe_noise * 0.72 + floe_chain * 0.28, fragmentation)
     floe_gate = fbm_3d(x, y, z, max(1.5, sheet_scale * 2.7), 3, 0.54, cfg.seed + 7441)
     floe_cut = 0.76 - fragmentation * 0.20
     floes = smoothstep(floe_cut, min(0.99, floe_cut + 0.10), floe_field)
@@ -752,43 +752,16 @@ def build_maps_from_vectors(
     )
     continent_land = land_field >= threshold
 
-    island_noise = fbm_3d(x, y, z, cfg.island_scale, 5, 0.66, cfg.seed + 1777)
-    chain = 0.5 + 0.5 * np.sin(
-        lon * (2.0 + cfg.island_scale * 0.06)
-        + y * (12.0 + cfg.island_scale * 0.13)
-        + cfg.seed * 0.017
-    )
-    island_field = lerp(island_noise, island_noise * 0.72 + chain * 0.28, cfg.island_chain_strength)
-    island_gate = fbm_3d(x, y, z, max(2.0, cfg.island_scale * 0.18), 3, 0.54, cfg.seed + 1881)
     map_height, map_width = x.shape
-    distance_unit = float(max(1, min(map_height, map_width)))
-    continent_distance = distance_from_mask(continent_land, wrap_x=normal_wrap_x) / distance_unit
-    island_zone = continent_distance >= max(0.0, cfg.island_min_continent_distance)
-    if cfg.island_max_continent_distance > 0.0:
-        island_zone &= continent_distance <= cfg.island_max_continent_distance
-
-    island_cutoff = np.clip(cfg.island_threshold - cfg.island_density * 0.22, 0.20, 0.96)
-    island_candidate = (island_field > island_cutoff) & (island_gate > 0.42) & island_zone & (~continent_land)
-    island_land = filter_land_components(island_candidate, cfg.island_min_area, cfg.island_max_area)
-    land = continent_land | island_land
+    island_land = np.zeros_like(continent_land, dtype=bool)
+    land = continent_land
 
     continent_shoreline_distance = np.abs(land_field - threshold)
     continent_shoreline = 1.0 - smoothstep(0.0, max(cfg.beach_width, 0.005), continent_shoreline_distance)
-    island_distance = distance_from_mask(island_land, wrap_x=normal_wrap_x) / distance_unit
-    island_interior_distance = distance_from_mask(~island_land, wrap_x=normal_wrap_x) / distance_unit
-    island_shoreline = np.maximum(
-        np.where(island_land, 1.0 - smoothstep(0.0, max(cfg.beach_width, 0.005), island_interior_distance), 0.0),
-        np.where(~land, 1.0 - smoothstep(0.0, max(cfg.beach_width, 0.005), island_distance), 0.0),
-    )
-    shoreline = np.maximum(
-        np.where(continent_land, continent_shoreline, continent_shoreline * 0.55),
-        np.where(land, island_shoreline, island_shoreline * 0.55),
-    )
+    shoreline = np.where(land, continent_shoreline, continent_shoreline * 0.55)
 
     continent_shelf = 1.0 - smoothstep(0.0, max(cfg.shelf_width, 0.005), np.clip(threshold - land_field, 0.0, 10.0))
-    island_shelf = 1.0 - smoothstep(0.0, max(cfg.shelf_width, 0.005), island_distance)
-    shelf = np.maximum(continent_shelf, island_shelf)
-    shelf = np.where(~land, shelf, 0.0)
+    shelf = np.where(~land, continent_shelf, 0.0)
     ocean_depth = np.where(land, 0.0, 1.0 - shelf * 0.75)
 
     biome = fbm_3d(x, y, z, cfg.biome_scale, cfg.biome_complexity, 0.57, cfg.seed + 2333)
@@ -880,10 +853,8 @@ def build_maps_from_vectors(
         rust_tint,
         np.clip(mineral_noise * mineral_exposure * cfg.mineral_tint_strength * non_ice_land, 0.0, 0.58),
     )
-    island_base = smoothstep(island_cutoff, min(1.0, island_cutoff + cfg.continent_contrast * 1.8), island_field)
     continent_lowland = 1.0 - smoothstep(threshold, threshold + cfg.continent_contrast * 1.8, land_field)
-    island_lowland = 1.0 - island_base
-    lowland = np.where(island_land, island_lowland, continent_lowland)
+    lowland = continent_lowland
     exposed_dry = np.clip(arid * (0.65 + mountain_mask * 0.35) * (0.45 + soil_noise * 0.55), 0.0, 1.0)
     basalt_exposure = np.clip((mountain_mask * 0.65 + mineral_noise * 0.35) * smoothstep(0.48, 0.90, mineral_noise), 0.0, 1.0)
     salt_basin = np.clip(arid * lowland * smoothstep(0.45, 0.95, soil_noise) * (1.0 - moisture * 0.55), 0.0, 1.0)
@@ -928,7 +899,7 @@ def build_maps_from_vectors(
     color = np.where(land[..., None], land_color, ocean_color_with_ice)
 
     continent_base_land_height = smoothstep(threshold - cfg.continent_contrast, threshold + cfg.continent_contrast, land_field)
-    base_land_height = np.where(island_land, island_base, continent_base_land_height)
+    base_land_height = continent_base_land_height
     height = np.where(land, 0.38 + base_land_height * 0.20, 0.18 - ocean_depth * 0.18)
     height += np.where(land, mountain_mask * cfg.mountain_height * 0.36, 0.0)
     height += np.where(land, shoreline * 0.025, 0.0)

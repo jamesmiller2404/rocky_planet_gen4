@@ -54,13 +54,13 @@ PARAM_GROUPS = [
             ("continent_roughness", 0.20, 0.90, 0.01),
             ("continent_contrast", 0.05, 0.45, 0.01),
             ("island_density", 0.00, 1.00, 0.01),
-            ("island_scale", 4.00, 80.00, 0.50),
-            ("island_threshold", 0.20, 0.95, 0.01),
+            ("island_scale", 0.00, 80.00, 0.50),
+            ("island_threshold", 0.00, 0.95, 0.01),
             ("island_chain_strength", 0.00, 1.00, 0.01),
             ("island_min_continent_distance", 0.00, 0.08, 0.001),
             ("island_max_continent_distance", 0.00, 0.50, 0.005),
             ("island_min_area", 0.00, 0.002, 0.00001),
-            ("island_max_area", 0.0001, 0.05, 0.0001),
+            ("island_max_area", 0.00, 0.05, 0.0001),
         ],
     },
     {
@@ -121,6 +121,21 @@ INT_PARAMS = {
     for key, _minimum, _maximum, step in group["params"]
     if isinstance(step, int)
 }
+
+UI_DEFAULT_OVERRIDES = {
+    key: 0.0
+    for group in PARAM_GROUPS
+    for key, _minimum, _maximum, _step in group["params"]
+    if key.startswith("island_")
+}
+UI_DEFAULT_OVERRIDES["shelf_width"] = 0.08
+
+
+def ui_preset_defaults() -> dict:
+    return {
+        name: {**values, **UI_DEFAULT_OVERRIDES}
+        for name, values in PRESETS.items()
+    }
 
 
 def image_data_url(arr: np.ndarray) -> str:
@@ -268,7 +283,7 @@ def load_preset_json(path_text: str) -> dict:
 def default_payload() -> dict:
     return {
         "presets": sorted(PRESETS),
-        "defaults": PRESETS,
+        "defaults": ui_preset_defaults(),
         "param_groups": [
             {
                 "name": group["name"],
