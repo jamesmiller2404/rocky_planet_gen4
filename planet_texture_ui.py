@@ -28,9 +28,11 @@ from PIL import Image
 from rocky_planet_gen import (
     PRESETS,
     PlanetConfig,
+    TEXTURE_MAP_NAMES,
     build_maps,
     build_quad_sphere_maps,
     render_globe_preview,
+    selected_texture_maps,
     save_map_set,
     save_quad_sphere_cubemap_crosses,
     vary_palette,
@@ -199,9 +201,33 @@ def config_from_payload(payload: dict, preview: bool) -> PlanetConfig:
     )
 
 
-def metadata_for_config(cfg: PlanetConfig, projection: str, face_size: int | None = None) -> dict:
+TEXTURE_MAP_LABELS = {
+    "color": "Color",
+    "height": "Height",
+    "normal": "Normal",
+    "roughness": "Roughness",
+    "land_mask": "Land mask",
+    "shoreline_mask": "Shoreline mask",
+    "ocean_depth": "Ocean depth",
+}
+
+
+def texture_maps_from_payload(payload: dict) -> tuple[str, ...]:
+    requested = payload.get("texture_maps")
+    if not isinstance(requested, list):
+        return TEXTURE_MAP_NAMES
+    return selected_texture_maps(requested)
+
+
+def metadata_for_config(
+    cfg: PlanetConfig,
+    projection: str,
+    face_size: int | None = None,
+    texture_maps: tuple[str, ...] | None = None,
+) -> dict:
     metadata = asdict(cfg)
     metadata["output_projection"] = projection
+    metadata["output_texture_maps"] = list(texture_maps or TEXTURE_MAP_NAMES)
     if face_size is not None:
         metadata["quad_sphere_face_size"] = face_size
     metadata["resolved_palette_rgb"] = {
@@ -214,6 +240,7 @@ def metadata_for_config(cfg: PlanetConfig, projection: str, face_size: int | Non
 def save_planet_output(payload: dict) -> Path:
     cfg = config_from_payload(payload, preview=False)
     projection = str(payload.get("projection", "equirectangular"))
+    texture_maps = texture_maps_from_payload(payload)
     output_name = sanitized_name(
         str(payload.get("output_name", "")),
         f"{cfg.preset}_{cfg.seed}_{time.strftime('%Y%m%d_%H%M%S')}",
@@ -231,16 +258,17 @@ def save_planet_output(payload: dict) -> Path:
         for face, maps in quad_faces.items():
             face_dir = quad_dir / face
             face_dir.mkdir(parents=True, exist_ok=True)
-            save_map_set(face_dir, maps)
-        save_quad_sphere_cubemap_crosses(quad_dir, quad_faces, face_size)
-        write_quad_sphere_manifest(out_dir, face_size)
-        metadata = metadata_for_config(cfg, "quad_sphere", face_size)
+            save_map_set(face_dir, maps, texture_maps)
+        save_quad_sphere_cubemap_crosses(quad_dir, quad_faces, face_size, texture_maps)
+        write_quad_sphere_manifest(out_dir, face_size, texture_maps)
+        metadata = metadata_for_config(cfg, "quad_sphere", face_size, texture_maps)
     else:
         maps = build_maps(cfg)
-        save_map_set(out_dir, maps)
+        save_map_set(out_dir, maps, texture_maps)
         render_globe_preview(maps["color"], maps["height"], out_dir / "preview.png")
-        write_html_preview(out_dir, f"{cfg.preset} planet preview")
-        metadata = metadata_for_config(cfg, "equirectangular")
+        if "color" in texture_maps:
+            write_html_preview(out_dir, f"{cfg.preset} planet preview", texture_maps)
+        metadata = metadata_for_config(cfg, "equirectangular", texture_maps=texture_maps)
 
     (out_dir / "preset.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
     return out_dir
@@ -250,10 +278,18 @@ def output_summary(out_dir: Path) -> dict:
     quad_dir = out_dir / "quad_sphere"
     stitched = sorted(path.name for path in quad_dir.glob("*_cubemap_cross.png")) if quad_dir.exists() else []
     face_dirs = sorted(path.name for path in quad_dir.iterdir() if path.is_dir()) if quad_dir.exists() else []
+    generated_maps = [f"{name}.png" for name in TEXTURE_MAP_NAMES if (out_dir / f"{name}.png").exists()]
+    if quad_dir.exists():
+        generated_maps = [
+            f"{name}.png"
+            for name in TEXTURE_MAP_NAMES
+            if any((quad_dir / face / f"{name}.png").exists() for face in face_dirs)
+        ]
     return {
         "output_dir": str(out_dir.resolve()),
         "quad_sphere_faces": face_dirs,
         "stitched_quad_sphere_maps": stitched,
+        "generated_maps": generated_maps,
     }
 
 
@@ -300,6 +336,10 @@ def default_payload() -> dict:
                 ],
             }
             for group in PARAM_GROUPS
+        ],
+        "texture_maps": [
+            {"key": key, "label": TEXTURE_MAP_LABELS.get(key, key.replace("_", " ").title())}
+            for key in TEXTURE_MAP_NAMES
         ],
     }
 
@@ -581,10 +621,34 @@ img {
   color: var(--muted);
   font-size: 12px;
 }
+.map-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 8px 0 12px;
+}
+.map-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #11151d;
+  color: var(--text);
+  font-size: 13px;
+}
+.map-option input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
 @media (max-width: 900px) {
   main { grid-template-columns: 1fr; }
   aside { max-height: none; border-right: 0; border-bottom: 1px solid var(--line); }
   .image-grid { grid-template-columns: 1fr; }
+  .map-options { grid-template-columns: 1fr; }
 }
 </style>
 </head>
@@ -622,6 +686,9 @@ img {
         </select>
       </div>
       <p class="hint" id="projectionHint">Quad-sphere saves six face folders and stitched *_cubemap_cross.png atlases, matching the CLI --quad-sphere output.</p>
+      <label>Texture maps</label>
+      <div class="map-options" id="textureMapOptions"></div>
+      <p class="hint">Unchecked maps are skipped during save. Color and height are still computed for previews, but only checked maps are written.</p>
       <div class="row">
         <label for="resolutionPreset">Map size preset</label>
         <select id="resolutionPreset">
@@ -716,6 +783,7 @@ const els = {
   globeSpeed: document.getElementById("globeSpeed"),
   globeSpeedValue: document.getElementById("globeSpeedValue"),
   paramGroups: document.getElementById("paramGroups"),
+  textureMapOptions: document.getElementById("textureMapOptions"),
   loadPath: document.getElementById("loadPath"),
 };
 
@@ -825,6 +893,26 @@ function renderControls() {
   applyPresetDefaults();
 }
 
+function renderTextureMapOptions() {
+  els.textureMapOptions.innerHTML = "";
+  for (const map of schema.texture_maps) {
+    const label = document.createElement("label");
+    label.className = "map-option";
+
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.value = map.key;
+    input.checked = true;
+    input.dataset.textureMap = "1";
+
+    const span = document.createElement("span");
+    span.textContent = map.label;
+
+    label.append(input, span);
+    els.textureMapOptions.append(label);
+  }
+}
+
 function syncValue(key) {
   const slider = document.getElementById(sliderId(key));
   const value = document.getElementById(valueId(key));
@@ -857,6 +945,11 @@ function getParams() {
   return params;
 }
 
+function getSelectedTextureMaps() {
+  return Array.from(els.textureMapOptions.querySelectorAll("input[data-texture-map='1']:checked"))
+    .map(input => input.value);
+}
+
 function getPayload() {
   return {
     preset: els.preset.value,
@@ -867,6 +960,7 @@ function getPayload() {
     projection: els.projection.value,
     face_size: parseInt(els.faceSize.value, 10),
     output_name: els.outputName.value,
+    texture_maps: getSelectedTextureMaps(),
     params: getParams(),
   };
 }
@@ -1070,15 +1164,22 @@ function setButtons(disabled) {
 }
 
 async function saveOutput() {
+  const selectedMaps = getSelectedTextureMaps();
+  if (!selectedMaps.length) {
+    setStatus("Choose at least one texture map to save.", "error");
+    return;
+  }
   setButtons(true);
-  setStatus("Saving full texture output...", "busy");
+  setStatus(`Saving ${selectedMaps.length} texture map${selectedMaps.length === 1 ? "" : "s"}...`, "busy");
   try {
     const data = await postJson("/api/save", getPayload());
     const stitched = data.stitched_quad_sphere_maps || [];
+    const generated = data.generated_maps || [];
+    const generatedText = generated.length ? ` Maps: ${generated.join(", ")}` : "";
     if (stitched.length) {
-      setStatus(`Saved quad-sphere output: ${data.output_dir}. Stitched atlases: ${stitched.join(", ")}`, "ok");
+      setStatus(`Saved quad-sphere output: ${data.output_dir}. Stitched atlases: ${stitched.join(", ")}.${generatedText}`, "ok");
     } else {
-      setStatus(`Saved texture output: ${data.output_dir}`, "ok");
+      setStatus(`Saved texture output: ${data.output_dir}.${generatedText}`, "ok");
     }
   } catch (error) {
     setStatus(error.message, "error");
@@ -1120,6 +1221,7 @@ async function boot() {
   const response = await fetch("/api/defaults");
   schema = await response.json();
   renderControls();
+  renderTextureMapOptions();
   bindGlobeControls();
 
   els.preset.addEventListener("change", applyPresetDefaults);

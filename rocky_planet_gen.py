@@ -995,17 +995,7 @@ def build_quad_sphere_maps(cfg, face_size):
     return faces
 
 
-def save_map_set(out_dir, maps):
-    save_rgb(out_dir / "color.png", maps["color"])
-    save_gray(out_dir / "height.png", maps["height"])
-    save_rgb(out_dir / "normal.png", maps["normal"])
-    save_gray(out_dir / "roughness.png", maps["roughness"])
-    save_gray(out_dir / "land_mask.png", maps["land_mask"])
-    save_gray(out_dir / "shoreline_mask.png", maps["shoreline_mask"])
-    save_gray(out_dir / "ocean_depth.png", maps["ocean_depth"])
-
-
-QUAD_SPHERE_MAP_NAMES = (
+TEXTURE_MAP_NAMES = (
     "color",
     "height",
     "normal",
@@ -1014,6 +1004,36 @@ QUAD_SPHERE_MAP_NAMES = (
     "shoreline_mask",
     "ocean_depth",
 )
+
+QUAD_SPHERE_MAP_NAMES = TEXTURE_MAP_NAMES
+
+
+def selected_texture_maps(map_names=None):
+    if map_names is None:
+        return TEXTURE_MAP_NAMES
+    selected = tuple(name for name in TEXTURE_MAP_NAMES if name in set(map_names))
+    if not selected:
+        raise ValueError("Choose at least one texture map to save.")
+    return selected
+
+
+def save_map_set(out_dir, maps, map_names=None):
+    selected = selected_texture_maps(map_names)
+    if "color" in selected:
+        save_rgb(out_dir / "color.png", maps["color"])
+    if "height" in selected:
+        save_gray(out_dir / "height.png", maps["height"])
+    if "normal" in selected:
+        save_rgb(out_dir / "normal.png", maps["normal"])
+    if "roughness" in selected:
+        save_gray(out_dir / "roughness.png", maps["roughness"])
+    if "land_mask" in selected:
+        save_gray(out_dir / "land_mask.png", maps["land_mask"])
+    if "shoreline_mask" in selected:
+        save_gray(out_dir / "shoreline_mask.png", maps["shoreline_mask"])
+    if "ocean_depth" in selected:
+        save_gray(out_dir / "ocean_depth.png", maps["ocean_depth"])
+
 
 CUBEMAP_CROSS_LAYOUT = {
     "py": (1, 0),
@@ -1046,8 +1066,8 @@ def build_cubemap_cross(faces, map_name, face_size):
     return np.rot90(cross, k=3)
 
 
-def save_quad_sphere_cubemap_crosses(out_dir, faces, face_size):
-    for map_name in QUAD_SPHERE_MAP_NAMES:
+def save_quad_sphere_cubemap_crosses(out_dir, faces, face_size, map_names=None):
+    for map_name in selected_texture_maps(map_names):
         cross = build_cubemap_cross(faces, map_name, face_size)
         path = out_dir / f"{map_name}_cubemap_cross.png"
         if cross.shape[2] == 4:
@@ -1056,20 +1076,13 @@ def save_quad_sphere_cubemap_crosses(out_dir, faces, face_size):
             save_luminance_alpha(path, cross)
 
 
-def write_quad_sphere_manifest(out_dir, face_size):
+def write_quad_sphere_manifest(out_dir, face_size, map_names=None):
+    selected = selected_texture_maps(map_names)
     manifest = {
         "layout": "quad_sphere_cubemap_faces",
         "face_size": face_size,
         "faces": ["px", "nx", "py", "ny", "pz", "nz"],
-        "maps": [
-            "color.png",
-            "height.png",
-            "normal.png",
-            "roughness.png",
-            "land_mask.png",
-            "shoreline_mask.png",
-            "ocean_depth.png",
-        ],
+        "maps": [f"{name}.png" for name in selected],
         "cubemap_cross": {
             "layout": "horizontal_cross_4x3_rotated_clockwise",
             "size": {
@@ -1084,15 +1097,7 @@ def write_quad_sphere_manifest(out_dir, face_size):
                 "nz": {"column": 1, "row": 3},
                 "ny": {"column": 0, "row": 1},
             },
-            "maps": [
-                "quad_sphere/color_cubemap_cross.png",
-                "quad_sphere/height_cubemap_cross.png",
-                "quad_sphere/normal_cubemap_cross.png",
-                "quad_sphere/roughness_cubemap_cross.png",
-                "quad_sphere/land_mask_cubemap_cross.png",
-                "quad_sphere/shoreline_mask_cubemap_cross.png",
-                "quad_sphere/ocean_depth_cubemap_cross.png",
-            ],
+            "maps": [f"quad_sphere/{name}_cubemap_cross.png" for name in selected],
             "empty_cells": {
                 "all_maps": "transparent alpha 0",
             },
@@ -1118,7 +1123,11 @@ def write_quad_sphere_manifest(out_dir, face_size):
     (out_dir / "quad_sphere_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
 
-def write_html_preview(out_dir, title):
+def write_html_preview(out_dir, title, map_names=None):
+    map_figures = "\n".join(
+        f'    <figure><img src="{name}.png"><figcaption>{name}.png</figcaption></figure>'
+        for name in selected_texture_maps(map_names)
+    )
     html = f"""<!doctype html>
 <html lang="en">
 <head>
@@ -1142,13 +1151,7 @@ figcaption {{ margin: 6px 0 14px; color: #b9bcc6; }}
   </section>
   <section class="maps">
     <figure><img src="preview.png"><figcaption>preview.png</figcaption></figure>
-    <figure><img src="color.png"><figcaption>color.png</figcaption></figure>
-    <figure><img src="height.png"><figcaption>height.png</figcaption></figure>
-    <figure><img src="normal.png"><figcaption>normal.png</figcaption></figure>
-    <figure><img src="roughness.png"><figcaption>roughness.png</figcaption></figure>
-    <figure><img src="land_mask.png"><figcaption>land_mask.png</figcaption></figure>
-    <figure><img src="shoreline_mask.png"><figcaption>shoreline_mask.png</figcaption></figure>
-    <figure><img src="ocean_depth.png"><figcaption>ocean_depth.png</figcaption></figure>
+{map_figures}
   </section>
 </main>
 <script>
