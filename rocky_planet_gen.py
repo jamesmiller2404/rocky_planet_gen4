@@ -532,6 +532,34 @@ def build_polar_ice_formation(cfg, x, y, z, lat, lon):
         0.62,
         cfg.seed + 7221,
     )
+    cap_edge_noise = fbm_3d(
+        x,
+        y,
+        z,
+        max(0.85, sheet_scale * (0.72 + complexity * 0.36)),
+        max(3, min(6, int(cfg.continent_detail))),
+        0.58,
+        cfg.seed + 7551,
+    )
+    cap_edge_detail = fbm_3d(
+        x,
+        y,
+        z,
+        max(2.2, sheet_scale * (2.8 + fragmentation * 2.4)),
+        4,
+        0.60,
+        cfg.seed + 7661,
+    )
+    edge_distortion = min(0.22, cfg.polar_ice_size * (0.42 + complexity * 0.42 + fragmentation * 0.26))
+    ragged_lat = np.clip(
+        lat_abs
+        + (cap_edge_noise - 0.5) * edge_distortion
+        + (cap_edge_detail - 0.5) * edge_distortion * 0.34
+        + (edge_detail - 0.5) * complexity * 0.035,
+        0.0,
+        1.0,
+    )
+    ragged_lat = np.maximum(ragged_lat, smoothstep(0.985, 1.0, lat_abs))
     ice_field = sheet_field + (edge_detail - 0.5) * complexity * 0.42
     sheet_cut = 0.48 + (1.0 - complexity) * 0.10
     sheet_mask = smoothstep(sheet_cut - 0.12, sheet_cut + 0.16, ice_field)
@@ -549,10 +577,10 @@ def build_polar_ice_formation(cfg, x, y, z, lat, lon):
     floes *= smoothstep(0.38, 0.58, floe_gate)
 
     edge_width = 0.08 + complexity * 0.06
-    outer_gate = smoothstep(max(0.0, ice_start - fragmentation * 0.20), ice_start + edge_width, lat_abs)
-    core_gate = smoothstep(min(0.99, ice_start + edge_width * 0.95), 1.0, lat_abs)
-    sheet_gate = smoothstep(max(0.0, ice_start - complexity * 0.10), ice_start + edge_width * 1.25, lat_abs)
-    floe_gate_lat = smoothstep(max(0.0, ice_start - fragmentation * 0.28), ice_start + edge_width * 0.50, lat_abs)
+    outer_gate = smoothstep(max(0.0, ice_start - fragmentation * 0.20), ice_start + edge_width, ragged_lat)
+    core_gate = smoothstep(min(0.99, ice_start + edge_width * 0.95), 1.0, ragged_lat)
+    sheet_gate = smoothstep(max(0.0, ice_start - complexity * 0.10), ice_start + edge_width * 1.25, ragged_lat)
+    floe_gate_lat = smoothstep(max(0.0, ice_start - fragmentation * 0.28), ice_start + edge_width * 0.50, ragged_lat)
 
     sheet_ice = np.maximum(core_gate, sheet_mask * sheet_gate)
     fragmented_ice = floes * floe_gate_lat * fragmentation
