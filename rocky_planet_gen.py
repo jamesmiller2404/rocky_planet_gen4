@@ -78,6 +78,10 @@ PRESETS = {
         "ocean_color_variation": 0.18,
         "mineral_tint_strength": 0.26,
         "wetland_tint_strength": 0.16,
+        "iron_oxide_tint_strength": 0.12,
+        "basalt_tint_strength": 0.08,
+        "salt_flat_tint_strength": 0.05,
+        "clay_tint_strength": 0.10,
     },
     "archipelago": {
         "land_coverage": 0.32,
@@ -115,6 +119,10 @@ PRESETS = {
         "ocean_color_variation": 0.24,
         "mineral_tint_strength": 0.18,
         "wetland_tint_strength": 0.20,
+        "iron_oxide_tint_strength": 0.08,
+        "basalt_tint_strength": 0.10,
+        "salt_flat_tint_strength": 0.03,
+        "clay_tint_strength": 0.12,
     },
     "supercontinent": {
         "land_coverage": 0.58,
@@ -152,6 +160,10 @@ PRESETS = {
         "ocean_color_variation": 0.14,
         "mineral_tint_strength": 0.28,
         "wetland_tint_strength": 0.12,
+        "iron_oxide_tint_strength": 0.18,
+        "basalt_tint_strength": 0.12,
+        "salt_flat_tint_strength": 0.08,
+        "clay_tint_strength": 0.16,
     },
     "dry_rocky": {
         "land_coverage": 0.68,
@@ -189,6 +201,10 @@ PRESETS = {
         "ocean_color_variation": 0.08,
         "mineral_tint_strength": 0.38,
         "wetland_tint_strength": 0.06,
+        "iron_oxide_tint_strength": 0.30,
+        "basalt_tint_strength": 0.18,
+        "salt_flat_tint_strength": 0.14,
+        "clay_tint_strength": 0.12,
     },
     "frozen_ocean": {
         "land_coverage": 0.28,
@@ -226,6 +242,10 @@ PRESETS = {
         "ocean_color_variation": 0.16,
         "mineral_tint_strength": 0.14,
         "wetland_tint_strength": 0.08,
+        "iron_oxide_tint_strength": 0.05,
+        "basalt_tint_strength": 0.08,
+        "salt_flat_tint_strength": 0.03,
+        "clay_tint_strength": 0.06,
     },
 }
 
@@ -347,6 +367,10 @@ class PlanetConfig:
     ocean_color_variation: float
     mineral_tint_strength: float
     wetland_tint_strength: float
+    iron_oxide_tint_strength: float
+    basalt_tint_strength: float
+    salt_flat_tint_strength: float
+    clay_tint_strength: float
 
 
 def smoothstep(edge0, edge1, x):
@@ -726,6 +750,10 @@ def build_maps_from_vectors(
     dark_wet_tint = np.array([24, 58, 28], dtype=np.float32)
     cool_tundra_tint = np.array([70, 100, 70], dtype=np.float32)
     pale_highland_tint = np.array([118, 112, 94], dtype=np.float32)
+    iron_oxide_tint = np.array([122, 48, 28], dtype=np.float32)
+    basalt_tint = np.array([36, 38, 40], dtype=np.float32)
+    salt_flat_tint = np.array([218, 210, 178], dtype=np.float32)
+    clay_tint = np.array([146, 92, 58], dtype=np.float32)
     land_color = color_blend(
         land_color,
         ochre_tint,
@@ -751,6 +779,31 @@ def build_maps_from_vectors(
         land_color,
         rust_tint,
         np.clip(mineral_noise * mineral_exposure * cfg.mineral_tint_strength * non_ice_land, 0.0, 0.58),
+    )
+    lowland = 1.0 - smoothstep(threshold, threshold + cfg.continent_contrast * 1.8, land_field)
+    exposed_dry = np.clip(arid * (0.65 + mountain_mask * 0.35) * (0.45 + soil_noise * 0.55), 0.0, 1.0)
+    basalt_exposure = np.clip((mountain_mask * 0.65 + mineral_noise * 0.35) * smoothstep(0.48, 0.90, mineral_noise), 0.0, 1.0)
+    salt_basin = np.clip(arid * lowland * smoothstep(0.45, 0.95, soil_noise) * (1.0 - moisture * 0.55), 0.0, 1.0)
+    clay_basin = np.clip((moisture * 0.55 + shoreline * 0.45) * lowland * (1.0 - mountain_mask * 0.70), 0.0, 1.0)
+    land_color = color_blend(
+        land_color,
+        iron_oxide_tint,
+        np.clip(exposed_dry * cfg.iron_oxide_tint_strength * non_ice_land, 0.0, 0.50),
+    )
+    land_color = color_blend(
+        land_color,
+        basalt_tint,
+        np.clip(basalt_exposure * cfg.basalt_tint_strength * non_ice_land, 0.0, 0.54),
+    )
+    land_color = color_blend(
+        land_color,
+        clay_tint,
+        np.clip(clay_basin * cfg.clay_tint_strength * non_ice_land, 0.0, 0.42),
+    )
+    land_color = color_blend(
+        land_color,
+        salt_flat_tint,
+        np.clip(salt_basin * cfg.salt_flat_tint_strength * non_ice_land, 0.0, 0.48),
     )
     ice_solidity = np.clip(cfg.polar_ice_solidity, 0.0, 1.0)
     solid_ice_tint = np.array([244, 248, 248], dtype=np.float32)

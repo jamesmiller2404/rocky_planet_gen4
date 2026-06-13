@@ -129,6 +129,10 @@ These controls affect `color.png` only. They do not change land shape, height, n
 | `--ocean-color-variation` | `0.18` | Strength of warm shallow equatorial water and cold deep/polar water tinting. |
 | `--mineral-tint-strength` | `0.26` | Rust/mineral tint on dry mountainous terrain. |
 | `--wetland-tint-strength` | `0.16` | Darker wet lowland tint in moist regions. |
+| `--iron-oxide-tint-strength` | `0.12` | Red-brown oxidized staining on dry exposed terrain. |
+| `--basalt-tint-strength` | `0.08` | Dark volcanic rock tint on rugged mineral-rich terrain. |
+| `--salt-flat-tint-strength` | `0.05` | Pale evaporite/salt tint in dry lowland basins. |
+| `--clay-tint-strength` | `0.10` | Warm clay/sediment tint in low wet or formerly wet basins. |
 
 Useful color variation ranges:
 
@@ -192,6 +196,10 @@ Examples:
 | `ocean_color_variation` | `0.18` | `0.24` | `0.14` | `0.08` | `0.16` |
 | `mineral_tint_strength` | `0.26` | `0.18` | `0.28` | `0.38` | `0.14` |
 | `wetland_tint_strength` | `0.16` | `0.20` | `0.12` | `0.06` | `0.08` |
+| `iron_oxide_tint_strength` | `0.12` | `0.08` | `0.18` | `0.30` | `0.05` |
+| `basalt_tint_strength` | `0.08` | `0.10` | `0.12` | `0.18` | `0.08` |
+| `salt_flat_tint_strength` | `0.05` | `0.03` | `0.08` | `0.14` | `0.03` |
+| `clay_tint_strength` | `0.10` | `0.12` | `0.16` | `0.12` | `0.06` |
 
 ## Tuning Notes
 
