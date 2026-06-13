@@ -235,12 +235,12 @@ COLORS = {
     "ocean_mid": np.array([7, 72, 118], dtype=np.float32),
     "shallow_ocean": np.array([35, 154, 166], dtype=np.float32),
     "beach": np.array([196, 178, 119], dtype=np.float32),
-    "dark_forest": np.array([9, 45, 22], dtype=np.float32),
-    "forest": np.array([24, 100, 39], dtype=np.float32),
-    "grass": np.array([87, 126, 47], dtype=np.float32),
-    "dry_plain": np.array([133, 114, 64], dtype=np.float32),
-    "desert": np.array([181, 134, 70], dtype=np.float32),
-    "rock": np.array([112, 108, 98], dtype=np.float32),
+    "dark_forest": np.array([6, 54, 18], dtype=np.float32),
+    "forest": np.array([18, 125, 34], dtype=np.float32),
+    "grass": np.array([70, 155, 38], dtype=np.float32),
+    "dry_plain": np.array([94, 76, 42], dtype=np.float32),
+    "desert": np.array([128, 86, 45], dtype=np.float32),
+    "rock": np.array([88, 84, 76], dtype=np.float32),
     "snow": np.array([235, 242, 238], dtype=np.float32),
     "ice": np.array([194, 228, 240], dtype=np.float32),
 }
@@ -721,20 +721,15 @@ def build_maps_from_vectors(
     cold_lat = smoothstep(0.42, 0.88, lat_abs)
     arid = np.clip(desert_bias + (1.0 - moisture) * 0.45, 0.0, 1.0)
     non_ice_land = 1.0 - np.clip(ice_mask, 0.0, 1.0)
-    ochre_tint = np.array([174, 142, 82], dtype=np.float32)
-    rust_tint = np.array([150, 82, 48], dtype=np.float32)
-    dark_wet_tint = np.array([42, 64, 38], dtype=np.float32)
-    cool_tundra_tint = np.array([105, 122, 96], dtype=np.float32)
-    pale_highland_tint = np.array([150, 145, 126], dtype=np.float32)
+    ochre_tint = np.array([126, 98, 50], dtype=np.float32)
+    rust_tint = np.array([98, 50, 30], dtype=np.float32)
+    dark_wet_tint = np.array([24, 58, 28], dtype=np.float32)
+    cool_tundra_tint = np.array([70, 100, 70], dtype=np.float32)
+    pale_highland_tint = np.array([118, 112, 94], dtype=np.float32)
     land_color = color_blend(
         land_color,
         ochre_tint,
         np.clip(arid * soil_noise * cfg.land_color_variation * non_ice_land, 0.0, 0.28),
-    )
-    land_color = color_blend(
-        land_color,
-        rust_tint,
-        np.clip(arid * mineral_noise * mountain_mask * cfg.mineral_tint_strength * non_ice_land, 0.0, 0.32),
     )
     land_color = color_blend(
         land_color,
@@ -750,6 +745,12 @@ def build_maps_from_vectors(
         land_color,
         pale_highland_tint,
         np.clip(mountain_mask * mineral_noise * cfg.land_color_variation * 0.72 * non_ice_land, 0.0, 0.22),
+    )
+    mineral_exposure = np.clip(mountain_mask * 0.80 + arid * 0.30 + soil_noise * 0.12, 0.0, 1.0)
+    land_color = color_blend(
+        land_color,
+        rust_tint,
+        np.clip(mineral_noise * mineral_exposure * cfg.mineral_tint_strength * non_ice_land, 0.0, 0.58),
     )
     ice_solidity = np.clip(cfg.polar_ice_solidity, 0.0, 1.0)
     solid_ice_tint = np.array([244, 248, 248], dtype=np.float32)
