@@ -130,7 +130,12 @@ These controls affect `color.png` only. They do not change land shape, height, n
 | --- | ---: | --- |
 | `--ocean-current-strength` | `0.18` | Existing broad ocean color variation between deep and mid ocean colors. |
 | `--land-color-variation` | `0.22` | Overall strength of contextual land tints such as ochre soil, tundra, and pale highlands. |
-| `--ocean-color-variation` | `0.18` | Strength of warm shallow equatorial water and cold deep/polar water tinting. |
+| `--ocean-color-variation` | `0.18` | Legacy overall ocean tint multiplier. It still contributes to shallow, depth, and latitude tinting. |
+| `--ocean-shallow-tint-strength` | `0.38` | Warm cyan/teal shallow-water tint on shelves, strongest in lower latitudes. |
+| `--ocean-depth-tint-strength` | `0.34` | Darker blue tint for deeper open ocean basins. |
+| `--ocean-latitude-tint-strength` | `0.30` | Cold blue-gray tint for deeper polar and high-latitude water. |
+| `--ocean-productivity-strength` | `0.28` | Teal/green biological-productivity tint tied to shelves, broad upwelling, and latitude. |
+| `--ocean-sediment-strength` | `0.22` | Muted tan-green sediment tint near coastlines and shallow shelves. |
 | `--mineral-tint-strength` | `0.26` | Rust/mineral tint on dry mountainous terrain. |
 | `--wetland-tint-strength` | `0.16` | Darker wet lowland tint in moist regions. |
 | `--iron-oxide-tint-strength` | `0.12` | Red-brown oxidized staining on dry exposed terrain. |
@@ -143,10 +148,10 @@ Useful color variation ranges:
 | Value | Effect |
 | ---: | --- |
 | `0.00` | Disable that variation. |
-| `0.10` | Subtle. |
-| `0.20` | Normal. |
-| `0.35` | Strong. |
-| `0.50` or higher | Stylized; may overpower the base palette. |
+| `0.10` | Subtle for land tints; light but visible for the stronger ocean layers. |
+| `0.25` | Normal for ocean variation. |
+| `0.40` | Strong and clearly visible. |
+| `0.60` or higher | Stylized; may overpower the base palette. |
 
 Examples:
 
@@ -154,11 +159,14 @@ Examples:
 # Strong rusty dry world
 .\.venv\Scripts\python.exe rocky_planet_gen.py --preset dry_rocky --seed 77 --land-color-variation 0.45 --mineral-tint-strength 0.55 --wetland-tint-strength 0.02 --out output/dry_rusty
 
-# Lush island world with stronger shallow-water and wetland color
-.\.venv\Scripts\python.exe rocky_planet_gen.py --preset archipelago --seed 88 --land-color-variation 0.30 --ocean-color-variation 0.30 --wetland-tint-strength 0.28 --out output/lush_archipelago
+# Lush island world with stronger shallow-water, productivity, and wetland color
+.\.venv\Scripts\python.exe rocky_planet_gen.py --preset archipelago --seed 88 --land-color-variation 0.30 --ocean-shallow-tint-strength 0.72 --ocean-productivity-strength 0.58 --ocean-sediment-strength 0.46 --wetland-tint-strength 0.28 --out output/lush_archipelago
+
+# Ocean-focused Earthlike world with visible depth and current variation
+.\.venv\Scripts\python.exe rocky_planet_gen.py --preset earthlike --seed 42 --land-coverage 0.18 --ocean-depth-tint-strength 0.62 --ocean-latitude-tint-strength 0.54 --ocean-productivity-strength 0.42 --ocean-sediment-strength 0.14 --out output/ocean_earthlike
 
 # Disable the new contextual color variation while keeping the base palette randomization
-.\.venv\Scripts\python.exe rocky_planet_gen.py --preset earthlike --land-color-variation 0 --ocean-color-variation 0 --mineral-tint-strength 0 --wetland-tint-strength 0 --out output/plain_color
+.\.venv\Scripts\python.exe rocky_planet_gen.py --preset earthlike --land-color-variation 0 --ocean-color-variation 0 --ocean-shallow-tint-strength 0 --ocean-depth-tint-strength 0 --ocean-latitude-tint-strength 0 --ocean-productivity-strength 0 --ocean-sediment-strength 0 --mineral-tint-strength 0 --wetland-tint-strength 0 --out output/plain_color
 ```
 
 ## Preset Defaults
@@ -202,6 +210,11 @@ Examples:
 | `ocean_current_strength` | `0.18` | `0.24` | `0.12` | `0.08` | `0.10` |
 | `land_color_variation` | `0.22` | `0.26` | `0.24` | `0.34` | `0.16` |
 | `ocean_color_variation` | `0.18` | `0.24` | `0.14` | `0.08` | `0.16` |
+| `ocean_shallow_tint_strength` | `0.38` | `0.56` | `0.24` | `0.16` | `0.18` |
+| `ocean_depth_tint_strength` | `0.34` | `0.26` | `0.32` | `0.20` | `0.42` |
+| `ocean_latitude_tint_strength` | `0.30` | `0.18` | `0.28` | `0.16` | `0.62` |
+| `ocean_productivity_strength` | `0.28` | `0.42` | `0.18` | `0.08` | `0.10` |
+| `ocean_sediment_strength` | `0.22` | `0.34` | `0.30` | `0.12` | `0.06` |
 | `mineral_tint_strength` | `0.26` | `0.18` | `0.28` | `0.38` | `0.14` |
 | `wetland_tint_strength` | `0.16` | `0.20` | `0.12` | `0.06` | `0.08` |
 | `iron_oxide_tint_strength` | `0.12` | `0.08` | `0.18` | `0.30` | `0.05` |

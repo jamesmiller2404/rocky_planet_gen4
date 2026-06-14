@@ -107,6 +107,11 @@ PARAM_GROUPS = [
             ("ocean_current_strength", 0.00, 0.60, 0.01),
             ("land_color_variation", 0.00, 0.70, 0.01),
             ("ocean_color_variation", 0.00, 0.70, 0.01),
+            ("ocean_shallow_tint_strength", 0.00, 1.00, 0.01),
+            ("ocean_depth_tint_strength", 0.00, 1.00, 0.01),
+            ("ocean_latitude_tint_strength", 0.00, 1.00, 0.01),
+            ("ocean_productivity_strength", 0.00, 0.70, 0.01),
+            ("ocean_sediment_strength", 0.00, 0.70, 0.01),
             ("mineral_tint_strength", 0.00, 0.80, 0.01),
             ("wetland_tint_strength", 0.00, 0.60, 0.01),
             ("iron_oxide_tint_strength", 0.00, 0.80, 0.01),
@@ -858,7 +863,6 @@ function renderControls() {
   els.paramGroups.innerHTML = "";
   for (const group of schema.param_groups) {
     const details = document.createElement("details");
-    details.open = true;
     const summary = document.createElement("summary");
     summary.textContent = group.name;
     details.appendChild(summary);

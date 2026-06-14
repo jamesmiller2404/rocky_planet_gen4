@@ -81,6 +81,11 @@ PRESETS = {
         "ocean_current_strength": 0.18,
         "land_color_variation": 0.22,
         "ocean_color_variation": 0.18,
+        "ocean_shallow_tint_strength": 0.38,
+        "ocean_depth_tint_strength": 0.34,
+        "ocean_latitude_tint_strength": 0.30,
+        "ocean_productivity_strength": 0.28,
+        "ocean_sediment_strength": 0.22,
         "mineral_tint_strength": 0.26,
         "wetland_tint_strength": 0.16,
         "iron_oxide_tint_strength": 0.12,
@@ -126,6 +131,11 @@ PRESETS = {
         "ocean_current_strength": 0.24,
         "land_color_variation": 0.26,
         "ocean_color_variation": 0.24,
+        "ocean_shallow_tint_strength": 0.56,
+        "ocean_depth_tint_strength": 0.26,
+        "ocean_latitude_tint_strength": 0.18,
+        "ocean_productivity_strength": 0.42,
+        "ocean_sediment_strength": 0.34,
         "mineral_tint_strength": 0.18,
         "wetland_tint_strength": 0.20,
         "iron_oxide_tint_strength": 0.08,
@@ -171,6 +181,11 @@ PRESETS = {
         "ocean_current_strength": 0.12,
         "land_color_variation": 0.24,
         "ocean_color_variation": 0.14,
+        "ocean_shallow_tint_strength": 0.24,
+        "ocean_depth_tint_strength": 0.32,
+        "ocean_latitude_tint_strength": 0.28,
+        "ocean_productivity_strength": 0.18,
+        "ocean_sediment_strength": 0.30,
         "mineral_tint_strength": 0.28,
         "wetland_tint_strength": 0.12,
         "iron_oxide_tint_strength": 0.18,
@@ -216,6 +231,11 @@ PRESETS = {
         "ocean_current_strength": 0.08,
         "land_color_variation": 0.34,
         "ocean_color_variation": 0.08,
+        "ocean_shallow_tint_strength": 0.16,
+        "ocean_depth_tint_strength": 0.20,
+        "ocean_latitude_tint_strength": 0.16,
+        "ocean_productivity_strength": 0.08,
+        "ocean_sediment_strength": 0.12,
         "mineral_tint_strength": 0.38,
         "wetland_tint_strength": 0.06,
         "iron_oxide_tint_strength": 0.30,
@@ -261,6 +281,11 @@ PRESETS = {
         "ocean_current_strength": 0.10,
         "land_color_variation": 0.16,
         "ocean_color_variation": 0.16,
+        "ocean_shallow_tint_strength": 0.18,
+        "ocean_depth_tint_strength": 0.42,
+        "ocean_latitude_tint_strength": 0.62,
+        "ocean_productivity_strength": 0.10,
+        "ocean_sediment_strength": 0.06,
         "mineral_tint_strength": 0.14,
         "wetland_tint_strength": 0.08,
         "iron_oxide_tint_strength": 0.05,
@@ -390,6 +415,11 @@ class PlanetConfig:
     ocean_current_strength: float
     land_color_variation: float
     ocean_color_variation: float
+    ocean_shallow_tint_strength: float
+    ocean_depth_tint_strength: float
+    ocean_latitude_tint_strength: float
+    ocean_productivity_strength: float
+    ocean_sediment_strength: float
     mineral_tint_strength: float
     wetland_tint_strength: float
     iron_oxide_tint_strength: float
@@ -783,21 +813,91 @@ def build_maps_from_vectors(
 
     color = np.zeros((map_height, map_width, 3), dtype=np.float32)
     ocean_variation = fbm_3d(x, y, z, 18.0, 4, 0.5, cfg.seed + 5111)
-    ocean_color = color_blend(colors["deep_ocean"], colors["ocean_mid"], ocean_variation * cfg.ocean_current_strength)
+    ocean_color = color_blend(
+        colors["deep_ocean"],
+        colors["ocean_mid"],
+        np.clip(ocean_variation * cfg.ocean_current_strength * 1.8, 0.0, 0.72),
+    )
     ocean_color = color_blend(ocean_color, colors["shallow_ocean"], shelf)
     ocean_texture = fbm_3d(x, y, z, 32.0, 4, 0.52, cfg.seed + 5221)
-    warm_shallow = np.array([46, 168, 150], dtype=np.float32)
-    cold_deep = np.array([8, 28, 78], dtype=np.float32)
     equator = 1.0 - lat_abs
+
+    warm_shallow = np.array([68, 205, 190], dtype=np.float32)
+    depth_blue = np.array([0, 8, 38], dtype=np.float32)
+    cold_deep = np.array([42, 72, 102], dtype=np.float32)
+    productive_teal = np.array([18, 154, 96], dtype=np.float32)
+    sediment_tint = np.array([172, 154, 82], dtype=np.float32)
+    legacy_ocean_variation = np.clip(cfg.ocean_color_variation, 0.0, 1.0)
+    shallow_tint_weight = np.power(np.clip(shelf, 0.0, 1.0), 0.65)
+    deep_tint_weight = smoothstep(0.22, 1.0, ocean_depth)
+
     ocean_color = color_blend(
         ocean_color,
         warm_shallow,
-        np.clip(shelf * equator * ocean_texture * cfg.ocean_color_variation, 0.0, 0.28),
+        np.clip(
+            shallow_tint_weight
+            * (0.65 + equator * 0.45)
+            * (0.65 + ocean_texture * 0.60)
+            * (cfg.ocean_shallow_tint_strength + legacy_ocean_variation * 0.65),
+            0.0,
+            0.72,
+        ),
+    )
+    ocean_color = color_blend(
+        ocean_color,
+        depth_blue,
+        np.clip(
+            deep_tint_weight
+            * (0.70 + ocean_texture * 0.55)
+            * (cfg.ocean_depth_tint_strength + legacy_ocean_variation * 0.45),
+            0.0,
+            0.58,
+        ),
     )
     ocean_color = color_blend(
         ocean_color,
         cold_deep,
-        np.clip(ocean_depth * lat_abs * cfg.ocean_color_variation, 0.0, 0.24),
+        np.clip(
+            deep_tint_weight
+            * smoothstep(0.30, 0.92, lat_abs)
+            * (cfg.ocean_latitude_tint_strength + legacy_ocean_variation * 0.50),
+            0.0,
+            0.58,
+        ),
+    )
+    productivity_noise = fbm_3d(x, y, z, 7.0, 4, 0.56, cfg.seed + 5331)
+    upwelling = np.clip(
+        shallow_tint_weight * 0.80
+        + smoothstep(0.38, 0.78, lat_abs) * 0.28
+        + equator * ocean_variation * 0.38,
+        0.0,
+        1.0,
+    )
+    ocean_color = color_blend(
+        ocean_color,
+        productive_teal,
+        np.clip(
+            smoothstep(0.30, 0.78, productivity_noise)
+            * upwelling
+            * cfg.ocean_productivity_strength
+            * 1.8,
+            0.0,
+            0.56,
+        ),
+    )
+    sediment_noise = fbm_3d(x, y, z, 45.0, 3, 0.52, cfg.seed + 5441)
+    coastal_sediment = np.clip(shoreline * 0.85 + shallow_tint_weight * 0.58, 0.0, 1.0)
+    ocean_color = color_blend(
+        ocean_color,
+        sediment_tint,
+        np.clip(
+            coastal_sediment
+            * smoothstep(0.24, 0.72, sediment_noise)
+            * cfg.ocean_sediment_strength
+            * 2.2,
+            0.0,
+            0.62,
+        ),
     )
     color[:] = ocean_color
 
