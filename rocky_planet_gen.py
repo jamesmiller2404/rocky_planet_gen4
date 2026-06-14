@@ -86,6 +86,8 @@ PRESETS = {
         "ocean_latitude_tint_strength": 0.30,
         "ocean_productivity_strength": 0.28,
         "ocean_sediment_strength": 0.22,
+        "ocean_brightness": 0.00,
+        "ocean_contrast": 1.00,
         "mineral_tint_strength": 0.26,
         "wetland_tint_strength": 0.16,
         "iron_oxide_tint_strength": 0.12,
@@ -136,6 +138,8 @@ PRESETS = {
         "ocean_latitude_tint_strength": 0.18,
         "ocean_productivity_strength": 0.42,
         "ocean_sediment_strength": 0.34,
+        "ocean_brightness": 0.04,
+        "ocean_contrast": 1.08,
         "mineral_tint_strength": 0.18,
         "wetland_tint_strength": 0.20,
         "iron_oxide_tint_strength": 0.08,
@@ -186,6 +190,8 @@ PRESETS = {
         "ocean_latitude_tint_strength": 0.28,
         "ocean_productivity_strength": 0.18,
         "ocean_sediment_strength": 0.30,
+        "ocean_brightness": -0.03,
+        "ocean_contrast": 1.10,
         "mineral_tint_strength": 0.28,
         "wetland_tint_strength": 0.12,
         "iron_oxide_tint_strength": 0.18,
@@ -236,6 +242,8 @@ PRESETS = {
         "ocean_latitude_tint_strength": 0.16,
         "ocean_productivity_strength": 0.08,
         "ocean_sediment_strength": 0.12,
+        "ocean_brightness": -0.02,
+        "ocean_contrast": 1.06,
         "mineral_tint_strength": 0.38,
         "wetland_tint_strength": 0.06,
         "iron_oxide_tint_strength": 0.30,
@@ -286,6 +294,8 @@ PRESETS = {
         "ocean_latitude_tint_strength": 0.62,
         "ocean_productivity_strength": 0.10,
         "ocean_sediment_strength": 0.06,
+        "ocean_brightness": 0.06,
+        "ocean_contrast": 0.88,
         "mineral_tint_strength": 0.14,
         "wetland_tint_strength": 0.08,
         "iron_oxide_tint_strength": 0.05,
@@ -420,6 +430,8 @@ class PlanetConfig:
     ocean_latitude_tint_strength: float
     ocean_productivity_strength: float
     ocean_sediment_strength: float
+    ocean_brightness: float
+    ocean_contrast: float
     mineral_tint_strength: float
     wetland_tint_strength: float
     iron_oxide_tint_strength: float
@@ -899,6 +911,9 @@ def build_maps_from_vectors(
             0.62,
         ),
     )
+    ocean_color = (ocean_color - 127.5) * cfg.ocean_contrast + 127.5
+    ocean_color = ocean_color + cfg.ocean_brightness * 255.0
+    ocean_color = np.clip(ocean_color, 0.0, 255.0)
     color[:] = ocean_color
 
     land_color = color_blend(colors["grass"], colors["dry_plain"], np.clip(biome + desert_bias - 0.45, 0.0, 1.0))

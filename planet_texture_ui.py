@@ -112,6 +112,8 @@ PARAM_GROUPS = [
             ("ocean_latitude_tint_strength", 0.00, 1.00, 0.01),
             ("ocean_productivity_strength", 0.00, 0.70, 0.01),
             ("ocean_sediment_strength", 0.00, 0.70, 0.01),
+            ("ocean_brightness", -0.50, 0.50, 0.01),
+            ("ocean_contrast", 0.50, 2.00, 0.01),
             ("mineral_tint_strength", 0.00, 0.80, 0.01),
             ("wetland_tint_strength", 0.00, 0.60, 0.01),
             ("iron_oxide_tint_strength", 0.00, 0.80, 0.01),

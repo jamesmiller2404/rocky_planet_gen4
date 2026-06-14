@@ -136,6 +136,8 @@ These controls affect `color.png` only. They do not change land shape, height, n
 | `--ocean-latitude-tint-strength` | `0.30` | Cold blue-gray tint for deeper polar and high-latitude water. |
 | `--ocean-productivity-strength` | `0.28` | Teal/green biological-productivity tint tied to shelves, broad upwelling, and latitude. |
 | `--ocean-sediment-strength` | `0.22` | Muted tan-green sediment tint near coastlines and shallow shelves. |
+| `--ocean-brightness` | `0.00` | Overall ocean-layer brightness offset. Negative values darken water; positive values brighten water. |
+| `--ocean-contrast` | `1.00` | Overall ocean-layer contrast multiplier around mid gray. Values below `1.0` flatten water; values above `1.0` deepen contrast. |
 | `--mineral-tint-strength` | `0.26` | Rust/mineral tint on dry mountainous terrain. |
 | `--wetland-tint-strength` | `0.16` | Darker wet lowland tint in moist regions. |
 | `--iron-oxide-tint-strength` | `0.12` | Red-brown oxidized staining on dry exposed terrain. |
@@ -164,6 +166,9 @@ Examples:
 
 # Ocean-focused Earthlike world with visible depth and current variation
 .\.venv\Scripts\python.exe rocky_planet_gen.py --preset earthlike --seed 42 --land-coverage 0.18 --ocean-depth-tint-strength 0.62 --ocean-latitude-tint-strength 0.54 --ocean-productivity-strength 0.42 --ocean-sediment-strength 0.14 --out output/ocean_earthlike
+
+# Brighter high-contrast ocean layer without changing land
+.\.venv\Scripts\python.exe rocky_planet_gen.py --preset earthlike --seed 42 --ocean-brightness 0.12 --ocean-contrast 1.35 --out output/ocean_bright_contrast
 
 # Disable the new contextual color variation while keeping the base palette randomization
 .\.venv\Scripts\python.exe rocky_planet_gen.py --preset earthlike --land-color-variation 0 --ocean-color-variation 0 --ocean-shallow-tint-strength 0 --ocean-depth-tint-strength 0 --ocean-latitude-tint-strength 0 --ocean-productivity-strength 0 --ocean-sediment-strength 0 --mineral-tint-strength 0 --wetland-tint-strength 0 --out output/plain_color
@@ -215,6 +220,8 @@ Examples:
 | `ocean_latitude_tint_strength` | `0.30` | `0.18` | `0.28` | `0.16` | `0.62` |
 | `ocean_productivity_strength` | `0.28` | `0.42` | `0.18` | `0.08` | `0.10` |
 | `ocean_sediment_strength` | `0.22` | `0.34` | `0.30` | `0.12` | `0.06` |
+| `ocean_brightness` | `0.0` | `0.04` | `-0.03` | `-0.02` | `0.06` |
+| `ocean_contrast` | `1.0` | `1.08` | `1.10` | `1.06` | `0.88` |
 | `mineral_tint_strength` | `0.26` | `0.18` | `0.28` | `0.38` | `0.14` |
 | `wetland_tint_strength` | `0.16` | `0.20` | `0.12` | `0.06` | `0.08` |
 | `iron_oxide_tint_strength` | `0.12` | `0.08` | `0.18` | `0.30` | `0.05` |
