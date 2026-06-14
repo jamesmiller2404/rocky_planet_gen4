@@ -88,6 +88,8 @@ PRESETS = {
         "ocean_sediment_strength": 0.22,
         "ocean_brightness": 0.00,
         "ocean_contrast": 1.00,
+        "land_brightness": 0.00,
+        "land_contrast": 1.00,
         "mineral_tint_strength": 0.26,
         "wetland_tint_strength": 0.16,
         "iron_oxide_tint_strength": 0.12,
@@ -140,6 +142,8 @@ PRESETS = {
         "ocean_sediment_strength": 0.34,
         "ocean_brightness": 0.04,
         "ocean_contrast": 1.08,
+        "land_brightness": 0.00,
+        "land_contrast": 1.00,
         "mineral_tint_strength": 0.18,
         "wetland_tint_strength": 0.20,
         "iron_oxide_tint_strength": 0.08,
@@ -192,6 +196,8 @@ PRESETS = {
         "ocean_sediment_strength": 0.30,
         "ocean_brightness": -0.03,
         "ocean_contrast": 1.10,
+        "land_brightness": 0.00,
+        "land_contrast": 1.00,
         "mineral_tint_strength": 0.28,
         "wetland_tint_strength": 0.12,
         "iron_oxide_tint_strength": 0.18,
@@ -244,6 +250,8 @@ PRESETS = {
         "ocean_sediment_strength": 0.12,
         "ocean_brightness": -0.02,
         "ocean_contrast": 1.06,
+        "land_brightness": 0.00,
+        "land_contrast": 1.00,
         "mineral_tint_strength": 0.38,
         "wetland_tint_strength": 0.06,
         "iron_oxide_tint_strength": 0.30,
@@ -296,6 +304,8 @@ PRESETS = {
         "ocean_sediment_strength": 0.06,
         "ocean_brightness": 0.06,
         "ocean_contrast": 0.88,
+        "land_brightness": 0.00,
+        "land_contrast": 1.00,
         "mineral_tint_strength": 0.14,
         "wetland_tint_strength": 0.08,
         "iron_oxide_tint_strength": 0.05,
@@ -432,6 +442,8 @@ class PlanetConfig:
     ocean_sediment_strength: float
     ocean_brightness: float
     ocean_contrast: float
+    land_brightness: float
+    land_contrast: float
     mineral_tint_strength: float
     wetland_tint_strength: float
     iron_oxide_tint_strength: float
@@ -994,6 +1006,9 @@ def build_maps_from_vectors(
         salt_flat_tint,
         np.clip(salt_basin * cfg.salt_flat_tint_strength * non_ice_land, 0.0, 0.48),
     )
+    land_color = (land_color - 127.5) * cfg.land_contrast + 127.5
+    land_color = land_color + cfg.land_brightness * 255.0
+    land_color = np.clip(land_color, 0.0, 255.0)
     ice_solidity = np.clip(cfg.polar_ice_solidity, 0.0, 1.0)
     solid_ice_tint = np.array([244, 248, 248], dtype=np.float32)
     ice_highlight = color_blend(

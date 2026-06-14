@@ -130,6 +130,8 @@ These controls affect `color.png` only. They do not change land shape, height, n
 | --- | ---: | --- |
 | `--ocean-current-strength` | `0.18` | Existing broad ocean color variation between deep and mid ocean colors. |
 | `--land-color-variation` | `0.22` | Overall strength of contextual land tints such as ochre soil, tundra, and pale highlands. |
+| `--land-brightness` | `0.00` | Overall continent land-layer brightness offset. Negative values darken land; positive values brighten land. |
+| `--land-contrast` | `1.00` | Overall continent land-layer contrast multiplier around mid gray. Values below `1.0` flatten land; values above `1.0` deepen contrast. |
 | `--ocean-color-variation` | `0.18` | Legacy overall ocean tint multiplier. It still contributes to shallow, depth, and latitude tinting. |
 | `--ocean-shallow-tint-strength` | `0.38` | Warm cyan/teal shallow-water tint on shelves, strongest in lower latitudes. |
 | `--ocean-depth-tint-strength` | `0.34` | Darker blue tint for deeper open ocean basins. |
@@ -160,6 +162,9 @@ Examples:
 ```powershell
 # Strong rusty dry world
 .\.venv\Scripts\python.exe rocky_planet_gen.py --preset dry_rocky --seed 77 --land-color-variation 0.45 --mineral-tint-strength 0.55 --wetland-tint-strength 0.02 --out output/dry_rusty
+
+# Brighter high-contrast continents without changing oceans
+.\.venv\Scripts\python.exe rocky_planet_gen.py --preset earthlike --seed 42 --land-brightness 0.10 --land-contrast 1.30 --out output/land_bright_contrast
 
 # Lush island world with stronger shallow-water, productivity, and wetland color
 .\.venv\Scripts\python.exe rocky_planet_gen.py --preset archipelago --seed 88 --land-color-variation 0.30 --ocean-shallow-tint-strength 0.72 --ocean-productivity-strength 0.58 --ocean-sediment-strength 0.46 --wetland-tint-strength 0.28 --out output/lush_archipelago
@@ -214,6 +219,8 @@ Examples:
 | `snow_threshold` | `0.74` | `0.82` | `0.70` | `0.88` | `0.48` |
 | `ocean_current_strength` | `0.18` | `0.24` | `0.12` | `0.08` | `0.10` |
 | `land_color_variation` | `0.22` | `0.26` | `0.24` | `0.34` | `0.16` |
+| `land_brightness` | `0.0` | `0.0` | `0.0` | `0.0` | `0.0` |
+| `land_contrast` | `1.0` | `1.0` | `1.0` | `1.0` | `1.0` |
 | `ocean_color_variation` | `0.18` | `0.24` | `0.14` | `0.08` | `0.16` |
 | `ocean_shallow_tint_strength` | `0.38` | `0.56` | `0.24` | `0.16` | `0.18` |
 | `ocean_depth_tint_strength` | `0.34` | `0.26` | `0.32` | `0.20` | `0.42` |
