@@ -82,6 +82,8 @@ PRESETS = {
         "land_color_variation": 0.22,
         "ocean_color_variation": 0.18,
         "ocean_shallow_tint_strength": 0.38,
+        "ocean_shelf_brightness": 0.00,
+        "ocean_shelf_contrast": 1.00,
         "ocean_depth_tint_strength": 0.34,
         "ocean_latitude_tint_strength": 0.30,
         "ocean_productivity_strength": 0.28,
@@ -136,6 +138,8 @@ PRESETS = {
         "land_color_variation": 0.26,
         "ocean_color_variation": 0.24,
         "ocean_shallow_tint_strength": 0.56,
+        "ocean_shelf_brightness": 0.00,
+        "ocean_shelf_contrast": 1.00,
         "ocean_depth_tint_strength": 0.26,
         "ocean_latitude_tint_strength": 0.18,
         "ocean_productivity_strength": 0.42,
@@ -190,6 +194,8 @@ PRESETS = {
         "land_color_variation": 0.24,
         "ocean_color_variation": 0.14,
         "ocean_shallow_tint_strength": 0.24,
+        "ocean_shelf_brightness": 0.00,
+        "ocean_shelf_contrast": 1.00,
         "ocean_depth_tint_strength": 0.32,
         "ocean_latitude_tint_strength": 0.28,
         "ocean_productivity_strength": 0.18,
@@ -244,6 +250,8 @@ PRESETS = {
         "land_color_variation": 0.34,
         "ocean_color_variation": 0.08,
         "ocean_shallow_tint_strength": 0.16,
+        "ocean_shelf_brightness": 0.00,
+        "ocean_shelf_contrast": 1.00,
         "ocean_depth_tint_strength": 0.20,
         "ocean_latitude_tint_strength": 0.16,
         "ocean_productivity_strength": 0.08,
@@ -298,6 +306,8 @@ PRESETS = {
         "land_color_variation": 0.16,
         "ocean_color_variation": 0.16,
         "ocean_shallow_tint_strength": 0.18,
+        "ocean_shelf_brightness": 0.00,
+        "ocean_shelf_contrast": 1.00,
         "ocean_depth_tint_strength": 0.42,
         "ocean_latitude_tint_strength": 0.62,
         "ocean_productivity_strength": 0.10,
@@ -436,6 +446,8 @@ class PlanetConfig:
     land_color_variation: float
     ocean_color_variation: float
     ocean_shallow_tint_strength: float
+    ocean_shelf_brightness: float
+    ocean_shelf_contrast: float
     ocean_depth_tint_strength: float
     ocean_latitude_tint_strength: float
     ocean_productivity_strength: float
@@ -847,6 +859,9 @@ def build_maps_from_vectors(
     equator = 1.0 - lat_abs
 
     warm_shallow = np.array([68, 205, 190], dtype=np.float32)
+    warm_shallow = (warm_shallow - 127.5) * cfg.ocean_shelf_contrast + 127.5
+    warm_shallow = warm_shallow + cfg.ocean_shelf_brightness * 255.0
+    warm_shallow = np.clip(warm_shallow, 0.0, 255.0)
     depth_blue = np.array([0, 8, 38], dtype=np.float32)
     cold_deep = np.array([42, 72, 102], dtype=np.float32)
     productive_teal = np.array([18, 154, 96], dtype=np.float32)
@@ -923,6 +938,16 @@ def build_maps_from_vectors(
             0.62,
         ),
     )
+    shelf_color_control_mask = np.clip(
+        shallow_tint_weight
+        * (0.70 + cfg.ocean_shallow_tint_strength * 0.55 + legacy_ocean_variation * 0.25),
+        0.0,
+        1.0,
+    )
+    shelf_adjusted_ocean = (ocean_color - 127.5) * cfg.ocean_shelf_contrast + 127.5
+    shelf_adjusted_ocean = shelf_adjusted_ocean + cfg.ocean_shelf_brightness * 255.0
+    shelf_adjusted_ocean = np.clip(shelf_adjusted_ocean, 0.0, 255.0)
+    ocean_color = color_blend(ocean_color, shelf_adjusted_ocean, shelf_color_control_mask)
     ocean_color = (ocean_color - 127.5) * cfg.ocean_contrast + 127.5
     ocean_color = ocean_color + cfg.ocean_brightness * 255.0
     ocean_color = np.clip(ocean_color, 0.0, 255.0)

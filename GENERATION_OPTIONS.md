@@ -134,6 +134,8 @@ These controls affect `color.png` only. They do not change land shape, height, n
 | `--land-contrast` | `1.00` | Overall continent land-layer contrast multiplier around mid gray. Values below `1.0` flatten land; values above `1.0` deepen contrast. |
 | `--ocean-color-variation` | `0.18` | Legacy overall ocean tint multiplier. It still contributes to shallow, depth, and latitude tinting. |
 | `--ocean-shallow-tint-strength` | `0.38` | Warm cyan/teal shallow-water tint on shelves, strongest in lower latitudes. |
+| `--ocean-shelf-brightness` | `0.00` | Brightness offset applied to rendered shallow-shelf water, separate from whole-ocean brightness. |
+| `--ocean-shelf-contrast` | `1.00` | Contrast multiplier applied to rendered shallow-shelf water, separate from whole-ocean contrast. |
 | `--ocean-depth-tint-strength` | `0.34` | Darker blue tint for deeper open ocean basins. |
 | `--ocean-latitude-tint-strength` | `0.30` | Cold blue-gray tint for deeper polar and high-latitude water. |
 | `--ocean-productivity-strength` | `0.28` | Teal/green biological-productivity tint tied to shelves, broad upwelling, and latitude. |
@@ -171,6 +173,9 @@ Examples:
 
 # Ocean-focused Earthlike world with visible depth and current variation
 .\.venv\Scripts\python.exe rocky_planet_gen.py --preset earthlike --seed 42 --land-coverage 0.18 --ocean-depth-tint-strength 0.62 --ocean-latitude-tint-strength 0.54 --ocean-productivity-strength 0.42 --ocean-sediment-strength 0.14 --out output/ocean_earthlike
+
+# Dimmer shelf cyan without darkening the whole ocean layer
+.\.venv\Scripts\python.exe rocky_planet_gen.py --preset earthlike --seed 42 --ocean-shelf-brightness -0.12 --ocean-shelf-contrast 0.85 --out output/shelf_cyan_balanced
 
 # Brighter high-contrast ocean layer without changing land
 .\.venv\Scripts\python.exe rocky_planet_gen.py --preset earthlike --seed 42 --ocean-brightness 0.12 --ocean-contrast 1.35 --out output/ocean_bright_contrast
@@ -223,6 +228,8 @@ Examples:
 | `land_contrast` | `1.0` | `1.0` | `1.0` | `1.0` | `1.0` |
 | `ocean_color_variation` | `0.18` | `0.24` | `0.14` | `0.08` | `0.16` |
 | `ocean_shallow_tint_strength` | `0.38` | `0.56` | `0.24` | `0.16` | `0.18` |
+| `ocean_shelf_brightness` | `0.0` | `0.0` | `0.0` | `0.0` | `0.0` |
+| `ocean_shelf_contrast` | `1.0` | `1.0` | `1.0` | `1.0` | `1.0` |
 | `ocean_depth_tint_strength` | `0.34` | `0.26` | `0.32` | `0.20` | `0.42` |
 | `ocean_latitude_tint_strength` | `0.30` | `0.18` | `0.28` | `0.16` | `0.62` |
 | `ocean_productivity_strength` | `0.28` | `0.42` | `0.18` | `0.08` | `0.10` |

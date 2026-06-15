@@ -110,6 +110,8 @@ PARAM_GROUPS = [
             ("land_contrast", 0.50, 2.00, 0.01),
             ("ocean_color_variation", 0.00, 0.70, 0.01),
             ("ocean_shallow_tint_strength", 0.00, 1.00, 0.01),
+            ("ocean_shelf_brightness", -0.50, 0.50, 0.01),
+            ("ocean_shelf_contrast", 0.50, 2.00, 0.01),
             ("ocean_depth_tint_strength", 0.00, 1.00, 0.01),
             ("ocean_latitude_tint_strength", 0.00, 1.00, 0.01),
             ("ocean_productivity_strength", 0.00, 0.70, 0.01),
