@@ -106,6 +106,9 @@ PARAM_GROUPS = [
         "params": [
             ("ocean_current_strength", 0.00, 0.60, 0.01),
             ("land_color_variation", 0.00, 0.70, 0.01),
+            ("continent_color_variation", 0.00, 0.80, 0.01),
+            ("continent_color_scale", 0.50, 8.00, 0.05),
+            ("continent_color_diversity", 0.00, 1.00, 0.01),
             ("land_brightness", -0.50, 0.50, 0.01),
             ("land_contrast", 0.50, 2.00, 0.01),
             ("ocean_color_variation", 0.00, 0.70, 0.01),
@@ -638,6 +641,22 @@ img {
   gap: 8px;
   margin: 8px 0 12px;
 }
+.map-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.map-actions {
+  display: flex;
+  gap: 6px;
+}
+.map-actions button {
+  width: auto;
+  min-height: 28px;
+  padding: 4px 9px;
+  font-size: 12px;
+}
 .map-option {
   display: flex;
   align-items: center;
@@ -697,7 +716,13 @@ img {
         </select>
       </div>
       <p class="hint" id="projectionHint">Quad-sphere saves six face folders and stitched *_cubemap_cross.png atlases, matching the CLI --quad-sphere output.</p>
-      <label>Texture maps</label>
+      <div class="map-header">
+        <label>Texture maps</label>
+        <div class="map-actions" aria-label="Texture map selection actions">
+          <button id="selectAllMapsBtn" type="button">All</button>
+          <button id="selectNoMapsBtn" type="button">None</button>
+        </div>
+      </div>
       <div class="map-options" id="textureMapOptions"></div>
       <p class="hint">Unchecked maps are skipped during save. Color and height are still computed for previews, but only checked maps are written.</p>
       <div class="row">
@@ -795,6 +820,8 @@ const els = {
   globeSpeedValue: document.getElementById("globeSpeedValue"),
   paramGroups: document.getElementById("paramGroups"),
   textureMapOptions: document.getElementById("textureMapOptions"),
+  selectAllMapsBtn: document.getElementById("selectAllMapsBtn"),
+  selectNoMapsBtn: document.getElementById("selectNoMapsBtn"),
   loadPath: document.getElementById("loadPath"),
 };
 
@@ -958,6 +985,12 @@ function getParams() {
 function getSelectedTextureMaps() {
   return Array.from(els.textureMapOptions.querySelectorAll("input[data-texture-map='1']:checked"))
     .map(input => input.value);
+}
+
+function setTextureMapSelection(checked) {
+  for (const input of els.textureMapOptions.querySelectorAll("input[data-texture-map='1']")) {
+    input.checked = checked;
+  }
 }
 
 function getPayload() {
@@ -1242,6 +1275,8 @@ async function boot() {
   els.height.addEventListener("change", syncResolutionPreset);
   els.faceSizePreset.addEventListener("change", applyFaceSizePreset);
   els.faceSize.addEventListener("change", syncFaceSizePreset);
+  els.selectAllMapsBtn.addEventListener("click", () => setTextureMapSelection(true));
+  els.selectNoMapsBtn.addEventListener("click", () => setTextureMapSelection(false));
   document.getElementById("previewBtn").addEventListener("click", () => schedulePreview(0));
   document.getElementById("saveBtn").addEventListener("click", saveOutput);
   document.getElementById("resetBtn").addEventListener("click", applyPresetDefaults);

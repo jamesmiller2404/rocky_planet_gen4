@@ -130,6 +130,9 @@ These controls affect `color.png` only. They do not change land shape, height, n
 | --- | ---: | --- |
 | `--ocean-current-strength` | `0.18` | Existing broad ocean color variation between deep and mid ocean colors. |
 | `--land-color-variation` | `0.22` | Overall strength of contextual land tints such as ochre soil, tundra, and pale highlands. |
+| `--continent-color-variation` | `0.48` | Broad seeded color variation between continents and large parts of continents, constrained by climate, elevation, and geology. |
+| `--continent-color-scale` | `2.60` | Size of continent color provinces. Lower values create broader continental identities; higher values create smaller regional patches. |
+| `--continent-color-diversity` | `0.72` | How strongly neighboring continent color provinces separate from each other. |
 | `--land-brightness` | `0.00` | Overall continent land-layer brightness offset. Negative values darken land; positive values brighten land. |
 | `--land-contrast` | `1.00` | Overall continent land-layer contrast multiplier around mid gray. Values below `1.0` flatten land; values above `1.0` deepen contrast. |
 | `--ocean-color-variation` | `0.18` | Legacy overall ocean tint multiplier. It still contributes to shallow, depth, and latitude tinting. |
@@ -224,6 +227,9 @@ Examples:
 | `snow_threshold` | `0.74` | `0.82` | `0.70` | `0.88` | `0.48` |
 | `ocean_current_strength` | `0.18` | `0.24` | `0.12` | `0.08` | `0.10` |
 | `land_color_variation` | `0.22` | `0.26` | `0.24` | `0.34` | `0.16` |
+| `continent_color_variation` | `0.48` | `0.44` | `0.52` | `0.58` | `0.34` |
+| `continent_color_scale` | `2.6` | `4.2` | `2.0` | `2.7` | `2.1` |
+| `continent_color_diversity` | `0.72` | `0.70` | `0.80` | `0.85` | `0.60` |
 | `land_brightness` | `0.0` | `0.0` | `0.0` | `0.0` | `0.0` |
 | `land_contrast` | `1.0` | `1.0` | `1.0` | `1.0` | `1.0` |
 | `ocean_color_variation` | `0.18` | `0.24` | `0.14` | `0.08` | `0.16` |

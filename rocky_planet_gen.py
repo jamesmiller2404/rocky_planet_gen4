@@ -80,6 +80,9 @@ PRESETS = {
         "snow_threshold": 0.74,
         "ocean_current_strength": 0.18,
         "land_color_variation": 0.22,
+        "continent_color_variation": 0.48,
+        "continent_color_scale": 2.60,
+        "continent_color_diversity": 0.72,
         "ocean_color_variation": 0.18,
         "ocean_shallow_tint_strength": 0.38,
         "ocean_shelf_brightness": 0.00,
@@ -136,6 +139,9 @@ PRESETS = {
         "snow_threshold": 0.82,
         "ocean_current_strength": 0.24,
         "land_color_variation": 0.26,
+        "continent_color_variation": 0.44,
+        "continent_color_scale": 4.20,
+        "continent_color_diversity": 0.70,
         "ocean_color_variation": 0.24,
         "ocean_shallow_tint_strength": 0.56,
         "ocean_shelf_brightness": 0.00,
@@ -192,6 +198,9 @@ PRESETS = {
         "snow_threshold": 0.70,
         "ocean_current_strength": 0.12,
         "land_color_variation": 0.24,
+        "continent_color_variation": 0.52,
+        "continent_color_scale": 2.00,
+        "continent_color_diversity": 0.80,
         "ocean_color_variation": 0.14,
         "ocean_shallow_tint_strength": 0.24,
         "ocean_shelf_brightness": 0.00,
@@ -248,6 +257,9 @@ PRESETS = {
         "snow_threshold": 0.88,
         "ocean_current_strength": 0.08,
         "land_color_variation": 0.34,
+        "continent_color_variation": 0.58,
+        "continent_color_scale": 2.70,
+        "continent_color_diversity": 0.85,
         "ocean_color_variation": 0.08,
         "ocean_shallow_tint_strength": 0.16,
         "ocean_shelf_brightness": 0.00,
@@ -304,6 +316,9 @@ PRESETS = {
         "snow_threshold": 0.48,
         "ocean_current_strength": 0.10,
         "land_color_variation": 0.16,
+        "continent_color_variation": 0.34,
+        "continent_color_scale": 2.10,
+        "continent_color_diversity": 0.60,
         "ocean_color_variation": 0.16,
         "ocean_shallow_tint_strength": 0.18,
         "ocean_shelf_brightness": 0.00,
@@ -444,6 +459,9 @@ class PlanetConfig:
     snow_threshold: float
     ocean_current_strength: float
     land_color_variation: float
+    continent_color_variation: float
+    continent_color_scale: float
+    continent_color_diversity: float
     ocean_color_variation: float
     ocean_shallow_tint_strength: float
     ocean_shelf_brightness: float
@@ -702,6 +720,115 @@ def quad_sphere_face_vectors(face, size):
 
 def color_blend(a, b, t):
     return a * (1.0 - t[..., None]) + b * t[..., None]
+
+
+CONTINENT_REGION_TINTS = np.array(
+    [
+        [158, 126, 62],   # warm sedimentary plains
+        [150, 60, 32],    # oxidized craton
+        [32, 35, 36],     # dark volcanic shield
+        [30, 92, 38],     # humid lowland basin
+        [194, 172, 108],  # pale limestone or dry sediment
+        [70, 106, 100],   # cool old shield
+    ],
+    dtype=np.float32,
+)
+
+
+def build_continent_color_provinces(
+    cfg,
+    x,
+    y,
+    z,
+    land,
+    arid,
+    moisture,
+    mountain_mask,
+    lowland,
+    shoreline,
+    mineral_noise,
+    cold_lat,
+    non_ice_land,
+):
+    map_height, map_width = x.shape
+    blank_weight = np.zeros((map_height, map_width), dtype=np.float32)
+    blank_color = np.zeros((map_height, map_width, 3), dtype=np.float32)
+    strength = float(np.clip(cfg.continent_color_variation, 0.0, 1.0))
+    if strength <= 0.0:
+        return blank_color, blank_weight, blank_weight
+
+    scale = max(0.25, float(cfg.continent_color_scale))
+    diversity = float(np.clip(cfg.continent_color_diversity, 0.0, 1.0))
+    province_count = int(np.clip(round(7.0 + scale * 4.2), 6, 38))
+    rng = np.random.default_rng(int(cfg.seed) * 1709 + 9176)
+
+    anchors = rng.normal(size=(province_count, 3)).astype(np.float32)
+    anchors /= np.linalg.norm(anchors, axis=1, keepdims=True)
+    styles = (np.arange(province_count, dtype=np.int32) % len(CONTINENT_REGION_TINTS)).astype(np.int32)
+    rng.shuffle(styles)
+    province_bias = rng.uniform(0.82, 1.24, province_count).astype(np.float32)
+
+    warp_strength = 0.06 + diversity * 0.16
+    warp_scale = max(0.50, scale * 0.92)
+    wx = x + (fbm_3d(x, y, z, warp_scale, 3, 0.52, cfg.seed + 6581) - 0.5) * warp_strength
+    wy = y + (fbm_3d(x, y, z, warp_scale * 1.13, 3, 0.52, cfg.seed + 6599) - 0.5) * warp_strength
+    wz = z + (fbm_3d(x, y, z, warp_scale * 0.87, 3, 0.52, cfg.seed + 6619) - 0.5) * warp_strength
+    warp_len = np.sqrt(wx * wx + wy * wy + wz * wz)
+    wx = wx / np.maximum(warp_len, 1e-6)
+    wy = wy / np.maximum(warp_len, 1e-6)
+    wz = wz / np.maximum(warp_len, 1e-6)
+
+    best_score = np.full_like(x, -2.0, dtype=np.float32)
+    second_score = np.full_like(x, -2.0, dtype=np.float32)
+    province_id = np.zeros_like(x, dtype=np.int32)
+    second_province_id = np.zeros_like(x, dtype=np.int32)
+    for index, anchor in enumerate(anchors):
+        score = wx * anchor[0] + wy * anchor[1] + wz * anchor[2]
+        better = score > best_score
+        between = (~better) & (score > second_score)
+        second_province_id = np.where(better, province_id, np.where(between, index, second_province_id))
+        second_score = np.where(better, best_score, np.where(between, score, second_score))
+        best_score = np.where(better, score, best_score)
+        province_id = np.where(better, index, province_id)
+
+    style_map = styles[province_id]
+    second_style_map = styles[second_province_id]
+    best_color = CONTINENT_REGION_TINTS[style_map]
+    second_color = CONTINENT_REGION_TINTS[second_style_map]
+    bias_map = province_bias[province_id]
+    boundary_margin = best_score - second_score
+    boundary_soft = smoothstep(0.010, 0.150 + (1.0 - diversity) * 0.060, boundary_margin)
+    boundary_color = (best_color + second_color) * 0.5
+    target_color = color_blend(boundary_color, best_color, boundary_soft)
+    province_texture = 0.82 + fbm_3d(x, y, z, scale * 5.2 + 3.0, 3, 0.50, cfg.seed + 6637) * 0.34
+
+    warm_gate = np.clip(0.46 + arid * 0.40 + lowland * 0.22, 0.0, 1.0)
+    red_gate = np.clip(0.34 + arid * 0.48 + mineral_noise * 0.28 + mountain_mask * 0.16, 0.0, 1.0)
+    dark_gate = np.clip(0.34 + mineral_noise * 0.38 + mountain_mask * 0.38, 0.0, 1.0)
+    humid_gate = np.clip(0.24 + moisture * 0.74 + lowland * 0.14 - mountain_mask * 0.18, 0.0, 1.0)
+    pale_gate = np.clip(0.34 + lowland * 0.38 + shoreline * 0.20 + (1.0 - arid) * 0.16, 0.0, 1.0)
+    cool_gate = np.clip(0.30 + cold_lat * 0.64 + moisture * 0.12 - arid * 0.16, 0.0, 1.0)
+
+    best_style_gate = np.zeros_like(x, dtype=np.float32)
+    second_style_gate = np.zeros_like(x, dtype=np.float32)
+    for style_index, gate in enumerate((warm_gate, red_gate, dark_gate, humid_gate, pale_gate, cool_gate)):
+        best_style_gate = np.where(style_map == style_index, gate, best_style_gate)
+        second_style_gate = np.where(second_style_map == style_index, gate, second_style_gate)
+    style_gate = second_style_gate * (1.0 - boundary_soft) + best_style_gate * boundary_soft
+
+    land_region = land.astype(np.float32) * non_ice_land
+    gain = strength * (1.35 + diversity * 1.05)
+    region_weight = (
+        (0.45 + boundary_soft * 0.55)
+        * gain
+        * style_gate
+        * bias_map
+        * province_texture
+        * land_region
+    )
+    region_weight = np.clip(region_weight, 0.0, 0.58 + diversity * 0.22)
+    debug = ((province_id.astype(np.float32) + 1.0) / float(province_count)) * land.astype(np.float32)
+    return target_color, region_weight, debug
 
 
 def save_rgb(path, arr):
@@ -970,6 +1097,8 @@ def build_maps_from_vectors(
     cold_lat = smoothstep(0.42, 0.88, lat_abs)
     arid = np.clip(desert_bias + (1.0 - moisture) * 0.45, 0.0, 1.0)
     non_ice_land = 1.0 - np.clip(ice_mask, 0.0, 1.0)
+    continent_lowland = 1.0 - smoothstep(threshold, threshold + cfg.continent_contrast * 1.8, land_field)
+    lowland = continent_lowland
     ochre_tint = np.array([126, 98, 50], dtype=np.float32)
     rust_tint = np.array([98, 50, 30], dtype=np.float32)
     dark_wet_tint = np.array([24, 58, 28], dtype=np.float32)
@@ -979,6 +1108,24 @@ def build_maps_from_vectors(
     basalt_tint = np.array([36, 38, 40], dtype=np.float32)
     salt_flat_tint = np.array([218, 210, 178], dtype=np.float32)
     clay_tint = np.array([146, 92, 58], dtype=np.float32)
+
+    regional_tint, regional_weight, regional_debug = build_continent_color_provinces(
+        cfg,
+        x,
+        y,
+        z,
+        land,
+        arid,
+        moisture,
+        mountain_mask,
+        lowland,
+        shoreline,
+        mineral_noise,
+        cold_lat,
+        non_ice_land,
+    )
+    land_color = color_blend(land_color, regional_tint, regional_weight)
+
     land_color = color_blend(
         land_color,
         ochre_tint,
@@ -1005,8 +1152,6 @@ def build_maps_from_vectors(
         rust_tint,
         np.clip(mineral_noise * mineral_exposure * cfg.mineral_tint_strength * non_ice_land, 0.0, 0.58),
     )
-    continent_lowland = 1.0 - smoothstep(threshold, threshold + cfg.continent_contrast * 1.8, land_field)
-    lowland = continent_lowland
     exposed_dry = np.clip(arid * (0.65 + mountain_mask * 0.35) * (0.45 + soil_noise * 0.55), 0.0, 1.0)
     basalt_exposure = np.clip((mountain_mask * 0.65 + mineral_noise * 0.35) * smoothstep(0.48, 0.90, mineral_noise), 0.0, 1.0)
     salt_basin = np.clip(arid * lowland * smoothstep(0.45, 0.95, soil_noise) * (1.0 - moisture * 0.55), 0.0, 1.0)
@@ -1086,6 +1231,7 @@ def build_maps_from_vectors(
         maps["_raw_height"] = raw_height
         maps["_continent_land"] = continent_land.astype(np.float32)
         maps["_island_land"] = island_land.astype(np.float32)
+        maps["_continent_color_region"] = regional_debug
     return maps
 
 
