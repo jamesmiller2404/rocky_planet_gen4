@@ -83,6 +83,7 @@ PRESETS = {
         "continent_color_variation": 0.48,
         "continent_color_scale": 2.60,
         "continent_color_diversity": 0.72,
+        "continent_color_blend_smoothness": 0.65,
         "ocean_color_variation": 0.18,
         "ocean_shallow_tint_strength": 0.38,
         "ocean_shelf_brightness": 0.00,
@@ -142,6 +143,7 @@ PRESETS = {
         "continent_color_variation": 0.44,
         "continent_color_scale": 4.20,
         "continent_color_diversity": 0.70,
+        "continent_color_blend_smoothness": 0.70,
         "ocean_color_variation": 0.24,
         "ocean_shallow_tint_strength": 0.56,
         "ocean_shelf_brightness": 0.00,
@@ -201,6 +203,7 @@ PRESETS = {
         "continent_color_variation": 0.52,
         "continent_color_scale": 2.00,
         "continent_color_diversity": 0.80,
+        "continent_color_blend_smoothness": 0.55,
         "ocean_color_variation": 0.14,
         "ocean_shallow_tint_strength": 0.24,
         "ocean_shelf_brightness": 0.00,
@@ -260,6 +263,7 @@ PRESETS = {
         "continent_color_variation": 0.58,
         "continent_color_scale": 2.70,
         "continent_color_diversity": 0.85,
+        "continent_color_blend_smoothness": 0.42,
         "ocean_color_variation": 0.08,
         "ocean_shallow_tint_strength": 0.16,
         "ocean_shelf_brightness": 0.00,
@@ -319,6 +323,7 @@ PRESETS = {
         "continent_color_variation": 0.34,
         "continent_color_scale": 2.10,
         "continent_color_diversity": 0.60,
+        "continent_color_blend_smoothness": 0.75,
         "ocean_color_variation": 0.16,
         "ocean_shallow_tint_strength": 0.18,
         "ocean_shelf_brightness": 0.00,
@@ -462,6 +467,7 @@ class PlanetConfig:
     continent_color_variation: float
     continent_color_scale: float
     continent_color_diversity: float
+    continent_color_blend_smoothness: float
     ocean_color_variation: float
     ocean_shallow_tint_strength: float
     ocean_shelf_brightness: float
@@ -759,6 +765,7 @@ def build_continent_color_provinces(
 
     scale = max(0.25, float(cfg.continent_color_scale))
     diversity = float(np.clip(cfg.continent_color_diversity, 0.0, 1.0))
+    blend_smoothness = float(np.clip(cfg.continent_color_blend_smoothness, 0.0, 1.0))
     province_count = int(np.clip(round(7.0 + scale * 4.2), 6, 38))
     rng = np.random.default_rng(int(cfg.seed) * 1709 + 9176)
 
@@ -797,9 +804,10 @@ def build_continent_color_provinces(
     second_color = CONTINENT_REGION_TINTS[second_style_map]
     bias_map = province_bias[province_id]
     boundary_margin = best_score - second_score
-    boundary_soft = smoothstep(0.010, 0.150 + (1.0 - diversity) * 0.060, boundary_margin)
-    boundary_color = (best_color + second_color) * 0.5
-    target_color = color_blend(boundary_color, best_color, boundary_soft)
+    blend_width = 0.045 + blend_smoothness * 0.360 + (1.0 - diversity) * 0.060
+    boundary_soft = smoothstep(0.006, blend_width, boundary_margin)
+    neighbor_mix = (1.0 - boundary_soft) * (0.16 + blend_smoothness * 0.84)
+    target_color = color_blend(best_color, second_color, neighbor_mix)
     province_texture = 0.82 + fbm_3d(x, y, z, scale * 5.2 + 3.0, 3, 0.50, cfg.seed + 6637) * 0.34
 
     warm_gate = np.clip(0.46 + arid * 0.40 + lowland * 0.22, 0.0, 1.0)
@@ -814,12 +822,12 @@ def build_continent_color_provinces(
     for style_index, gate in enumerate((warm_gate, red_gate, dark_gate, humid_gate, pale_gate, cool_gate)):
         best_style_gate = np.where(style_map == style_index, gate, best_style_gate)
         second_style_gate = np.where(second_style_map == style_index, gate, second_style_gate)
-    style_gate = second_style_gate * (1.0 - boundary_soft) + best_style_gate * boundary_soft
+    style_gate = best_style_gate * (1.0 - neighbor_mix) + second_style_gate * neighbor_mix
 
     land_region = land.astype(np.float32) * non_ice_land
     gain = strength * (1.35 + diversity * 1.05)
     region_weight = (
-        (0.45 + boundary_soft * 0.55)
+        (0.48 + boundary_soft * (0.52 - blend_smoothness * 0.16))
         * gain
         * style_gate
         * bias_map
