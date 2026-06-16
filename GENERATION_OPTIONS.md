@@ -186,6 +186,7 @@ These controls affect `color.png` only. They do not change land shape, height, n
 | `--land-brightness` | `0.00` | Overall continent land-layer brightness offset. Negative values darken land; positive values brighten land. |
 | `--land-contrast` | `1.00` | Overall continent land-layer contrast multiplier around mid gray. Values below `1.0` flatten land; values above `1.0` deepen contrast. |
 | `--ocean-base-color` | `#074876` | Base hex color for the ocean layer. The generator derives deep and shallow water shades from this color before applying shelf, depth, latitude, productivity, brightness, contrast, and final hue controls. |
+| `--ocean-flat-color-strength` | `0.00` | Final blend strength toward `--ocean-base-color` for every ocean color pixel. `0.0` keeps procedural ocean modeling; `1.0` forces a single flat ocean color after shelf, depth, current, tint, and ocean-ice color effects. |
 | `--ocean-color-variation` | `0.18` | Legacy overall ocean tint multiplier. It still contributes to shallow, depth, and latitude tinting. |
 | `--ocean-shallow-tint-strength` | `0.38` | Warm cyan/teal shallow-water tint on shelves, strongest in lower latitudes. |
 | `--ocean-shelf-brightness` | `0.00` | Brightness offset applied to rendered shallow-shelf water, separate from whole-ocean brightness. |
@@ -234,6 +235,9 @@ Examples:
 
 # Darker navy ocean base shade
 .\.venv\Scripts\python.exe rocky_planet_gen.py --preset earthlike --seed 42 --ocean-base-color "#03294f" --out output/navy_ocean
+
+# Single flat ocean color, no visible ocean color modeling
+.\.venv\Scripts\python.exe rocky_planet_gen.py --preset earthlike --seed 42 --ocean-base-color "#e8f0ee" --ocean-flat-color-strength 1 --out output/flat_ocean
 
 # Dimmer shelf cyan without darkening the whole ocean layer
 .\.venv\Scripts\python.exe rocky_planet_gen.py --preset earthlike --seed 42 --ocean-shelf-brightness -0.12 --ocean-shelf-contrast 0.85 --out output/shelf_cyan_balanced
@@ -311,6 +315,7 @@ Examples:
 | `land_brightness` | `0.0` | `0.0` | `0.0` | `0.0` | `0.0` |
 | `land_contrast` | `1.0` | `1.0` | `1.0` | `1.0` | `1.0` |
 | `ocean_base_color` | `#074876` | `#0b6d92` | `#063f70` | `#05315e` | `#294f72` |
+| `ocean_flat_color_strength` | `0.0` | `0.0` | `0.0` | `0.0` | `0.0` |
 | `ocean_color_variation` | `0.18` | `0.24` | `0.14` | `0.08` | `0.16` |
 | `ocean_shallow_tint_strength` | `0.38` | `0.56` | `0.24` | `0.16` | `0.18` |
 | `ocean_shelf_brightness` | `0.0` | `0.0` | `0.0` | `0.0` | `0.0` |

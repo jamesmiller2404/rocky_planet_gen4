@@ -88,6 +88,7 @@ PRESETS = {
         "continent_color_diversity": 0.72,
         "continent_color_blend_smoothness": 0.65,
         "ocean_base_color": "#074876",
+        "ocean_flat_color_strength": 0.00,
         "ocean_color_variation": 0.18,
         "ocean_shallow_tint_strength": 0.38,
         "ocean_shelf_brightness": 0.00,
@@ -169,6 +170,7 @@ PRESETS = {
         "continent_color_diversity": 0.70,
         "continent_color_blend_smoothness": 0.70,
         "ocean_base_color": "#0b6d92",
+        "ocean_flat_color_strength": 0.00,
         "ocean_color_variation": 0.24,
         "ocean_shallow_tint_strength": 0.56,
         "ocean_shelf_brightness": 0.00,
@@ -250,6 +252,7 @@ PRESETS = {
         "continent_color_diversity": 0.80,
         "continent_color_blend_smoothness": 0.55,
         "ocean_base_color": "#063f70",
+        "ocean_flat_color_strength": 0.00,
         "ocean_color_variation": 0.14,
         "ocean_shallow_tint_strength": 0.24,
         "ocean_shelf_brightness": 0.00,
@@ -331,6 +334,7 @@ PRESETS = {
         "continent_color_diversity": 0.85,
         "continent_color_blend_smoothness": 0.42,
         "ocean_base_color": "#05315e",
+        "ocean_flat_color_strength": 0.00,
         "ocean_color_variation": 0.08,
         "ocean_shallow_tint_strength": 0.16,
         "ocean_shelf_brightness": 0.00,
@@ -412,6 +416,7 @@ PRESETS = {
         "continent_color_diversity": 0.60,
         "continent_color_blend_smoothness": 0.75,
         "ocean_base_color": "#294f72",
+        "ocean_flat_color_strength": 0.00,
         "ocean_color_variation": 0.16,
         "ocean_shallow_tint_strength": 0.18,
         "ocean_shelf_brightness": 0.00,
@@ -912,6 +917,7 @@ class PlanetConfig:
     continent_color_diversity: float
     continent_color_blend_smoothness: float
     ocean_base_color: str
+    ocean_flat_color_strength: float
     ocean_color_variation: float
     ocean_shallow_tint_strength: float
     ocean_shelf_brightness: float
@@ -1913,6 +1919,11 @@ def build_maps_from_vectors(
     )
     ocean_color_with_ice = color_blend(color, ice_highlight, np.where(~land, ocean_ice_strength, 0.0))
     color = np.where(land[..., None], land_color, ocean_color_with_ice)
+    flat_ocean_strength = float(np.clip(cfg.ocean_flat_color_strength, 0.0, 1.0))
+    if flat_ocean_strength > 0.0:
+        flat_ocean_color = rgb_from_hex(cfg.ocean_base_color)
+        flat_ocean_mask = np.where(~land, flat_ocean_strength, 0.0)
+        color = color_blend(color, flat_ocean_color, flat_ocean_mask)
 
     continent_base_land_height = smoothstep(threshold - cfg.continent_contrast, threshold + cfg.continent_contrast, land_field)
     base_land_height = continent_base_land_height
