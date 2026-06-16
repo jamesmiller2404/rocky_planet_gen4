@@ -188,12 +188,31 @@ def ui_preset_defaults() -> dict:
     }
 
 
-def image_data_url(arr: np.ndarray) -> str:
-    image = Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8), "RGB")
+def preview_image_for_map(name: str, arr: np.ndarray) -> Image.Image:
+    clipped = np.clip(arr, 0, 255 if arr.ndim == 3 else 1)
+    if arr.ndim == 2:
+        clipped = clipped * 255.0
+        return Image.fromarray(clipped.astype(np.uint8), "L")
+    return Image.fromarray(clipped.astype(np.uint8), "RGB")
+
+
+def image_data_url(arr: np.ndarray, name: str = "color") -> str:
+    image = preview_image_for_map(name, arr)
     buffer = BytesIO()
     image.save(buffer, format="PNG")
     encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
     return f"data:image/png;base64,{encoded}"
+
+
+def preview_maps_payload(maps: dict) -> dict:
+    return {
+        name: {
+            "label": TEXTURE_MAP_LABELS.get(name, name.replace("_", " ").title()),
+            "image": image_data_url(maps[name], name),
+        }
+        for name in TEXTURE_MAP_NAMES
+        if name in maps
+    }
 
 
 def sanitized_name(value: str, fallback: str) -> str:
@@ -425,7 +444,8 @@ class PlanetUiHandler(BaseHTTPRequestHandler):
                 maps = build_maps(cfg)
                 self.write_json(
                     {
-                        "color": image_data_url(maps["color"]),
+                        "color": image_data_url(maps["color"], "color"),
+                        "maps": preview_maps_payload(maps),
                         "summary": {
                             "preset": cfg.preset,
                             "seed": cfg.seed,
@@ -617,6 +637,29 @@ img {
   display: block;
   width: 100%;
   height: auto;
+}
+.texture-figure {
+  display: grid;
+  grid-template-rows: auto minmax(180px, auto) auto;
+}
+.texture-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(150px, 220px);
+  gap: 10px;
+  align-items: center;
+  padding: 8px;
+  border-bottom: 1px solid var(--line);
+}
+.texture-toolbar label {
+  color: var(--muted);
+  font-size: 12px;
+}
+.texture-toolbar select {
+  min-height: 30px;
+}
+.texture-figure img {
+  min-height: 180px;
+  object-fit: contain;
 }
 .globe-figure {
   display: grid;
@@ -827,9 +870,13 @@ img {
   <section class="preview">
     <div class="status" id="status">Loading controls...</div>
     <div class="image-grid">
-      <figure>
-        <img id="colorPreview" alt="Color texture preview">
-        <figcaption>color texture preview</figcaption>
+      <figure class="texture-figure">
+        <div class="texture-toolbar">
+          <label for="previewMapSelect">Preview map</label>
+          <select id="previewMapSelect"></select>
+        </div>
+        <img id="colorPreview" alt="Texture map preview">
+        <figcaption id="texturePreviewCaption">texture map preview</figcaption>
       </figure>
       <figure class="globe-figure">
         <div class="globe-toolbar">
@@ -850,6 +897,7 @@ img {
 let schema = null;
 let debounceTimer = null;
 let inFlight = false;
+let previewMaps = {};
 
 const els = {
   preset: document.getElementById("preset"),
@@ -865,6 +913,8 @@ const els = {
   outputName: document.getElementById("outputName"),
   status: document.getElementById("status"),
   colorPreview: document.getElementById("colorPreview"),
+  previewMapSelect: document.getElementById("previewMapSelect"),
+  texturePreviewCaption: document.getElementById("texturePreviewCaption"),
   globeCanvas: document.getElementById("globeCanvas"),
   globePlayPause: document.getElementById("globePlayPause"),
   globeSpeed: document.getElementById("globeSpeed"),
@@ -991,6 +1041,7 @@ function renderControls() {
 
 function renderTextureMapOptions() {
   els.textureMapOptions.innerHTML = "";
+  els.previewMapSelect.innerHTML = "";
   for (const map of schema.texture_maps) {
     const label = document.createElement("label");
     label.className = "map-option";
@@ -1006,7 +1057,13 @@ function renderTextureMapOptions() {
 
     label.append(input, span);
     els.textureMapOptions.append(label);
+
+    const option = document.createElement("option");
+    option.value = map.key;
+    option.textContent = map.label;
+    els.previewMapSelect.appendChild(option);
   }
+  els.previewMapSelect.value = "color";
 }
 
 function syncValue(key) {
@@ -1052,6 +1109,26 @@ function setTextureMapSelection(checked) {
   for (const input of els.textureMapOptions.querySelectorAll("input[data-texture-map='1']")) {
     input.checked = checked;
   }
+}
+
+function setTexturePreviewMap(key) {
+  const map = previewMaps[key];
+  if (!map) {
+    els.colorPreview.removeAttribute("src");
+    els.texturePreviewCaption.textContent = "render a preview to inspect texture maps";
+    return;
+  }
+  els.colorPreview.src = map.image;
+  els.colorPreview.alt = `${map.label} texture map preview`;
+  els.texturePreviewCaption.textContent = `${map.label.toLowerCase()} texture map preview`;
+}
+
+function setPreviewMaps(maps) {
+  previewMaps = maps || {};
+  if (!previewMaps[els.previewMapSelect.value]) {
+    els.previewMapSelect.value = previewMaps.color ? "color" : Object.keys(previewMaps)[0] || "color";
+  }
+  setTexturePreviewMap(els.previewMapSelect.value);
 }
 
 function getPayload() {
@@ -1250,8 +1327,8 @@ async function renderPreview() {
   setStatus("Rendering preview...", "busy");
   try {
     const data = await postJson("/api/preview", getPayload());
-    els.colorPreview.src = data.color;
-    setGlobeTexture(data.color);
+    setPreviewMaps(data.maps || {color: {label: "Color", image: data.color}});
+    setGlobeTexture((data.maps && data.maps.color ? data.maps.color.image : data.color));
     setStatus(`Preview ready: ${data.summary.preset}, seed ${data.summary.seed}, ${data.summary.preview_size}`, "ok");
   } catch (error) {
     setStatus(error.message, "error");
@@ -1335,6 +1412,7 @@ async function boot() {
   els.landPalette.addEventListener("change", () => schedulePreview(0));
   els.seed.addEventListener("change", () => schedulePreview(0));
   els.previewWidth.addEventListener("change", () => schedulePreview(0));
+  els.previewMapSelect.addEventListener("change", () => setTexturePreviewMap(els.previewMapSelect.value));
   els.resolutionPreset.addEventListener("change", applyResolutionPreset);
   els.width.addEventListener("change", syncResolutionPreset);
   els.height.addEventListener("change", syncResolutionPreset);
