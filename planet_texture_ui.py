@@ -26,6 +26,8 @@ import numpy as np
 from PIL import Image
 
 from rocky_planet_gen import (
+    LAND_PALETTE_LABELS,
+    LAND_PALETTES,
     PRESETS,
     PlanetConfig,
     TEXTURE_MAP_NAMES,
@@ -102,6 +104,18 @@ PARAM_GROUPS = [
         ],
     },
     {
+        "name": "Cloud Layer",
+        "params": [
+            ("cloud_coverage", 0.00, 1.00, 0.01),
+            ("cloud_scale", 0.20, 6.00, 0.05),
+            ("cloud_detail", 1, 8, 1),
+            ("cloud_roughness", 0.10, 0.90, 0.01),
+            ("cloud_softness", 0.005, 0.60, 0.005),
+            ("cloud_land_correlation", 0.00, 1.00, 0.01),
+            ("cloud_opacity", 0.00, 1.00, 0.01),
+        ],
+    },
+    {
         "name": "Color Variation",
         "params": [
             ("ocean_current_strength", 0.00, 0.60, 0.01),
@@ -137,6 +151,12 @@ INT_PARAMS = {
     for group in PARAM_GROUPS
     for key, _minimum, _maximum, step in group["params"]
     if isinstance(step, int)
+}
+
+STRING_PARAMS = {
+    key
+    for key, value in PRESETS["earthlike"].items()
+    if isinstance(value, str)
 }
 
 UI_DEFAULT_OVERRIDES = {
@@ -195,7 +215,13 @@ def config_from_payload(payload: dict, preview: bool) -> PlanetConfig:
     for key in data:
         if key in params:
             value = params[key]
-            data[key] = int(value) if key in INT_PARAMS else float(value)
+            if key in STRING_PARAMS:
+                value = str(value)
+                if key == "land_palette" and value not in LAND_PALETTES:
+                    raise ValueError(f"Unknown land palette: {value}")
+                data[key] = value
+            else:
+                data[key] = int(value) if key in INT_PARAMS else float(value)
 
     if preview:
         width = int(payload.get("preview_width", 512))
@@ -224,6 +250,7 @@ TEXTURE_MAP_LABELS = {
     "land_mask": "Land mask",
     "shoreline_mask": "Shoreline mask",
     "ocean_depth": "Ocean depth",
+    "cloud_mask": "Cloud mask",
 }
 
 
@@ -247,7 +274,7 @@ def metadata_for_config(
         metadata["quad_sphere_face_size"] = face_size
     metadata["resolved_palette_rgb"] = {
         name: [int(round(channel)) for channel in color]
-        for name, color in vary_palette(cfg.seed, cfg.preset).items()
+        for name, color in vary_palette(cfg.seed, cfg.preset, cfg.land_palette).items()
     }
     return metadata
 
@@ -355,6 +382,10 @@ def default_payload() -> dict:
         "texture_maps": [
             {"key": key, "label": TEXTURE_MAP_LABELS.get(key, key.replace("_", " ").title())}
             for key in TEXTURE_MAP_NAMES
+        ],
+        "land_palettes": [
+            {"key": key, "label": LAND_PALETTE_LABELS.get(key, key.replace("_", " ").title())}
+            for key in LAND_PALETTES
         ],
     }
 
@@ -693,6 +724,10 @@ img {
         <select id="preset"></select>
       </div>
       <div class="row">
+        <label for="landPalette">Land palette</label>
+        <select id="landPalette"></select>
+      </div>
+      <div class="row">
         <label for="seed">Seed</label>
         <input id="seed" type="number" min="0" step="1" value="42">
       </div>
@@ -804,6 +839,7 @@ let inFlight = false;
 
 const els = {
   preset: document.getElementById("preset"),
+  landPalette: document.getElementById("landPalette"),
   seed: document.getElementById("seed"),
   previewWidth: document.getElementById("previewWidth"),
   resolutionPreset: document.getElementById("resolutionPreset"),
@@ -894,6 +930,14 @@ function renderControls() {
   }
   els.preset.value = "earthlike";
 
+  els.landPalette.innerHTML = "";
+  for (const palette of schema.land_palettes) {
+    const option = document.createElement("option");
+    option.value = palette.key;
+    option.textContent = palette.label;
+    els.landPalette.appendChild(option);
+  }
+
   els.paramGroups.innerHTML = "";
   for (const group of schema.param_groups) {
     const details = document.createElement("details");
@@ -968,6 +1012,7 @@ function applyPresetDefaults() {
       syncValue(key);
     }
   }
+  els.landPalette.value = defaults.land_palette || "natural_earth";
   els.outputName.value = "";
   schedulePreview(0);
 }
@@ -980,6 +1025,7 @@ function getParams() {
       params[param.key] = param.integer ? parseInt(slider.value, 10) : parseFloat(slider.value);
     }
   }
+  params.land_palette = els.landPalette.value;
   return params;
 }
 
@@ -1243,6 +1289,9 @@ async function loadPresetJson() {
     els.height.value = data.height;
     els.projection.value = data.projection === "quad_sphere" ? "quad_sphere" : "equirectangular";
     els.faceSize.value = data.face_size;
+    if (data.params.land_palette) {
+      els.landPalette.value = data.params.land_palette;
+    }
     syncResolutionPreset();
     syncFaceSizePreset();
     for (const [key, value] of Object.entries(data.params)) {
@@ -1269,6 +1318,7 @@ async function boot() {
   bindGlobeControls();
 
   els.preset.addEventListener("change", applyPresetDefaults);
+  els.landPalette.addEventListener("change", () => schedulePreview(0));
   els.seed.addEventListener("change", () => schedulePreview(0));
   els.previewWidth.addEventListener("change", () => schedulePreview(0));
   els.resolutionPreset.addEventListener("change", applyResolutionPreset);

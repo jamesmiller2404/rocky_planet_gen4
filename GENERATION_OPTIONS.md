@@ -21,6 +21,7 @@ Example:
 | Option | Default | Description |
 | --- | ---: | --- |
 | `--preset` | `earthlike` | Starting planet recipe. Choices: `archipelago`, `dry_rocky`, `earthlike`, `frozen_ocean`, `supercontinent`. |
+| `--land-palette` | preset default | Land-source color palette. Choices: `alien_mineral`, `basaltic_dark`, `cold_tundra`, `dry_savanna`, `lush_green`, `natural_earth`, `pale_sedimentary`, `red_desert`. |
 | `--seed` | `42` | Random seed. Same seed and same options produce the same maps. |
 | `--width` | `2048` | Equirectangular output width in pixels. Minimum `64`. |
 | `--height` | `1024` | Equirectangular output height in pixels. Minimum `32`. |
@@ -41,6 +42,7 @@ For normal equirectangular output:
 | `land_mask.png` | White land, black ocean. |
 | `shoreline_mask.png` | Shoreline/beach influence mask. |
 | `ocean_depth.png` | Ocean depth mask. |
+| `cloud_mask.png` | Separate grayscale cloud opacity mask based on softened land-form-style weather math. |
 | `preview.png` | Rendered globe preview. |
 | `preview.html` | Interactive rotating globe preview using `color.png`. |
 | `preset.json` | Resolved config, output projection, and seed-varied palette. |
@@ -122,13 +124,28 @@ It also writes cubemap-cross atlases such as `quad_sphere/color_cubemap_cross.pn
 | `--mountain-sharpness` | `0.68` | Ridge sharpness. Higher values make tighter, sharper mountain features. |
 | `--mountain-height` | `0.62` | Height contribution from mountains. Higher values make stronger height-map relief. |
 
+## Cloud Layer
+
+These controls write `cloud_mask.png` only. They do not bake clouds into `color.png`, height, normal, roughness, land, shoreline, or ocean-depth maps.
+
+| Option | Earthlike Default | Description |
+| --- | ---: | --- |
+| `--cloud-coverage` | `0.46` | Approximate fraction of the map covered by cloud opacity. `0.0` disables the layer. |
+| `--cloud-scale` | `1.25` | Size of broad cloud systems. Lower values create larger, softer formations; higher values create smaller systems. |
+| `--cloud-detail` | `5` | Number of noise octaves used in the cloud weather field. |
+| `--cloud-roughness` | `0.48` | Persistence of cloud detail across octaves. Higher values add more ragged breakup. |
+| `--cloud-softness` | `0.22` | Width of the soft threshold around cloud edges. Higher values make broader, hazier transitions. |
+| `--cloud-land-correlation` | `0.55` | How strongly clouds echo the softened continent/land-form field. `0.0` is independent weather noise; `1.0` follows broad land forms more closely. |
+| `--cloud-opacity` | `0.78` | Maximum grayscale opacity written into `cloud_mask.png`. |
+
 ## Color Variation
 
-These controls affect `color.png` only. They do not change land shape, height, normal, masks, or roughness.
+These controls affect `color.png` only. They do not change land shape, height, normal, masks, cloud mask, or roughness.
 
 | Option | Earthlike Default | Description |
 | --- | ---: | --- |
 | `--ocean-current-strength` | `0.18` | Existing broad ocean color variation between deep and mid ocean colors. |
+| `--land-palette` | `natural_earth` | Source color set for land biomes, continent color provinces, and contextual geologic tints. |
 | `--land-color-variation` | `0.22` | Overall strength of contextual land tints such as ochre soil, tundra, and pale highlands. |
 | `--continent-color-variation` | `0.48` | Broad seeded color variation between continents and large parts of continents, constrained by climate, elevation, and geology. |
 | `--continent-color-scale` | `2.60` | Size of continent color provinces. Lower values create broader continental identities; higher values create smaller regional patches. |
@@ -219,6 +236,13 @@ Examples:
 | `mountain_scale` | `16.0` | `20.0` | `11.0` | `18.0` | `13.0` |
 | `mountain_sharpness` | `0.68` | `0.55` | `0.78` | `0.86` | `0.60` |
 | `mountain_height` | `0.62` | `0.42` | `0.78` | `0.86` | `0.38` |
+| `cloud_coverage` | `0.46` | `0.54` | `0.34` | `0.18` | `0.56` |
+| `cloud_scale` | `1.25` | `1.75` | `0.95` | `1.15` | `1.10` |
+| `cloud_detail` | `5` | `5` | `4` | `4` | `5` |
+| `cloud_roughness` | `0.48` | `0.50` | `0.44` | `0.46` | `0.46` |
+| `cloud_softness` | `0.22` | `0.24` | `0.20` | `0.16` | `0.28` |
+| `cloud_land_correlation` | `0.55` | `0.48` | `0.66` | `0.42` | `0.60` |
+| `cloud_opacity` | `0.78` | `0.82` | `0.72` | `0.62` | `0.82` |
 | `polar_ice_size` | `0.16` | `0.08` | `0.20` | `0.04` | `0.48` |
 | `polar_ice_scale` | `2.15` | `2.80` | `1.65` | `2.40` | `1.30` |
 | `polar_ice_complexity` | `0.62` | `0.76` | `0.48` | `0.56` | `0.58` |
@@ -227,6 +251,7 @@ Examples:
 | `polar_ice_solidity` | `0.62` | `0.56` | `0.74` | `0.44` | `0.82` |
 | `snow_threshold` | `0.74` | `0.82` | `0.70` | `0.88` | `0.48` |
 | `ocean_current_strength` | `0.18` | `0.24` | `0.12` | `0.08` | `0.10` |
+| `land_palette` | `natural_earth` | `lush_green` | `dry_savanna` | `red_desert` | `cold_tundra` |
 | `land_color_variation` | `0.22` | `0.26` | `0.24` | `0.34` | `0.16` |
 | `continent_color_variation` | `0.48` | `0.44` | `0.52` | `0.58` | `0.34` |
 | `continent_color_scale` | `2.6` | `4.2` | `2.0` | `2.7` | `2.1` |

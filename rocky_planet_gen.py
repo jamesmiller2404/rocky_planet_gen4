@@ -13,6 +13,7 @@ Outputs:
     land_mask.png
     shoreline_mask.png
     ocean_depth.png
+    cloud_mask.png
     preview.png
     preview.html
     preset.json
@@ -79,6 +80,7 @@ PRESETS = {
         "polar_ice_solidity": 0.62,
         "snow_threshold": 0.74,
         "ocean_current_strength": 0.18,
+        "land_palette": "natural_earth",
         "land_color_variation": 0.22,
         "continent_color_variation": 0.48,
         "continent_color_scale": 2.60,
@@ -102,6 +104,13 @@ PRESETS = {
         "basalt_tint_strength": 0.08,
         "salt_flat_tint_strength": 0.05,
         "clay_tint_strength": 0.10,
+        "cloud_coverage": 0.46,
+        "cloud_scale": 1.25,
+        "cloud_detail": 5,
+        "cloud_roughness": 0.48,
+        "cloud_softness": 0.22,
+        "cloud_land_correlation": 0.55,
+        "cloud_opacity": 0.78,
     },
     "archipelago": {
         "land_coverage": 0.32,
@@ -139,6 +148,7 @@ PRESETS = {
         "polar_ice_solidity": 0.56,
         "snow_threshold": 0.82,
         "ocean_current_strength": 0.24,
+        "land_palette": "lush_green",
         "land_color_variation": 0.26,
         "continent_color_variation": 0.44,
         "continent_color_scale": 4.20,
@@ -162,6 +172,13 @@ PRESETS = {
         "basalt_tint_strength": 0.10,
         "salt_flat_tint_strength": 0.03,
         "clay_tint_strength": 0.12,
+        "cloud_coverage": 0.54,
+        "cloud_scale": 1.75,
+        "cloud_detail": 5,
+        "cloud_roughness": 0.50,
+        "cloud_softness": 0.24,
+        "cloud_land_correlation": 0.48,
+        "cloud_opacity": 0.82,
     },
     "supercontinent": {
         "land_coverage": 0.58,
@@ -199,6 +216,7 @@ PRESETS = {
         "polar_ice_solidity": 0.74,
         "snow_threshold": 0.70,
         "ocean_current_strength": 0.12,
+        "land_palette": "dry_savanna",
         "land_color_variation": 0.24,
         "continent_color_variation": 0.52,
         "continent_color_scale": 2.00,
@@ -222,6 +240,13 @@ PRESETS = {
         "basalt_tint_strength": 0.12,
         "salt_flat_tint_strength": 0.08,
         "clay_tint_strength": 0.16,
+        "cloud_coverage": 0.34,
+        "cloud_scale": 0.95,
+        "cloud_detail": 4,
+        "cloud_roughness": 0.44,
+        "cloud_softness": 0.20,
+        "cloud_land_correlation": 0.66,
+        "cloud_opacity": 0.72,
     },
     "dry_rocky": {
         "land_coverage": 0.68,
@@ -259,6 +284,7 @@ PRESETS = {
         "polar_ice_solidity": 0.44,
         "snow_threshold": 0.88,
         "ocean_current_strength": 0.08,
+        "land_palette": "red_desert",
         "land_color_variation": 0.34,
         "continent_color_variation": 0.58,
         "continent_color_scale": 2.70,
@@ -282,6 +308,13 @@ PRESETS = {
         "basalt_tint_strength": 0.18,
         "salt_flat_tint_strength": 0.14,
         "clay_tint_strength": 0.12,
+        "cloud_coverage": 0.18,
+        "cloud_scale": 1.15,
+        "cloud_detail": 4,
+        "cloud_roughness": 0.46,
+        "cloud_softness": 0.16,
+        "cloud_land_correlation": 0.42,
+        "cloud_opacity": 0.62,
     },
     "frozen_ocean": {
         "land_coverage": 0.28,
@@ -319,6 +352,7 @@ PRESETS = {
         "polar_ice_solidity": 0.82,
         "snow_threshold": 0.48,
         "ocean_current_strength": 0.10,
+        "land_palette": "cold_tundra",
         "land_color_variation": 0.16,
         "continent_color_variation": 0.34,
         "continent_color_scale": 2.10,
@@ -342,31 +376,347 @@ PRESETS = {
         "basalt_tint_strength": 0.08,
         "salt_flat_tint_strength": 0.03,
         "clay_tint_strength": 0.06,
+        "cloud_coverage": 0.56,
+        "cloud_scale": 1.10,
+        "cloud_detail": 5,
+        "cloud_roughness": 0.46,
+        "cloud_softness": 0.28,
+        "cloud_land_correlation": 0.60,
+        "cloud_opacity": 0.82,
     },
 }
 
 
-COLORS = {
+OCEAN_COLORS = {
     "deep_ocean": np.array([4, 20, 66], dtype=np.float32),
     "ocean_mid": np.array([7, 72, 118], dtype=np.float32),
     "shallow_ocean": np.array([35, 154, 166], dtype=np.float32),
-    "beach": np.array([196, 178, 119], dtype=np.float32),
-    "dark_forest": np.array([6, 54, 18], dtype=np.float32),
-    "forest": np.array([18, 125, 34], dtype=np.float32),
-    "grass": np.array([70, 155, 38], dtype=np.float32),
-    "dry_plain": np.array([94, 76, 42], dtype=np.float32),
-    "desert": np.array([128, 86, 45], dtype=np.float32),
-    "rock": np.array([88, 84, 76], dtype=np.float32),
-    "snow": np.array([235, 242, 238], dtype=np.float32),
-    "ice": np.array([194, 228, 240], dtype=np.float32),
 }
 
 
-def vary_palette(seed, preset):
+LAND_PALETTE_LABELS = {
+    "natural_earth": "Natural Earth",
+    "lush_green": "Lush Green",
+    "dry_savanna": "Dry Savanna",
+    "red_desert": "Red Desert",
+    "basaltic_dark": "Basaltic Dark",
+    "pale_sedimentary": "Pale Sedimentary",
+    "cold_tundra": "Cold Tundra",
+    "alien_mineral": "Alien Mineral",
+}
+
+
+LAND_PALETTE_DATA = {
+    "natural_earth": {
+        "colors": {
+            "beach": [196, 178, 119],
+            "dark_forest": [6, 54, 18],
+            "forest": [18, 125, 34],
+            "grass": [70, 155, 38],
+            "dry_plain": [94, 76, 42],
+            "desert": [128, 86, 45],
+            "rock": [88, 84, 76],
+            "snow": [235, 242, 238],
+            "ice": [194, 228, 240],
+        },
+        "region_tints": [
+            [158, 126, 62],
+            [150, 60, 32],
+            [32, 35, 36],
+            [30, 92, 38],
+            [194, 172, 108],
+            [70, 106, 100],
+        ],
+        "tints": {
+            "ochre": [126, 98, 50],
+            "rust": [98, 50, 30],
+            "dark_wet": [24, 58, 28],
+            "cool_tundra": [70, 100, 70],
+            "pale_highland": [118, 112, 94],
+            "iron_oxide": [122, 48, 28],
+            "basalt": [36, 38, 40],
+            "salt_flat": [218, 210, 178],
+            "clay": [146, 92, 58],
+            "solid_ice": [244, 248, 248],
+        },
+    },
+    "lush_green": {
+        "colors": {
+            "beach": [204, 190, 126],
+            "dark_forest": [5, 46, 20],
+            "forest": [16, 118, 42],
+            "grass": [72, 172, 62],
+            "dry_plain": [104, 120, 54],
+            "desert": [148, 114, 58],
+            "rock": [84, 90, 72],
+            "snow": [235, 242, 236],
+            "ice": [190, 226, 236],
+        },
+        "region_tints": [
+            [126, 146, 62],
+            [114, 76, 42],
+            [42, 50, 44],
+            [28, 104, 44],
+            [176, 166, 106],
+            [68, 114, 86],
+        ],
+        "tints": {
+            "ochre": [122, 112, 52],
+            "rust": [92, 54, 32],
+            "dark_wet": [18, 58, 28],
+            "cool_tundra": [70, 112, 78],
+            "pale_highland": [126, 130, 100],
+            "iron_oxide": [112, 54, 30],
+            "basalt": [34, 40, 38],
+            "salt_flat": [216, 210, 178],
+            "clay": [132, 94, 62],
+            "solid_ice": [244, 248, 248],
+        },
+    },
+    "dry_savanna": {
+        "colors": {
+            "beach": [210, 190, 128],
+            "dark_forest": [28, 58, 24],
+            "forest": [58, 104, 38],
+            "grass": [128, 152, 60],
+            "dry_plain": [146, 120, 58],
+            "desert": [176, 128, 64],
+            "rock": [104, 94, 76],
+            "snow": [236, 240, 232],
+            "ice": [198, 226, 232],
+        },
+        "region_tints": [
+            [172, 136, 68],
+            [146, 82, 44],
+            [56, 52, 44],
+            [70, 104, 44],
+            [202, 176, 112],
+            [92, 106, 78],
+        ],
+        "tints": {
+            "ochre": [150, 116, 54],
+            "rust": [112, 62, 34],
+            "dark_wet": [34, 66, 28],
+            "cool_tundra": [92, 110, 76],
+            "pale_highland": [142, 128, 96],
+            "iron_oxide": [136, 58, 30],
+            "basalt": [48, 44, 40],
+            "salt_flat": [224, 212, 174],
+            "clay": [160, 102, 58],
+            "solid_ice": [244, 248, 248],
+        },
+    },
+    "red_desert": {
+        "colors": {
+            "beach": [202, 170, 112],
+            "dark_forest": [34, 50, 22],
+            "forest": [72, 94, 34],
+            "grass": [118, 118, 46],
+            "dry_plain": [138, 76, 42],
+            "desert": [178, 82, 44],
+            "rock": [104, 76, 64],
+            "snow": [236, 240, 234],
+            "ice": [198, 224, 232],
+        },
+        "region_tints": [
+            [174, 94, 46],
+            [156, 48, 30],
+            [48, 38, 36],
+            [84, 86, 36],
+            [208, 142, 84],
+            [108, 86, 76],
+        ],
+        "tints": {
+            "ochre": [154, 86, 42],
+            "rust": [122, 44, 28],
+            "dark_wet": [38, 54, 24],
+            "cool_tundra": [96, 92, 74],
+            "pale_highland": [138, 104, 88],
+            "iron_oxide": [152, 42, 24],
+            "basalt": [42, 36, 36],
+            "salt_flat": [226, 202, 164],
+            "clay": [168, 78, 48],
+            "solid_ice": [244, 248, 248],
+        },
+    },
+    "basaltic_dark": {
+        "colors": {
+            "beach": [158, 150, 112],
+            "dark_forest": [8, 38, 28],
+            "forest": [24, 84, 54],
+            "grass": [70, 110, 62],
+            "dry_plain": [70, 76, 58],
+            "desert": [96, 84, 62],
+            "rock": [52, 54, 54],
+            "snow": [230, 236, 234],
+            "ice": [182, 214, 224],
+        },
+        "region_tints": [
+            [104, 94, 62],
+            [94, 52, 42],
+            [24, 28, 30],
+            [28, 76, 58],
+            [154, 146, 106],
+            [68, 92, 92],
+        ],
+        "tints": {
+            "ochre": [104, 92, 56],
+            "rust": [82, 48, 38],
+            "dark_wet": [14, 48, 36],
+            "cool_tundra": [68, 92, 84],
+            "pale_highland": [104, 106, 96],
+            "iron_oxide": [104, 44, 34],
+            "basalt": [22, 24, 26],
+            "salt_flat": [194, 190, 166],
+            "clay": [118, 76, 60],
+            "solid_ice": [240, 246, 246],
+        },
+    },
+    "pale_sedimentary": {
+        "colors": {
+            "beach": [222, 204, 144],
+            "dark_forest": [34, 70, 32],
+            "forest": [76, 126, 58],
+            "grass": [136, 166, 86],
+            "dry_plain": [170, 148, 92],
+            "desert": [206, 168, 104],
+            "rock": [138, 130, 108],
+            "snow": [240, 244, 238],
+            "ice": [202, 230, 236],
+        },
+        "region_tints": [
+            [196, 164, 94],
+            [148, 92, 54],
+            [76, 72, 62],
+            [88, 132, 70],
+            [224, 202, 136],
+            [112, 132, 118],
+        ],
+        "tints": {
+            "ochre": [166, 138, 78],
+            "rust": [116, 72, 46],
+            "dark_wet": [44, 72, 36],
+            "cool_tundra": [102, 126, 94],
+            "pale_highland": [168, 160, 128],
+            "iron_oxide": [132, 62, 38],
+            "basalt": [70, 68, 64],
+            "salt_flat": [232, 222, 188],
+            "clay": [172, 116, 72],
+            "solid_ice": [246, 250, 248],
+        },
+    },
+    "cold_tundra": {
+        "colors": {
+            "beach": [176, 166, 124],
+            "dark_forest": [18, 54, 42],
+            "forest": [42, 96, 66],
+            "grass": [92, 132, 88],
+            "dry_plain": [100, 106, 80],
+            "desert": [130, 116, 82],
+            "rock": [82, 88, 86],
+            "snow": [238, 244, 242],
+            "ice": [186, 224, 238],
+        },
+        "region_tints": [
+            [124, 118, 76],
+            [108, 68, 48],
+            [42, 48, 50],
+            [44, 96, 76],
+            [174, 164, 120],
+            [76, 112, 112],
+        ],
+        "tints": {
+            "ochre": [116, 106, 70],
+            "rust": [88, 58, 44],
+            "dark_wet": [20, 58, 48],
+            "cool_tundra": [72, 112, 104],
+            "pale_highland": [118, 124, 116],
+            "iron_oxide": [104, 54, 40],
+            "basalt": [40, 44, 46],
+            "salt_flat": [210, 210, 188],
+            "clay": [130, 96, 76],
+            "solid_ice": [246, 250, 250],
+        },
+    },
+    "alien_mineral": {
+        "colors": {
+            "beach": [188, 180, 126],
+            "dark_forest": [16, 44, 56],
+            "forest": [26, 104, 92],
+            "grass": [90, 152, 96],
+            "dry_plain": [112, 88, 118],
+            "desert": [154, 96, 126],
+            "rock": [78, 76, 100],
+            "snow": [234, 240, 242],
+            "ice": [184, 226, 238],
+        },
+        "region_tints": [
+            [108, 150, 92],
+            [142, 70, 112],
+            [42, 52, 72],
+            [36, 116, 104],
+            [188, 170, 116],
+            [82, 110, 132],
+        ],
+        "tints": {
+            "ochre": [118, 102, 70],
+            "rust": [112, 56, 82],
+            "dark_wet": [18, 54, 58],
+            "cool_tundra": [74, 112, 116],
+            "pale_highland": [126, 118, 132],
+            "iron_oxide": [132, 52, 84],
+            "basalt": [34, 38, 54],
+            "salt_flat": [218, 214, 184],
+            "clay": [148, 86, 112],
+            "solid_ice": [244, 248, 250],
+        },
+    },
+}
+
+
+LAND_PALETTES = {
+    name: {
+        "colors": {
+            key: np.array(value, dtype=np.float32)
+            for key, value in palette["colors"].items()
+        },
+        "region_tints": np.array(palette["region_tints"], dtype=np.float32),
+        "tints": {
+            key: np.array(value, dtype=np.float32)
+            for key, value in palette["tints"].items()
+        },
+    }
+    for name, palette in LAND_PALETTE_DATA.items()
+}
+
+
+COLORS = {**OCEAN_COLORS, **LAND_PALETTES["natural_earth"]["colors"]}
+
+
+def normalize_land_palette(name):
+    key = str(name or "natural_earth")
+    if key not in LAND_PALETTES:
+        choices = ", ".join(sorted(LAND_PALETTES))
+        raise ValueError(f"Unknown land palette: {key}. Choices: {choices}")
+    return key
+
+
+def land_palette_values(name):
+    return LAND_PALETTES[normalize_land_palette(name)]
+
+
+def source_colors_for_land_palette(name):
+    palette = land_palette_values(name)
+    return {**OCEAN_COLORS, **palette["colors"]}
+
+
+def vary_palette(seed, preset, land_palette="natural_earth"):
+    land_palette = normalize_land_palette(land_palette)
     rng = np.random.default_rng(seed * 1009 + sum(ord(c) for c in preset))
     global_hue = rng.uniform(-0.035, 0.035)
     global_sat = rng.uniform(0.88, 1.18)
     global_val = rng.uniform(0.90, 1.10)
+    source_colors = source_colors_for_land_palette(land_palette)
     category_hue = {
         "deep_ocean": rng.uniform(-0.045, 0.045),
         "ocean_mid": rng.uniform(-0.045, 0.045),
@@ -411,7 +761,7 @@ def vary_palette(seed, preset):
     }
 
     palette = {}
-    for name, rgb in COLORS.items():
+    for name, rgb in source_colors.items():
         r, g, b = (rgb / 255.0).tolist()
         h, s, v = colorsys.rgb_to_hsv(r, g, b)
         h = (h + global_hue + category_hue[name]) % 1.0
@@ -463,6 +813,7 @@ class PlanetConfig:
     polar_ice_solidity: float
     snow_threshold: float
     ocean_current_strength: float
+    land_palette: str
     land_color_variation: float
     continent_color_variation: float
     continent_color_scale: float
@@ -486,6 +837,13 @@ class PlanetConfig:
     basalt_tint_strength: float
     salt_flat_tint_strength: float
     clay_tint_strength: float
+    cloud_coverage: float
+    cloud_scale: float
+    cloud_detail: int
+    cloud_roughness: float
+    cloud_softness: float
+    cloud_land_correlation: float
+    cloud_opacity: float
 
 
 def smoothstep(edge0, edge1, x):
@@ -506,6 +864,40 @@ def normalize01(a, value_range=None):
     if amax - amin < 1e-9:
         return np.zeros_like(a)
     return (a - amin) / (amax - amin)
+
+
+def build_cloud_field(cfg, x, y, z, lat, land_field, land_threshold):
+    land_correlation = float(np.clip(cfg.cloud_land_correlation, 0.0, 1.0))
+    scale = max(0.20, float(cfg.cloud_scale))
+    detail = max(1, int(cfg.cloud_detail))
+    roughness = float(np.clip(cfg.cloud_roughness, 0.10, 0.95))
+
+    broad = fbm_3d(x, y, z, scale, detail, roughness, cfg.seed + 9011)
+    weather = fbm_3d(x, y, z, scale * 3.4 + 1.0, max(2, min(6, detail + 1)), 0.56, cfg.seed + 9029)
+    wisps = fbm_3d(x, y, z, scale * 8.5 + 3.0, 3, 0.58, cfg.seed + 9043)
+
+    land_width = max(float(cfg.continent_contrast) * 3.5, 0.12)
+    soft_land_form = smoothstep(land_threshold - land_width, land_threshold + land_width, land_field)
+    lat_band = 1.0 - np.abs(np.sin(lat)) * 0.30
+
+    field = broad * 0.58 + weather * 0.28 + wisps * 0.14
+    field = lerp(field, field * 0.55 + soft_land_form * 0.45, land_correlation)
+    field = field * (0.86 + lat_band * 0.14)
+    return field.astype(np.float32)
+
+
+def cloud_mask_from_field(cfg, cloud_field, cloud_threshold):
+    coverage = float(np.clip(cfg.cloud_coverage, 0.0, 1.0))
+    opacity = float(np.clip(cfg.cloud_opacity, 0.0, 1.0))
+    if coverage <= 0.0 or opacity <= 0.0:
+        return np.zeros_like(cloud_field, dtype=np.float32)
+    if coverage >= 1.0:
+        return np.full_like(cloud_field, opacity, dtype=np.float32)
+
+    softness = max(0.005, float(cfg.cloud_softness))
+    mask = smoothstep(cloud_threshold - softness, cloud_threshold + softness, cloud_field)
+    texture = 0.72 + normalize01(cloud_field) * 0.28
+    return np.clip(mask * texture * opacity, 0.0, 1.0).astype(np.float32)
 
 
 def distance_from_mask(mask, wrap_x=False):
@@ -728,19 +1120,6 @@ def color_blend(a, b, t):
     return a * (1.0 - t[..., None]) + b * t[..., None]
 
 
-CONTINENT_REGION_TINTS = np.array(
-    [
-        [158, 126, 62],   # warm sedimentary plains
-        [150, 60, 32],    # oxidized craton
-        [32, 35, 36],     # dark volcanic shield
-        [30, 92, 38],     # humid lowland basin
-        [194, 172, 108],  # pale limestone or dry sediment
-        [70, 106, 100],   # cool old shield
-    ],
-    dtype=np.float32,
-)
-
-
 def build_continent_color_provinces(
     cfg,
     x,
@@ -766,12 +1145,13 @@ def build_continent_color_provinces(
     scale = max(0.25, float(cfg.continent_color_scale))
     diversity = float(np.clip(cfg.continent_color_diversity, 0.0, 1.0))
     blend_smoothness = float(np.clip(cfg.continent_color_blend_smoothness, 0.0, 1.0))
+    region_tints = land_palette_values(cfg.land_palette)["region_tints"]
     province_count = int(np.clip(round(7.0 + scale * 4.2), 6, 38))
     rng = np.random.default_rng(int(cfg.seed) * 1709 + 9176)
 
     anchors = rng.normal(size=(province_count, 3)).astype(np.float32)
     anchors /= np.linalg.norm(anchors, axis=1, keepdims=True)
-    styles = (np.arange(province_count, dtype=np.int32) % len(CONTINENT_REGION_TINTS)).astype(np.int32)
+    styles = (np.arange(province_count, dtype=np.int32) % len(region_tints)).astype(np.int32)
     rng.shuffle(styles)
     province_bias = rng.uniform(0.82, 1.24, province_count).astype(np.float32)
 
@@ -800,8 +1180,8 @@ def build_continent_color_provinces(
 
     style_map = styles[province_id]
     second_style_map = styles[second_province_id]
-    best_color = CONTINENT_REGION_TINTS[style_map]
-    second_color = CONTINENT_REGION_TINTS[second_style_map]
+    best_color = region_tints[style_map]
+    second_color = region_tints[second_style_map]
     bias_map = province_bias[province_id]
     boundary_margin = best_score - second_score
     blend_width = 0.045 + blend_smoothness * 0.360 + (1.0 - diversity) * 0.060
@@ -918,12 +1298,13 @@ def build_maps_from_vectors(
     lon,
     normal_wrap_x=True,
     land_threshold=None,
+    cloud_threshold=None,
     moisture_range=None,
     height_range=None,
     return_raw_stats=False,
 ):
     lat_abs = np.abs(np.sin(lat))
-    colors = vary_palette(cfg.seed, cfg.preset)
+    colors = vary_palette(cfg.seed, cfg.preset, cfg.land_palette)
 
     continent = fbm_3d(
         x,
@@ -956,6 +1337,14 @@ def build_maps_from_vectors(
     map_height, map_width = x.shape
     island_land = np.zeros_like(continent_land, dtype=bool)
     land = continent_land
+    cloud_field = build_cloud_field(cfg, x, y, z, lat, land_field, threshold)
+    if cloud_threshold is None:
+        cloud_threshold = (
+            float(np.quantile(cloud_field, 1.0 - float(np.clip(cfg.cloud_coverage, 0.0, 1.0))))
+            if 0.0 < cfg.cloud_coverage < 1.0
+            else 1.0
+        )
+    cloud_mask = cloud_mask_from_field(cfg, cloud_field, float(cloud_threshold))
 
     continent_shoreline_distance = np.abs(land_field - threshold)
     continent_shoreline = 1.0 - smoothstep(0.0, max(cfg.beach_width, 0.005), continent_shoreline_distance)
@@ -1107,15 +1496,16 @@ def build_maps_from_vectors(
     non_ice_land = 1.0 - np.clip(ice_mask, 0.0, 1.0)
     continent_lowland = 1.0 - smoothstep(threshold, threshold + cfg.continent_contrast * 1.8, land_field)
     lowland = continent_lowland
-    ochre_tint = np.array([126, 98, 50], dtype=np.float32)
-    rust_tint = np.array([98, 50, 30], dtype=np.float32)
-    dark_wet_tint = np.array([24, 58, 28], dtype=np.float32)
-    cool_tundra_tint = np.array([70, 100, 70], dtype=np.float32)
-    pale_highland_tint = np.array([118, 112, 94], dtype=np.float32)
-    iron_oxide_tint = np.array([122, 48, 28], dtype=np.float32)
-    basalt_tint = np.array([36, 38, 40], dtype=np.float32)
-    salt_flat_tint = np.array([218, 210, 178], dtype=np.float32)
-    clay_tint = np.array([146, 92, 58], dtype=np.float32)
+    land_tints = land_palette_values(cfg.land_palette)["tints"]
+    ochre_tint = land_tints["ochre"]
+    rust_tint = land_tints["rust"]
+    dark_wet_tint = land_tints["dark_wet"]
+    cool_tundra_tint = land_tints["cool_tundra"]
+    pale_highland_tint = land_tints["pale_highland"]
+    iron_oxide_tint = land_tints["iron_oxide"]
+    basalt_tint = land_tints["basalt"]
+    salt_flat_tint = land_tints["salt_flat"]
+    clay_tint = land_tints["clay"]
 
     regional_tint, regional_weight, regional_debug = build_continent_color_provinces(
         cfg,
@@ -1188,7 +1578,7 @@ def build_maps_from_vectors(
     land_color = land_color + cfg.land_brightness * 255.0
     land_color = np.clip(land_color, 0.0, 255.0)
     ice_solidity = np.clip(cfg.polar_ice_solidity, 0.0, 1.0)
-    solid_ice_tint = np.array([244, 248, 248], dtype=np.float32)
+    solid_ice_tint = land_tints["solid_ice"]
     ice_highlight = color_blend(
         colors["ice"],
         colors["snow"],
@@ -1232,9 +1622,11 @@ def build_maps_from_vectors(
         "land_mask": land.astype(np.float32),
         "shoreline_mask": shoreline,
         "ocean_depth": ocean_depth,
+        "cloud_mask": cloud_mask,
     }
     if return_raw_stats:
         maps["_land_field"] = land_field
+        maps["_cloud_field"] = cloud_field
         maps["_moisture_input"] = moisture_input
         maps["_raw_height"] = raw_height
         maps["_continent_land"] = continent_land.astype(np.float32)
@@ -1284,8 +1676,11 @@ def build_quad_sphere_maps(cfg, face_size):
 
     all_moisture = np.concatenate([maps["_moisture_input"].ravel() for maps in probe_maps.values()])
     all_height = np.concatenate([maps["_raw_height"].ravel() for maps in probe_maps.values()])
+    all_cloud = np.concatenate([maps["_cloud_field"].ravel() for maps in probe_maps.values()])
     moisture_range = (float(np.min(all_moisture)), float(np.max(all_moisture)))
     height_range = (float(np.min(all_height)), float(np.max(all_height)))
+    cloud_coverage = float(np.clip(cfg.cloud_coverage, 0.0, 1.0))
+    cloud_threshold = float(np.quantile(all_cloud, 1.0 - cloud_coverage)) if 0.0 < cloud_coverage < 1.0 else 1.0
 
     faces = {}
     for face, (x, y, z, lat, lon) in vectors.items():
@@ -1298,6 +1693,7 @@ def build_quad_sphere_maps(cfg, face_size):
             lon,
             normal_wrap_x=False,
             land_threshold=land_threshold,
+            cloud_threshold=cloud_threshold,
             moisture_range=moisture_range,
             height_range=height_range,
         )
@@ -1312,6 +1708,7 @@ TEXTURE_MAP_NAMES = (
     "land_mask",
     "shoreline_mask",
     "ocean_depth",
+    "cloud_mask",
 )
 
 QUAD_SPHERE_MAP_NAMES = TEXTURE_MAP_NAMES
@@ -1342,6 +1739,8 @@ def save_map_set(out_dir, maps, map_names=None):
         save_gray(out_dir / "shoreline_mask.png", maps["shoreline_mask"])
     if "ocean_depth" in selected:
         save_gray(out_dir / "ocean_depth.png", maps["ocean_depth"])
+    if "cloud_mask" in selected:
+        save_gray(out_dir / "cloud_mask.png", maps["cloud_mask"])
 
 
 CUBEMAP_CROSS_LAYOUT = {
@@ -1551,6 +1950,14 @@ def build_arg_parser():
     parser.add_argument("--face-size", type=int, default=None, help="Quad-sphere face size in pixels. Defaults to min(width, height).")
     parser.add_argument("--out", type=Path, default=Path("planet_output"))
     for key, value in PRESETS["earthlike"].items():
+        if key == "land_palette":
+            parser.add_argument(
+                f"--{key.replace('_', '-')}",
+                dest=key,
+                choices=sorted(LAND_PALETTES),
+                default=None,
+            )
+            continue
         arg_type = int if isinstance(value, int) else float
         parser.add_argument(f"--{key.replace('_', '-')}", dest=key, type=arg_type, default=None)
     return parser
@@ -1591,7 +1998,7 @@ def main():
         metadata["quad_sphere_face_size"] = face_size
     metadata["resolved_palette_rgb"] = {
         name: [int(round(channel)) for channel in color]
-        for name, color in vary_palette(cfg.seed, cfg.preset).items()
+        for name, color in vary_palette(cfg.seed, cfg.preset, cfg.land_palette).items()
     }
     (out_dir / "preset.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
     print(f"Wrote planet maps to {out_dir.resolve()}")
