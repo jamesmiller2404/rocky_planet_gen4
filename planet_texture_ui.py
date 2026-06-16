@@ -33,6 +33,7 @@ from rocky_planet_gen import (
     TEXTURE_MAP_NAMES,
     build_maps,
     build_quad_sphere_maps,
+    ocean_colors_from_base,
     render_globe_preview,
     selected_texture_maps,
     save_map_set,
@@ -137,6 +138,7 @@ PARAM_GROUPS = [
             ("continent_color_scale", 0.50, 8.00, 0.05),
             ("continent_color_diversity", 0.00, 1.00, 0.01),
             ("continent_color_blend_smoothness", 0.00, 1.00, 0.01),
+            ("ocean_base_color", "#000000", "#ffffff", "color"),
             ("land_brightness", -0.50, 0.50, 0.01),
             ("land_contrast", 0.50, 2.00, 0.01),
             ("ocean_color_variation", 0.00, 0.70, 0.01),
@@ -149,6 +151,10 @@ PARAM_GROUPS = [
             ("ocean_sediment_strength", 0.00, 0.70, 0.01),
             ("ocean_brightness", -0.50, 0.50, 0.01),
             ("ocean_contrast", 0.50, 2.00, 0.01),
+            ("ocean_hue_shift", -0.50, 0.50, 0.01),
+            ("ocean_saturation", 0.00, 3.00, 0.01),
+            ("ocean_colorizer_hue", 0.00, 1.00, 0.01),
+            ("ocean_colorizer_strength", 0.00, 1.00, 0.01),
             ("mineral_tint_strength", 0.00, 0.80, 0.01),
             ("wetland_tint_strength", 0.00, 0.60, 0.01),
             ("iron_oxide_tint_strength", 0.00, 0.80, 0.01),
@@ -164,6 +170,13 @@ INT_PARAMS = {
     for group in PARAM_GROUPS
     for key, _minimum, _maximum, step in group["params"]
     if isinstance(step, int)
+}
+
+COLOR_PARAMS = {
+    key
+    for group in PARAM_GROUPS
+    for key, _minimum, _maximum, step in group["params"]
+    if step == "color"
 }
 
 STRING_PARAMS = {
@@ -305,9 +318,11 @@ def metadata_for_config(
     metadata["output_texture_maps"] = list(texture_maps or TEXTURE_MAP_NAMES)
     if face_size is not None:
         metadata["quad_sphere_face_size"] = face_size
+    resolved_palette = vary_palette(cfg.seed, cfg.preset, cfg.land_palette)
+    resolved_palette.update(ocean_colors_from_base(cfg.ocean_base_color))
     metadata["resolved_palette_rgb"] = {
         name: [int(round(channel)) for channel in color]
-        for name, color in vary_palette(cfg.seed, cfg.preset, cfg.land_palette).items()
+        for name, color in resolved_palette.items()
     }
     return metadata
 
@@ -402,6 +417,7 @@ def default_payload() -> dict:
                     {
                         "key": key,
                         "label": key.replace("_", " ").title(),
+                        "type": "color" if key in COLOR_PARAMS else "range",
                         "min": minimum,
                         "max": maximum,
                         "step": step,
@@ -557,6 +573,7 @@ h2 {
   overflow-wrap: anywhere;
 }
 .row input[type="number"],
+.row input[type="color"],
 .row input[type="text"],
 select {
   width: 100%;
@@ -569,6 +586,25 @@ select {
 }
 input[type="range"] {
   width: 100%;
+}
+.color-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 52px;
+  gap: 10px;
+  align-items: center;
+  margin: 10px 0;
+}
+.color-control label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.color-control input[type="color"] {
+  width: 52px;
+  min-height: 34px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #101115;
 }
 details {
   border-top: 1px solid var(--line);
@@ -1010,6 +1046,22 @@ function renderControls() {
     details.appendChild(summary);
 
     for (const param of group.params) {
+      if (param.type === "color") {
+        const row = document.createElement("div");
+        row.className = "color-control";
+        const label = document.createElement("label");
+        label.htmlFor = sliderId(param.key);
+        label.textContent = param.label;
+        const input = document.createElement("input");
+        input.type = "color";
+        input.id = sliderId(param.key);
+        input.dataset.key = param.key;
+        input.addEventListener("input", () => schedulePreview());
+        row.append(label, input);
+        details.appendChild(row);
+        continue;
+      }
+
       const head = document.createElement("div");
       head.className = "slider-head";
       const label = document.createElement("label");
@@ -1068,6 +1120,7 @@ function renderTextureMapOptions() {
 
 function syncValue(key) {
   const slider = document.getElementById(sliderId(key));
+  if (!slider || slider.type === "color") return;
   const value = document.getElementById(valueId(key));
   value.textContent = slider.dataset.integer === "1"
     ? String(parseInt(slider.value, 10))
@@ -1093,7 +1146,9 @@ function getParams() {
   for (const group of schema.param_groups) {
     for (const param of group.params) {
       const slider = document.getElementById(sliderId(param.key));
-      params[param.key] = param.integer ? parseInt(slider.value, 10) : parseFloat(slider.value);
+      params[param.key] = param.type === "color"
+        ? slider.value
+        : (param.integer ? parseInt(slider.value, 10) : parseFloat(slider.value));
     }
   }
   params.land_palette = els.landPalette.value;

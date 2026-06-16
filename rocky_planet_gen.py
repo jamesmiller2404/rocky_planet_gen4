@@ -87,6 +87,7 @@ PRESETS = {
         "continent_color_scale": 2.60,
         "continent_color_diversity": 0.72,
         "continent_color_blend_smoothness": 0.65,
+        "ocean_base_color": "#074876",
         "ocean_color_variation": 0.18,
         "ocean_shallow_tint_strength": 0.38,
         "ocean_shelf_brightness": 0.00,
@@ -97,6 +98,10 @@ PRESETS = {
         "ocean_sediment_strength": 0.22,
         "ocean_brightness": 0.00,
         "ocean_contrast": 1.00,
+        "ocean_hue_shift": 0.00,
+        "ocean_saturation": 1.00,
+        "ocean_colorizer_hue": 0.55,
+        "ocean_colorizer_strength": 0.00,
         "land_brightness": 0.00,
         "land_contrast": 1.00,
         "mineral_tint_strength": 0.26,
@@ -163,6 +168,7 @@ PRESETS = {
         "continent_color_scale": 4.20,
         "continent_color_diversity": 0.70,
         "continent_color_blend_smoothness": 0.70,
+        "ocean_base_color": "#0b6d92",
         "ocean_color_variation": 0.24,
         "ocean_shallow_tint_strength": 0.56,
         "ocean_shelf_brightness": 0.00,
@@ -173,6 +179,10 @@ PRESETS = {
         "ocean_sediment_strength": 0.34,
         "ocean_brightness": 0.04,
         "ocean_contrast": 1.08,
+        "ocean_hue_shift": 0.00,
+        "ocean_saturation": 1.00,
+        "ocean_colorizer_hue": 0.55,
+        "ocean_colorizer_strength": 0.00,
         "land_brightness": 0.00,
         "land_contrast": 1.00,
         "mineral_tint_strength": 0.18,
@@ -239,6 +249,7 @@ PRESETS = {
         "continent_color_scale": 2.00,
         "continent_color_diversity": 0.80,
         "continent_color_blend_smoothness": 0.55,
+        "ocean_base_color": "#063f70",
         "ocean_color_variation": 0.14,
         "ocean_shallow_tint_strength": 0.24,
         "ocean_shelf_brightness": 0.00,
@@ -249,6 +260,10 @@ PRESETS = {
         "ocean_sediment_strength": 0.30,
         "ocean_brightness": -0.03,
         "ocean_contrast": 1.10,
+        "ocean_hue_shift": 0.00,
+        "ocean_saturation": 1.00,
+        "ocean_colorizer_hue": 0.55,
+        "ocean_colorizer_strength": 0.00,
         "land_brightness": 0.00,
         "land_contrast": 1.00,
         "mineral_tint_strength": 0.28,
@@ -315,6 +330,7 @@ PRESETS = {
         "continent_color_scale": 2.70,
         "continent_color_diversity": 0.85,
         "continent_color_blend_smoothness": 0.42,
+        "ocean_base_color": "#05315e",
         "ocean_color_variation": 0.08,
         "ocean_shallow_tint_strength": 0.16,
         "ocean_shelf_brightness": 0.00,
@@ -325,6 +341,10 @@ PRESETS = {
         "ocean_sediment_strength": 0.12,
         "ocean_brightness": -0.02,
         "ocean_contrast": 1.06,
+        "ocean_hue_shift": 0.00,
+        "ocean_saturation": 1.00,
+        "ocean_colorizer_hue": 0.55,
+        "ocean_colorizer_strength": 0.00,
         "land_brightness": 0.00,
         "land_contrast": 1.00,
         "mineral_tint_strength": 0.38,
@@ -391,6 +411,7 @@ PRESETS = {
         "continent_color_scale": 2.10,
         "continent_color_diversity": 0.60,
         "continent_color_blend_smoothness": 0.75,
+        "ocean_base_color": "#294f72",
         "ocean_color_variation": 0.16,
         "ocean_shallow_tint_strength": 0.18,
         "ocean_shelf_brightness": 0.00,
@@ -401,6 +422,10 @@ PRESETS = {
         "ocean_sediment_strength": 0.06,
         "ocean_brightness": 0.06,
         "ocean_contrast": 0.88,
+        "ocean_hue_shift": 0.00,
+        "ocean_saturation": 1.00,
+        "ocean_colorizer_hue": 0.55,
+        "ocean_colorizer_strength": 0.00,
         "land_brightness": 0.00,
         "land_contrast": 1.00,
         "mineral_tint_strength": 0.14,
@@ -433,6 +458,32 @@ OCEAN_COLORS = {
     "ocean_mid": np.array([7, 72, 118], dtype=np.float32),
     "shallow_ocean": np.array([35, 154, 166], dtype=np.float32),
 }
+
+
+def rgb_from_hex(value: str) -> np.ndarray:
+    text = str(value).strip()
+    if text.startswith("#"):
+        text = text[1:]
+    if len(text) == 3:
+        text = "".join(channel * 2 for channel in text)
+    if len(text) != 6:
+        raise ValueError(f"Invalid ocean base color: {value!r}. Use #RRGGBB.")
+    try:
+        channels = [int(text[index : index + 2], 16) for index in range(0, 6, 2)]
+    except ValueError as exc:
+        raise ValueError(f"Invalid ocean base color: {value!r}. Use #RRGGBB.") from exc
+    return np.array(channels, dtype=np.float32)
+
+
+def ocean_colors_from_base(value: str) -> dict[str, np.ndarray]:
+    base = rgb_from_hex(value)
+    deep = base * 0.42 + np.array([0, 6, 34], dtype=np.float32) * 0.58
+    shallow = base * 0.46 + np.array([78, 208, 198], dtype=np.float32) * 0.54
+    return {
+        "deep_ocean": np.clip(deep, 0.0, 255.0),
+        "ocean_mid": np.clip(base, 0.0, 255.0),
+        "shallow_ocean": np.clip(shallow, 0.0, 255.0),
+    }
 
 
 LAND_PALETTE_LABELS = {
@@ -860,6 +911,7 @@ class PlanetConfig:
     continent_color_scale: float
     continent_color_diversity: float
     continent_color_blend_smoothness: float
+    ocean_base_color: str
     ocean_color_variation: float
     ocean_shallow_tint_strength: float
     ocean_shelf_brightness: float
@@ -870,6 +922,10 @@ class PlanetConfig:
     ocean_sediment_strength: float
     ocean_brightness: float
     ocean_contrast: float
+    ocean_hue_shift: float
+    ocean_saturation: float
+    ocean_colorizer_hue: float
+    ocean_colorizer_strength: float
     land_brightness: float
     land_contrast: float
     mineral_tint_strength: float
@@ -1312,6 +1368,74 @@ def color_blend(a, b, t):
     return a * (1.0 - t[..., None]) + b * t[..., None]
 
 
+def rgb_to_hsv_pixels(rgb):
+    rgb01 = np.clip(rgb, 0.0, 255.0) / 255.0
+    r = rgb01[..., 0]
+    g = rgb01[..., 1]
+    b = rgb01[..., 2]
+    maxc = np.max(rgb01, axis=-1)
+    minc = np.min(rgb01, axis=-1)
+    delta = maxc - minc
+    safe_delta = np.where(delta == 0.0, 1.0, delta)
+
+    h = np.zeros_like(maxc)
+    h = np.where(maxc == r, ((g - b) / safe_delta) % 6.0, h)
+    h = np.where(maxc == g, ((b - r) / safe_delta) + 2.0, h)
+    h = np.where(maxc == b, ((r - g) / safe_delta) + 4.0, h)
+    h = np.where(delta == 0.0, 0.0, h / 6.0)
+    s = np.where(maxc == 0.0, 0.0, delta / np.maximum(maxc, 1e-6))
+    return np.stack((h, s, maxc), axis=-1)
+
+
+def hsv_to_rgb_pixels(hsv):
+    h = (hsv[..., 0] % 1.0) * 6.0
+    s = np.clip(hsv[..., 1], 0.0, 1.0)
+    v = np.clip(hsv[..., 2], 0.0, 1.0)
+    c = v * s
+    x = c * (1.0 - np.abs((h % 2.0) - 1.0))
+    m = v - c
+
+    z = np.zeros_like(h)
+    rp = np.select(
+        [h < 1.0, h < 2.0, h < 3.0, h < 4.0, h < 5.0],
+        [c, x, z, z, x],
+        default=c,
+    )
+    gp = np.select(
+        [h < 1.0, h < 2.0, h < 3.0, h < 4.0, h < 5.0],
+        [x, c, c, x, z],
+        default=z,
+    )
+    bp = np.select(
+        [h < 1.0, h < 2.0, h < 3.0, h < 4.0, h < 5.0],
+        [z, z, x, c, c],
+        default=x,
+    )
+    return np.stack((rp + m, gp + m, bp + m), axis=-1) * 255.0
+
+
+def adjust_ocean_hsv_color(ocean_color, cfg):
+    hue_shift = float(np.clip(cfg.ocean_hue_shift, -0.5, 0.5))
+    saturation = float(np.clip(cfg.ocean_saturation, 0.0, 3.0))
+    colorizer_strength = float(np.clip(cfg.ocean_colorizer_strength, 0.0, 1.0))
+    if hue_shift == 0.0 and saturation == 1.0 and colorizer_strength == 0.0:
+        return ocean_color
+
+    hsv = rgb_to_hsv_pixels(ocean_color)
+    hsv[..., 0] = (hsv[..., 0] + hue_shift) % 1.0
+    hsv[..., 1] = np.clip(hsv[..., 1] * saturation, 0.0, 1.0)
+    adjusted = hsv_to_rgb_pixels(hsv)
+
+    if colorizer_strength > 0.0:
+        colorized_hsv = hsv.copy()
+        colorized_hsv[..., 0] = float(cfg.ocean_colorizer_hue) % 1.0
+        colorized_hsv[..., 1] = np.clip(colorized_hsv[..., 1] * 1.15 + 0.08, 0.0, 1.0)
+        colorized = hsv_to_rgb_pixels(colorized_hsv)
+        adjusted = adjusted * (1.0 - colorizer_strength) + colorized * colorizer_strength
+
+    return np.clip(adjusted, 0.0, 255.0)
+
+
 def build_continent_color_provinces(
     cfg,
     x,
@@ -1497,6 +1621,7 @@ def build_maps_from_vectors(
 ):
     lat_abs = np.abs(np.sin(lat))
     colors = vary_palette(cfg.seed, cfg.preset, cfg.land_palette)
+    colors.update(ocean_colors_from_base(cfg.ocean_base_color))
 
     continent = fbm_3d(
         x,
@@ -1664,6 +1789,7 @@ def build_maps_from_vectors(
     shelf_adjusted_ocean = shelf_adjusted_ocean + cfg.ocean_shelf_brightness * 255.0
     shelf_adjusted_ocean = np.clip(shelf_adjusted_ocean, 0.0, 255.0)
     ocean_color = color_blend(ocean_color, shelf_adjusted_ocean, shelf_color_control_mask)
+    ocean_color = adjust_ocean_hsv_color(ocean_color, cfg)
     ocean_color = (ocean_color - 127.5) * cfg.ocean_contrast + 127.5
     ocean_color = ocean_color + cfg.ocean_brightness * 255.0
     ocean_color = np.clip(ocean_color, 0.0, 255.0)
@@ -2166,6 +2292,9 @@ def build_arg_parser():
                 default=None,
             )
             continue
+        if isinstance(value, str):
+            parser.add_argument(f"--{key.replace('_', '-')}", dest=key, type=str, default=None)
+            continue
         arg_type = int if isinstance(value, int) else float
         parser.add_argument(f"--{key.replace('_', '-')}", dest=key, type=arg_type, default=None)
     return parser
@@ -2204,9 +2333,11 @@ def main():
     metadata["output_projection"] = "quad_sphere" if args.quad_sphere else "equirectangular"
     if args.quad_sphere:
         metadata["quad_sphere_face_size"] = face_size
+    resolved_palette = vary_palette(cfg.seed, cfg.preset, cfg.land_palette)
+    resolved_palette.update(ocean_colors_from_base(cfg.ocean_base_color))
     metadata["resolved_palette_rgb"] = {
         name: [int(round(channel)) for channel in color]
-        for name, color in vary_palette(cfg.seed, cfg.preset, cfg.land_palette).items()
+        for name, color in resolved_palette.items()
     }
     (out_dir / "preset.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
     print(f"Wrote planet maps to {out_dir.resolve()}")
