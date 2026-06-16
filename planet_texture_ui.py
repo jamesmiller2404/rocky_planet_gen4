@@ -116,6 +116,19 @@ PARAM_GROUPS = [
         ],
     },
     {
+        "name": "City Lights",
+        "params": [
+            ("city_lights_strength", 0.00, 1.00, 0.01),
+            ("city_density", 0.00, 1.00, 0.01),
+            ("megacity_count", 0, 80, 1),
+            ("coastal_city_bias", 0.00, 1.00, 0.01),
+            ("inland_city_bias", 0.00, 1.00, 0.01),
+            ("city_sprawl", 0.00, 1.00, 0.01),
+            ("road_network_strength", 0.00, 1.00, 0.01),
+            ("light_temperature", 0.00, 1.00, 0.01),
+        ],
+    },
+    {
         "name": "Color Variation",
         "params": [
             ("ocean_current_strength", 0.00, 0.60, 0.01),
@@ -251,6 +264,7 @@ TEXTURE_MAP_LABELS = {
     "shoreline_mask": "Shoreline mask",
     "ocean_depth": "Ocean depth",
     "cloud_mask": "Cloud mask",
+    "city_lights": "City lights",
 }
 
 

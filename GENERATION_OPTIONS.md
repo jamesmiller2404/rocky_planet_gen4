@@ -43,6 +43,7 @@ For normal equirectangular output:
 | `shoreline_mask.png` | Shoreline/beach influence mask. |
 | `ocean_depth.png` | Ocean depth mask. |
 | `cloud_mask.png` | Separate grayscale cloud opacity mask based on softened land-form-style weather math. |
+| `city_lights.png` | Separate RGB emission texture for night-side artificial lights. |
 | `preview.png` | Rendered globe preview. |
 | `preview.html` | Interactive rotating globe preview using `color.png`. |
 | `preset.json` | Resolved config, output projection, and seed-varied palette. |
@@ -137,6 +138,37 @@ These controls write `cloud_mask.png` only. They do not bake clouds into `color.
 | `--cloud-softness` | `0.22` | Width of the soft threshold around cloud edges. Higher values make broader, hazier transitions. |
 | `--cloud-land-correlation` | `0.55` | How strongly clouds echo the softened continent/land-form field. `0.0` is independent weather noise; `1.0` follows broad land forms more closely. |
 | `--cloud-opacity` | `0.78` | Maximum grayscale opacity written into `cloud_mask.png`. |
+
+## City Lights
+
+These controls write `city_lights.png` only. They do not bake artificial lights into `color.png`; use the map as a separate emission texture in Blender. The map is built from many individual point lights; city and road patterns control where dots appear rather than painting broad glowing patches.
+
+| Option | Earthlike Default | Description |
+| --- | ---: | --- |
+| `--city-lights-strength` | `0.72` | Overall brightness of the generated emission map. `0.0` disables city lights. |
+| `--city-density` | `0.46` | Amount of developed settlement detail, from sparse lights to denser town fields. |
+| `--megacity-count` | `14` | Number of major urban anchors used to seed bright city clusters. |
+| `--coastal-city-bias` | `0.74` | Preference for cities near coastlines and shore-adjacent lowlands. |
+| `--inland-city-bias` | `0.38` | Preference for inland lowland settlement away from immediate coastlines. |
+| `--city-sprawl` | `0.42` | Width of urban halos around bright cores. Higher values create larger metropolitan areas. |
+| `--road-network-strength` | `0.46` | Strength of thin developed corridors and road-like light networks between regions. |
+| `--light-temperature` | `0.58` | Emission color from warm amber at `0.0` through pale neutral to cooler white-blue near `1.0`. |
+
+Blender usage:
+
+1. Use `color.png` for the planet material base color, and keep `city_lights.png` separate.
+2. Add `city_lights.png` to an Image Texture node and feed it into an Emission shader.
+3. Multiply the emission strength by a night-side mask, usually based on the surface normal facing away from the sun/light direction.
+4. Add or mix that Emission shader with the planet's normal Principled BSDF surface.
+5. Keep clouds above the surface so `cloud_mask.png` can partially obscure city emission when desired.
+
+Practical node intent:
+
+```text
+city_lights.png * night_side_mask * emission_strength -> Emission Strength
+```
+
+Use `city_lights.png` as an emission/light map, not as base color. For realistic renders, start with emission strength around `2` to `6`; use higher values only for stylized orbital shots.
 
 ## Color Variation
 
@@ -243,6 +275,14 @@ Examples:
 | `cloud_softness` | `0.22` | `0.24` | `0.20` | `0.16` | `0.28` |
 | `cloud_land_correlation` | `0.55` | `0.48` | `0.66` | `0.42` | `0.60` |
 | `cloud_opacity` | `0.78` | `0.82` | `0.72` | `0.62` | `0.82` |
+| `city_lights_strength` | `0.72` | `0.66` | `0.70` | `0.34` | `0.30` |
+| `city_density` | `0.46` | `0.42` | `0.40` | `0.18` | `0.16` |
+| `megacity_count` | `14` | `10` | `12` | `5` | `4` |
+| `coastal_city_bias` | `0.74` | `0.88` | `0.36` | `0.24` | `0.46` |
+| `inland_city_bias` | `0.38` | `0.24` | `0.72` | `0.38` | `0.12` |
+| `city_sprawl` | `0.42` | `0.36` | `0.48` | `0.26` | `0.20` |
+| `road_network_strength` | `0.46` | `0.38` | `0.52` | `0.18` | `0.14` |
+| `light_temperature` | `0.58` | `0.60` | `0.55` | `0.62` | `0.50` |
 | `polar_ice_size` | `0.16` | `0.08` | `0.20` | `0.04` | `0.48` |
 | `polar_ice_scale` | `2.15` | `2.80` | `1.65` | `2.40` | `1.30` |
 | `polar_ice_complexity` | `0.62` | `0.76` | `0.48` | `0.56` | `0.58` |

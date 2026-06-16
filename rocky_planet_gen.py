@@ -14,6 +14,7 @@ Outputs:
     shoreline_mask.png
     ocean_depth.png
     cloud_mask.png
+    city_lights.png
     preview.png
     preview.html
     preset.json
@@ -111,6 +112,14 @@ PRESETS = {
         "cloud_softness": 0.22,
         "cloud_land_correlation": 0.55,
         "cloud_opacity": 0.78,
+        "city_lights_strength": 0.72,
+        "city_density": 0.46,
+        "megacity_count": 14,
+        "coastal_city_bias": 0.74,
+        "inland_city_bias": 0.38,
+        "city_sprawl": 0.42,
+        "road_network_strength": 0.46,
+        "light_temperature": 0.58,
     },
     "archipelago": {
         "land_coverage": 0.32,
@@ -179,6 +188,14 @@ PRESETS = {
         "cloud_softness": 0.24,
         "cloud_land_correlation": 0.48,
         "cloud_opacity": 0.82,
+        "city_lights_strength": 0.66,
+        "city_density": 0.42,
+        "megacity_count": 10,
+        "coastal_city_bias": 0.88,
+        "inland_city_bias": 0.24,
+        "city_sprawl": 0.36,
+        "road_network_strength": 0.38,
+        "light_temperature": 0.60,
     },
     "supercontinent": {
         "land_coverage": 0.58,
@@ -247,6 +264,14 @@ PRESETS = {
         "cloud_softness": 0.20,
         "cloud_land_correlation": 0.66,
         "cloud_opacity": 0.72,
+        "city_lights_strength": 0.70,
+        "city_density": 0.40,
+        "megacity_count": 12,
+        "coastal_city_bias": 0.36,
+        "inland_city_bias": 0.72,
+        "city_sprawl": 0.48,
+        "road_network_strength": 0.52,
+        "light_temperature": 0.55,
     },
     "dry_rocky": {
         "land_coverage": 0.68,
@@ -315,6 +340,14 @@ PRESETS = {
         "cloud_softness": 0.16,
         "cloud_land_correlation": 0.42,
         "cloud_opacity": 0.62,
+        "city_lights_strength": 0.34,
+        "city_density": 0.18,
+        "megacity_count": 5,
+        "coastal_city_bias": 0.24,
+        "inland_city_bias": 0.38,
+        "city_sprawl": 0.26,
+        "road_network_strength": 0.18,
+        "light_temperature": 0.62,
     },
     "frozen_ocean": {
         "land_coverage": 0.28,
@@ -383,6 +416,14 @@ PRESETS = {
         "cloud_softness": 0.28,
         "cloud_land_correlation": 0.60,
         "cloud_opacity": 0.82,
+        "city_lights_strength": 0.30,
+        "city_density": 0.16,
+        "megacity_count": 4,
+        "coastal_city_bias": 0.46,
+        "inland_city_bias": 0.12,
+        "city_sprawl": 0.20,
+        "road_network_strength": 0.14,
+        "light_temperature": 0.50,
     },
 }
 
@@ -844,6 +885,14 @@ class PlanetConfig:
     cloud_softness: float
     cloud_land_correlation: float
     cloud_opacity: float
+    city_lights_strength: float
+    city_density: float
+    megacity_count: int
+    coastal_city_bias: float
+    inland_city_bias: float
+    city_sprawl: float
+    road_network_strength: float
+    light_temperature: float
 
 
 def smoothstep(edge0, edge1, x):
@@ -898,6 +947,117 @@ def cloud_mask_from_field(cfg, cloud_field, cloud_threshold):
     mask = smoothstep(cloud_threshold - softness, cloud_threshold + softness, cloud_field)
     texture = 0.72 + normalize01(cloud_field) * 0.28
     return np.clip(mask * texture * opacity, 0.0, 1.0).astype(np.float32)
+
+
+def build_city_lights_map(
+    cfg,
+    x,
+    y,
+    z,
+    lat,
+    land,
+    shoreline,
+    moisture,
+    mountain_mask,
+    polar_ice,
+):
+    strength = float(np.clip(cfg.city_lights_strength, 0.0, 1.0))
+    density = float(np.clip(cfg.city_density, 0.0, 1.0))
+    if strength <= 0.0 or density <= 0.0:
+        return np.zeros((*x.shape, 3), dtype=np.float32)
+
+    coastal_bias = float(np.clip(cfg.coastal_city_bias, 0.0, 1.0))
+    inland_bias = float(np.clip(cfg.inland_city_bias, 0.0, 1.0))
+    sprawl = float(np.clip(cfg.city_sprawl, 0.0, 1.0))
+    road_strength = float(np.clip(cfg.road_network_strength, 0.0, 1.0))
+    temperature = float(np.clip(cfg.light_temperature, 0.0, 1.0))
+
+    cold_lat = smoothstep(0.70, 0.96, np.abs(np.sin(lat)))
+    low_relief = 1.0 - smoothstep(0.18, 0.82, mountain_mask)
+    temperate = 1.0 - cold_lat * 0.72
+    not_ice = 1.0 - np.clip(polar_ice, 0.0, 1.0)
+    wet_lowland = np.clip(moisture * 0.55 + low_relief * 0.45, 0.0, 1.0)
+    coastal = np.clip(shoreline, 0.0, 1.0)
+    inland_development = np.clip((1.0 - coastal * 0.65) * wet_lowland, 0.0, 1.0)
+
+    suitability = (
+        0.10
+        + coastal * coastal_bias * 1.25
+        + inland_development * inland_bias * 0.85
+        + wet_lowland * 0.28
+    )
+    suitability = np.clip(suitability * land.astype(np.float32) * low_relief * temperate * not_ice, 0.0, 1.0)
+
+    city_count = int(np.clip(round(cfg.megacity_count * (0.45 + density * 1.25)), 1, 80))
+    rng = np.random.default_rng(int(cfg.seed) * 3253 + 24091)
+    anchors = rng.normal(size=(city_count, 3)).astype(np.float32)
+    anchors /= np.linalg.norm(anchors, axis=1, keepdims=True)
+    anchor_power = rng.uniform(0.55, 1.0, city_count).astype(np.float32)
+    boosted_count = max(1, min(city_count, int(cfg.megacity_count)))
+    anchor_power[:boosted_count] *= rng.uniform(1.25, 1.85, boosted_count).astype(np.float32)
+    core_width = 0.006 + sprawl * 0.030
+    halo_width = 0.024 + sprawl * 0.095
+
+    urban_core = np.zeros_like(x, dtype=np.float32)
+    urban_halo = np.zeros_like(x, dtype=np.float32)
+    nearest = np.full_like(x, 10.0, dtype=np.float32)
+    second = np.full_like(x, 10.0, dtype=np.float32)
+
+    for anchor, power in zip(anchors, anchor_power):
+        dot = np.clip(x * anchor[0] + y * anchor[1] + z * anchor[2], -1.0, 1.0)
+        dist = 1.0 - dot
+        urban_core = np.maximum(urban_core, np.exp(-dist / core_width) * power)
+        urban_halo = np.maximum(urban_halo, np.exp(-dist / halo_width) * power)
+
+        closer = dist < nearest
+        second = np.where(closer, nearest, np.minimum(second, dist))
+        nearest = np.where(closer, dist, nearest)
+
+    network_noise = fbm_3d(x, y, z, 72.0, 4, 0.58, cfg.seed + 24203)
+    fine_noise = fbm_3d(x, y, z, 210.0, 3, 0.54, cfg.seed + 24329)
+    corridor = 1.0 - smoothstep(0.0, 0.0009 + sprawl * 0.0016, second - nearest)
+    corridor *= smoothstep(0.018, 0.17 + sprawl * 0.08, nearest)
+    roads = corridor * smoothstep(0.50, 0.82, network_noise) * road_strength
+
+    town_field = fbm_3d(x, y, z, 34.0 + density * 40.0, 5, 0.56, cfg.seed + 24473)
+    towns = smoothstep(0.70 - density * 0.16, 0.94, town_field) * (0.28 + sprawl * 0.40)
+    urban_envelope = urban_core * 1.25 + urban_halo * (0.28 + sprawl * 0.58) + roads * 0.46 + towns * 0.34
+    urban_envelope = np.clip(urban_envelope * suitability * (0.70 + fine_noise * 0.48), 0.0, 1.0)
+
+    dot_scale = float(np.clip(max(x.shape) * (0.82 + density * 1.65), 96.0, 1400.0))
+    dot_noise = hash_noise(
+        np.floor((x + 1.37) * dot_scale).astype(np.int64),
+        np.floor((y + 1.91) * dot_scale).astype(np.int64),
+        np.floor((z + 1.53) * dot_scale).astype(np.int64),
+        cfg.seed + 24571,
+    )
+    local_max = dot_noise >= ndimage.maximum_filter(dot_noise, size=3, mode="wrap")
+    dot_probability = np.clip(urban_envelope * (0.10 + density * 0.62), 0.0, 0.86)
+    dots = local_max & (dot_noise > (1.0 - dot_probability))
+
+    road_dot_noise = hash_noise(
+        np.floor((x + 3.11) * dot_scale * 1.75).astype(np.int64),
+        np.floor((y + 2.37) * dot_scale * 1.75).astype(np.int64),
+        np.floor((z + 2.83) * dot_scale * 1.75).astype(np.int64),
+        cfg.seed + 24697,
+    )
+    road_dots = (roads > 0.025) & (road_dot_noise > 0.92 - road_strength * 0.08)
+
+    dot_mask = dots | road_dots
+    dot_energy = np.where(
+        dot_mask,
+        np.clip((0.38 + urban_envelope * 1.35 + dot_noise * 0.42) * strength * (0.88 + density * 0.95), 0.0, 1.0),
+        0.0,
+    )
+    city_intensity = np.clip(dot_energy, 0.0, 1.0)
+
+    warm = np.array([255, 186, 86], dtype=np.float32)
+    neutral = np.array([255, 232, 178], dtype=np.float32)
+    cool = np.array([198, 220, 255], dtype=np.float32)
+    light_color = lerp(warm, neutral, min(temperature * 1.6, 1.0))
+    if temperature > 0.62:
+        light_color = lerp(neutral, cool, (temperature - 0.62) / 0.38)
+    return np.clip(city_intensity[..., None] * light_color, 0.0, 255.0).astype(np.float32)
 
 
 def distance_from_mask(mask, wrap_x=False):
@@ -1613,6 +1773,18 @@ def build_maps_from_vectors(
     roughness = roughness + mountain_mask * 0.12 - shelf * 0.07
     roughness = roughness + polar_ice * (0.06 + ice_solidity * 0.12 + ice_texture * 0.16)
     roughness = np.clip(roughness, 0.0, 1.0)
+    city_lights = build_city_lights_map(
+        cfg,
+        x,
+        y,
+        z,
+        lat,
+        land,
+        shoreline,
+        moisture,
+        mountain_mask,
+        polar_ice,
+    )
 
     maps = {
         "color": color,
@@ -1623,6 +1795,7 @@ def build_maps_from_vectors(
         "shoreline_mask": shoreline,
         "ocean_depth": ocean_depth,
         "cloud_mask": cloud_mask,
+        "city_lights": city_lights,
     }
     if return_raw_stats:
         maps["_land_field"] = land_field
@@ -1709,6 +1882,7 @@ TEXTURE_MAP_NAMES = (
     "shoreline_mask",
     "ocean_depth",
     "cloud_mask",
+    "city_lights",
 )
 
 QUAD_SPHERE_MAP_NAMES = TEXTURE_MAP_NAMES
@@ -1741,6 +1915,8 @@ def save_map_set(out_dir, maps, map_names=None):
         save_gray(out_dir / "ocean_depth.png", maps["ocean_depth"])
     if "cloud_mask" in selected:
         save_gray(out_dir / "cloud_mask.png", maps["cloud_mask"])
+    if "city_lights" in selected:
+        save_rgb(out_dir / "city_lights.png", maps["city_lights"])
 
 
 CUBEMAP_CROSS_LAYOUT = {
