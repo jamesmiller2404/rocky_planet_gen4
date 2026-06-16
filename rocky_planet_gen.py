@@ -1021,10 +1021,11 @@ def build_city_lights_map(
 
     town_field = fbm_3d(x, y, z, 34.0 + density * 40.0, 5, 0.56, cfg.seed + 24473)
     towns = smoothstep(0.70 - density * 0.16, 0.94, town_field) * (0.28 + sprawl * 0.40)
-    urban_envelope = urban_core * 1.25 + urban_halo * (0.28 + sprawl * 0.58) + roads * 0.46 + towns * 0.34
+    urban_envelope = urban_core * 1.15 + urban_halo * (0.34 + sprawl * 0.68) + roads * 0.52 + towns * 0.52
     urban_envelope = np.clip(urban_envelope * suitability * (0.70 + fine_noise * 0.48), 0.0, 1.0)
+    settlement_field = np.clip(np.maximum(urban_envelope, suitability * towns * (0.75 + density * 0.85)), 0.0, 1.0)
 
-    dot_scale = float(np.clip(max(x.shape) * (0.82 + density * 1.65), 96.0, 1400.0))
+    dot_scale = float(np.clip(max(x.shape) * (1.35 + density * 2.80), 160.0, 2600.0))
     dot_noise = hash_noise(
         np.floor((x + 1.37) * dot_scale).astype(np.int64),
         np.floor((y + 1.91) * dot_scale).astype(np.int64),
@@ -1032,8 +1033,38 @@ def build_city_lights_map(
         cfg.seed + 24571,
     )
     local_max = dot_noise >= ndimage.maximum_filter(dot_noise, size=3, mode="wrap")
-    dot_probability = np.clip(urban_envelope * (0.10 + density * 0.62), 0.0, 0.86)
+    dot_probability = np.clip(settlement_field * (0.30 + density * 1.18), 0.0, 0.98)
     dots = local_max & (dot_noise > (1.0 - dot_probability))
+
+    extra_dot_noise = hash_noise(
+        np.floor((x + 4.19) * dot_scale * 2.35).astype(np.int64),
+        np.floor((y + 3.73) * dot_scale * 2.35).astype(np.int64),
+        np.floor((z + 4.61) * dot_scale * 2.35).astype(np.int64),
+        cfg.seed + 24631,
+    )
+    extra_local_max = extra_dot_noise >= ndimage.maximum_filter(extra_dot_noise, size=3, mode="wrap")
+    extra_probability = np.clip(
+        (settlement_field * 0.55 + suitability * towns * 0.85 + roads * 0.22) * (0.26 + density * 1.05),
+        0.0,
+        0.94,
+    )
+    extra_dots = extra_local_max & (extra_dot_noise > (1.0 - extra_probability))
+    extra_dots &= ~ndimage.maximum_filter(dots, size=3, mode="nearest").astype(bool)
+
+    rows, cols = np.indices(x.shape)
+    pin_grid = ((rows + cols + int(cfg.seed)) % 2) == 0
+    micro_dot_noise = hash_noise(
+        np.floor((x + 5.43) * dot_scale * 3.15).astype(np.int64),
+        np.floor((y + 5.97) * dot_scale * 3.15).astype(np.int64),
+        np.floor((z + 5.21) * dot_scale * 3.15).astype(np.int64),
+        cfg.seed + 24781,
+    )
+    micro_probability = np.clip(
+        (settlement_field * 0.72 + suitability * towns * 1.15 + roads * 0.34) * (0.42 + density * 1.65),
+        0.0,
+        0.98,
+    )
+    micro_dots = pin_grid & (micro_dot_noise > (1.0 - micro_probability))
 
     road_dot_noise = hash_noise(
         np.floor((x + 3.11) * dot_scale * 1.75).astype(np.int64),
@@ -1041,12 +1072,13 @@ def build_city_lights_map(
         np.floor((z + 2.83) * dot_scale * 1.75).astype(np.int64),
         cfg.seed + 24697,
     )
-    road_dots = (roads > 0.025) & (road_dot_noise > 0.92 - road_strength * 0.08)
+    road_dots = (roads > 0.010) & (road_dot_noise > 0.78 - road_strength * 0.16)
 
-    dot_mask = dots | road_dots
+    dot_mask = (dots | extra_dots | micro_dots | road_dots) & pin_grid
+    light_variation = np.maximum(np.maximum(dot_noise, extra_dot_noise), micro_dot_noise)
     dot_energy = np.where(
         dot_mask,
-        np.clip((0.38 + urban_envelope * 1.35 + dot_noise * 0.42) * strength * (0.88 + density * 0.95), 0.0, 1.0),
+        np.clip((0.24 + settlement_field * 1.18 + light_variation * 0.34) * strength * (0.82 + density * 0.92), 0.0, 1.0),
         0.0,
     )
     city_intensity = np.clip(dot_energy, 0.0, 1.0)
