@@ -39,6 +39,8 @@ import json
 import math
 import os
 import pstats
+import struct
+import zlib
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -46,6 +48,8 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 from scipy import ndimage
+
+Image.MAX_IMAGE_PIXELS = None
 
 
 PRESETS = {
@@ -1105,9 +1109,9 @@ def build_city_lights_map(
 
     dot_scale = float(np.clip(max(x.shape) * (1.35 + density * 2.80), 160.0, 2600.0))
     dot_noise = hash_noise(
-        np.floor((x + 1.37) * dot_scale).astype(np.int64),
-        np.floor((y + 1.91) * dot_scale).astype(np.int64),
-        np.floor((z + 1.53) * dot_scale).astype(np.int64),
+        np.floor((x + 1.37) * dot_scale).astype(np.int32),
+        np.floor((y + 1.91) * dot_scale).astype(np.int32),
+        np.floor((z + 1.53) * dot_scale).astype(np.int32),
         cfg.seed + 24571,
     )
     local_max = dot_noise >= ndimage.maximum_filter(dot_noise, size=3, mode="wrap")
@@ -1115,9 +1119,9 @@ def build_city_lights_map(
     dots = local_max & (dot_noise > (1.0 - dot_probability))
 
     extra_dot_noise = hash_noise(
-        np.floor((x + 4.19) * dot_scale * 2.35).astype(np.int64),
-        np.floor((y + 3.73) * dot_scale * 2.35).astype(np.int64),
-        np.floor((z + 4.61) * dot_scale * 2.35).astype(np.int64),
+        np.floor((x + 4.19) * dot_scale * 2.35).astype(np.int32),
+        np.floor((y + 3.73) * dot_scale * 2.35).astype(np.int32),
+        np.floor((z + 4.61) * dot_scale * 2.35).astype(np.int32),
         cfg.seed + 24631,
     )
     extra_local_max = extra_dot_noise >= ndimage.maximum_filter(extra_dot_noise, size=3, mode="wrap")
@@ -1129,12 +1133,13 @@ def build_city_lights_map(
     extra_dots = extra_local_max & (extra_dot_noise > (1.0 - extra_probability))
     extra_dots &= ~ndimage.maximum_filter(dots, size=3, mode="nearest").astype(bool)
 
-    rows, cols = np.indices(x.shape)
-    pin_grid = ((rows + cols + int(cfg.seed)) % 2) == 0
+    row_parity = np.arange(x.shape[0], dtype=np.int32)[:, None]
+    col_parity = np.arange(x.shape[1], dtype=np.int32)[None, :]
+    pin_grid = ((row_parity + col_parity + int(cfg.seed)) & 1) == 0
     micro_dot_noise = hash_noise(
-        np.floor((x + 5.43) * dot_scale * 3.15).astype(np.int64),
-        np.floor((y + 5.97) * dot_scale * 3.15).astype(np.int64),
-        np.floor((z + 5.21) * dot_scale * 3.15).astype(np.int64),
+        np.floor((x + 5.43) * dot_scale * 3.15).astype(np.int32),
+        np.floor((y + 5.97) * dot_scale * 3.15).astype(np.int32),
+        np.floor((z + 5.21) * dot_scale * 3.15).astype(np.int32),
         cfg.seed + 24781,
     )
     micro_probability = np.clip(
@@ -1145,9 +1150,9 @@ def build_city_lights_map(
     micro_dots = pin_grid & (micro_dot_noise > (1.0 - micro_probability))
 
     road_dot_noise = hash_noise(
-        np.floor((x + 3.11) * dot_scale * 1.75).astype(np.int64),
-        np.floor((y + 2.37) * dot_scale * 1.75).astype(np.int64),
-        np.floor((z + 2.83) * dot_scale * 1.75).astype(np.int64),
+        np.floor((x + 3.11) * dot_scale * 1.75).astype(np.int32),
+        np.floor((y + 2.37) * dot_scale * 1.75).astype(np.int32),
+        np.floor((z + 2.83) * dot_scale * 1.75).astype(np.int32),
         cfg.seed + 24697,
     )
     road_dots = (roads > 0.010) & (road_dot_noise > 0.78 - road_strength * 0.16)
@@ -1199,26 +1204,29 @@ def filter_land_components(mask, min_area_fraction, max_area_fraction):
 
 
 def hash_noise(ix, iy, iz, seed):
-    x = ix.astype(np.uint64)
-    y = iy.astype(np.uint64)
-    z = iz.astype(np.uint64)
-    n = x * np.uint64(374761393) + y * np.uint64(668265263) + z * np.uint64(2147483647)
-    n += np.uint64(seed * 1442695040888963407 & 0xFFFFFFFFFFFFFFFF)
-    n = (n ^ (n >> np.uint64(13))) * np.uint64(1274126177)
-    n = n ^ (n >> np.uint64(16))
-    return (n & np.uint64(0xFFFFFFFF)).astype(np.float32) / np.float32(0xFFFFFFFF)
+    x = ix.astype(np.uint32, copy=False)
+    y = iy.astype(np.uint32, copy=False)
+    z = iz.astype(np.uint32, copy=False)
+    n = x * np.uint32(374761393) + y * np.uint32(668265263) + z * np.uint32(2147483647)
+    n = n + np.uint32(seed * 1442695041 & 0xFFFFFFFF)
+    n = (n ^ (n >> np.uint32(13))) * np.uint32(1274126177)
+    n = n ^ (n >> np.uint32(16))
+    return n.astype(np.float32) / np.float32(0xFFFFFFFF)
 
 
 def value_noise_3d(x, y, z, scale, seed):
     sx = x * scale + 100.0
     sy = y * scale + 100.0
     sz = z * scale + 100.0
-    x0 = np.floor(sx).astype(np.int64)
-    y0 = np.floor(sy).astype(np.int64)
-    z0 = np.floor(sz).astype(np.int64)
-    xf = sx - x0
-    yf = sy - y0
-    zf = sz - z0
+    x0f = np.floor(sx)
+    y0f = np.floor(sy)
+    z0f = np.floor(sz)
+    x0 = x0f.astype(np.int32)
+    y0 = y0f.astype(np.int32)
+    z0 = z0f.astype(np.int32)
+    xf = sx - x0f
+    yf = sy - y0f
+    zf = sz - z0f
     u = xf * xf * xf * (xf * (xf * 6.0 - 15.0) + 10.0)
     v = yf * yf * yf * (yf * (yf * 6.0 - 15.0) + 10.0)
     w = zf * zf * zf * (zf * (zf * 6.0 - 15.0) + 10.0)
@@ -1361,6 +1369,36 @@ def quad_sphere_face_vectors(face, size):
     u_axis = axis
     v_axis = axis
     u, v = np.meshgrid(u_axis, v_axis[::-1])
+
+    if face == "px":
+        x, y, z = np.ones_like(u), v, -u
+    elif face == "nx":
+        x, y, z = -np.ones_like(u), v, u
+    elif face == "py":
+        x, y, z = u, np.ones_like(u), -v
+    elif face == "ny":
+        x, y, z = u, -np.ones_like(u), v
+    elif face == "pz":
+        x, y, z = u, v, np.ones_like(u)
+    elif face == "nz":
+        x, y, z = -u, v, -np.ones_like(u)
+    else:
+        raise ValueError(f"Unknown quad-sphere face: {face}")
+
+    length = np.sqrt(x * x + y * y + z * z)
+    x = x / length
+    y = y / length
+    z = z / length
+    lat = np.arcsin(np.clip(y, -1.0, 1.0))
+    lon = np.arctan2(z, x)
+    return x, y, z, lat, lon
+
+
+def quad_sphere_face_vectors_tile(face, size, row_start, row_stop):
+    axis = ((np.arange(size, dtype=np.float32) + 0.5) / size) * 2.0 - 1.0
+    u_axis = axis
+    v_axis = axis[::-1][row_start:row_stop]
+    u, v = np.meshgrid(u_axis, v_axis)
 
     if face == "px":
         x, y, z = np.ones_like(u), v, -u
@@ -1575,6 +1613,33 @@ def save_rgba(path, arr):
 def save_luminance_alpha(path, arr):
     arr = np.clip(arr * 255.0, 0, 255).astype(np.uint8)
     Image.fromarray(arr, "LA").save(path)
+
+
+def write_png_chunk(handle, chunk_type, data):
+    handle.write(struct.pack(">I", len(data)))
+    handle.write(chunk_type)
+    handle.write(data)
+    checksum = zlib.crc32(chunk_type)
+    checksum = zlib.crc32(data, checksum) & 0xFFFFFFFF
+    handle.write(struct.pack(">I", checksum))
+
+
+def write_streamed_png(path, width, height, color_type, row_iter):
+    compressor = zlib.compressobj(level=6)
+    pending = bytearray()
+    with Path(path).open("wb") as handle:
+        handle.write(b"\x89PNG\r\n\x1a\n")
+        ihdr = struct.pack(">IIBBBBB", int(width), int(height), 8, int(color_type), 0, 0, 0)
+        write_png_chunk(handle, b"IHDR", ihdr)
+        for row in row_iter:
+            pending.extend(compressor.compress(b"\x00" + row))
+            if len(pending) >= 1_048_576:
+                write_png_chunk(handle, b"IDAT", bytes(pending))
+                pending.clear()
+        pending.extend(compressor.flush())
+        if pending:
+            write_png_chunk(handle, b"IDAT", bytes(pending))
+        write_png_chunk(handle, b"IEND", b"")
 
 
 def normal_from_height(height, strength=5.0, wrap_x=True):
@@ -1874,6 +1939,16 @@ def build_maps_from_vectors(
     continent_lowland = 1.0 - smoothstep(threshold, threshold + cfg.continent_contrast * 1.8, land_field)
     lowland = continent_lowland
     ice_solidity = np.clip(cfg.polar_ice_solidity, 0.0, 1.0)
+    polar_ice_color_mask = smoothstep(
+        0.05 + (1.0 - ice_solidity) * 0.10,
+        0.24 + (1.0 - ice_solidity) * 0.18,
+        polar_ice,
+    )
+    polar_ice_color_mask = np.clip(
+        lerp(polar_ice_color_mask, np.maximum(polar_ice_color_mask, polar_ice), ice_solidity),
+        0.0,
+        1.0,
+    )
     if needs_color:
         land_tints = land_palette_values(cfg.land_palette)["tints"]
         ochre_tint = land_tints["ochre"]
@@ -1964,10 +2039,10 @@ def build_maps_from_vectors(
         )
         ice_highlight = color_blend(ice_highlight, solid_ice_tint, ice_solidity * 0.35)
         land_color = color_blend(land_color, colors["snow"], snow_mask)
-        land_ice_strength = np.clip(polar_ice * (0.70 + ice_solidity * 0.42), 0.0, 1.0)
+        land_ice_strength = np.clip(polar_ice_color_mask * (0.70 + ice_solidity * 0.42), 0.0, 1.0)
         land_color = color_blend(land_color, ice_highlight, land_ice_strength)
         ocean_ice_strength = np.clip(
-            polar_ice * (0.30 + cfg.polar_ice_shelf_strength * 0.45 + ice_solidity * 0.46),
+            polar_ice_color_mask * (0.30 + cfg.polar_ice_shelf_strength * 0.45 + ice_solidity * 0.46),
             0.0,
             1.0,
         )
@@ -2143,20 +2218,74 @@ def build_quad_sphere_face_pass(
         return dict(executor.map(build_quad_sphere_face_worker, jobs))
 
 
-def build_quad_sphere_maps(cfg, face_size, map_names=None, quad_workers=1):
-    selected_maps = selected_texture_maps(map_names)
+def iter_quad_sphere_face_pass(
+    cfg,
+    face_size,
+    selected_maps,
+    *,
+    quad_workers=1,
+    land_threshold=None,
+    cloud_threshold=None,
+    moisture_range=None,
+    height_range=None,
+    return_raw_stats=False,
+    stat_fields=None,
+):
+    worker_count = max(1, min(int(quad_workers), len(QUAD_SPHERE_FACES)))
+    jobs = [
+        (
+            cfg,
+            face,
+            face_size,
+            selected_maps,
+            land_threshold,
+            cloud_threshold,
+            moisture_range,
+            height_range,
+            return_raw_stats,
+            tuple(stat_fields or ()),
+        )
+        for face in QUAD_SPHERE_FACES
+    ]
+    if worker_count == 1:
+        for job in jobs:
+            yield build_quad_sphere_face_worker(job)
+        return
+    with ProcessPoolExecutor(max_workers=worker_count) as executor:
+        yield from executor.map(build_quad_sphere_face_worker, jobs)
+
+
+def histogram_quantile(counts, q, value_range=(0.0, 1.0)):
+    total = int(np.sum(counts))
+    if total <= 0:
+        return float(value_range[0])
+    q = float(np.clip(q, 0.0, 1.0))
+    target = q * max(total - 1, 0)
+    index = int(np.searchsorted(np.cumsum(counts), target, side="left"))
+    index = max(0, min(index, len(counts) - 1))
+    low, high = value_range
+    width = (high - low) / float(len(counts))
+    return float(low + (index + 0.5) * width)
+
+
+def update_histogram(counts, values, value_range=(0.0, 1.0)):
+    hist, _ = np.histogram(values, bins=len(counts), range=value_range)
+    counts += hist
+
+
+def compute_quad_sphere_global_stats(cfg, face_size, selected_maps, quad_workers=1):
     selected_set = set(selected_maps)
-    probe_maps = build_quad_sphere_face_pass(
+    land_hist = np.zeros(4096, dtype=np.int64)
+    for _, maps in iter_quad_sphere_face_pass(
         cfg,
         face_size,
         selected_maps,
         quad_workers=quad_workers,
         return_raw_stats=True,
         stat_fields=("land",),
-    )
-
-    all_land = np.concatenate([maps["_land_field"].ravel() for maps in probe_maps.values()])
-    land_threshold = float(np.quantile(all_land, 1.0 - cfg.land_coverage))
+    ):
+        update_histogram(land_hist, maps["_land_field"])
+    land_threshold = histogram_quantile(land_hist, 1.0 - cfg.land_coverage)
 
     stat_fields = []
     if selected_set & {"color", "city_lights"}:
@@ -2166,11 +2295,14 @@ def build_quad_sphere_maps(cfg, face_size, map_names=None, quad_workers=1):
     if "cloud_mask" in selected_set:
         stat_fields.append("cloud")
 
-    moisture_range = None
-    height_range = None
-    cloud_threshold = None
+    moisture_min = math.inf
+    moisture_max = -math.inf
+    height_min = math.inf
+    height_max = -math.inf
+    cloud_hist = np.zeros(4096, dtype=np.int64) if "cloud" in stat_fields else None
+
     if stat_fields:
-        probe_maps = build_quad_sphere_face_pass(
+        for _, maps in iter_quad_sphere_face_pass(
             cfg,
             face_size,
             selected_maps,
@@ -2178,18 +2310,36 @@ def build_quad_sphere_maps(cfg, face_size, map_names=None, quad_workers=1):
             land_threshold=land_threshold,
             return_raw_stats=True,
             stat_fields=stat_fields,
-        )
+        ):
+            if "moisture" in stat_fields:
+                moisture = maps["_moisture_input"]
+                moisture_min = min(moisture_min, float(np.min(moisture)))
+                moisture_max = max(moisture_max, float(np.max(moisture)))
+            if "height" in stat_fields:
+                raw_height = maps["_raw_height"]
+                height_min = min(height_min, float(np.min(raw_height)))
+                height_max = max(height_max, float(np.max(raw_height)))
+            if cloud_hist is not None:
+                update_histogram(cloud_hist, maps["_cloud_field"])
 
-        if "moisture" in stat_fields:
-            all_moisture = np.concatenate([maps["_moisture_input"].ravel() for maps in probe_maps.values()])
-            moisture_range = (float(np.min(all_moisture)), float(np.max(all_moisture)))
-        if "height" in stat_fields:
-            all_height = np.concatenate([maps["_raw_height"].ravel() for maps in probe_maps.values()])
-            height_range = (float(np.min(all_height)), float(np.max(all_height)))
-        if "cloud" in stat_fields:
-            all_cloud = np.concatenate([maps["_cloud_field"].ravel() for maps in probe_maps.values()])
-            cloud_coverage = float(np.clip(cfg.cloud_coverage, 0.0, 1.0))
-            cloud_threshold = float(np.quantile(all_cloud, 1.0 - cloud_coverage)) if 0.0 < cloud_coverage < 1.0 else 1.0
+    moisture_range = (moisture_min, moisture_max) if math.isfinite(moisture_min) else None
+    height_range = (height_min, height_max) if math.isfinite(height_min) else None
+    cloud_threshold = None
+    if cloud_hist is not None:
+        cloud_coverage = float(np.clip(cfg.cloud_coverage, 0.0, 1.0))
+        cloud_threshold = histogram_quantile(cloud_hist, 1.0 - cloud_coverage) if 0.0 < cloud_coverage < 1.0 else 1.0
+
+    return land_threshold, cloud_threshold, moisture_range, height_range
+
+
+def build_quad_sphere_maps(cfg, face_size, map_names=None, quad_workers=1):
+    selected_maps = selected_texture_maps(map_names)
+    land_threshold, cloud_threshold, moisture_range, height_range = compute_quad_sphere_global_stats(
+        cfg,
+        face_size,
+        selected_maps,
+        quad_workers=quad_workers,
+    )
 
     return build_quad_sphere_face_pass(
         cfg,
@@ -2302,8 +2452,229 @@ def save_quad_sphere_cubemap_crosses(out_dir, faces, face_size, map_names=None):
             save_luminance_alpha(path, cross)
 
 
-def write_quad_sphere_manifest(out_dir, face_size, map_names=None):
+def save_quad_sphere_cubemap_crosses_from_files(out_dir, face_size, map_names=None):
+    for map_name in selected_texture_maps(map_names):
+        face_path = out_dir / "px" / f"{map_name}.png"
+        with Image.open(face_path) as sample_image:
+            is_scalar = sample_image.mode == "L"
+        save_quad_sphere_cubemap_cross_streamed(out_dir, map_name, face_size, is_scalar)
+
+
+def save_quad_sphere_cubemap_cross_streamed(out_dir, map_name, face_size, is_scalar):
+    face_size = int(face_size)
+    cell_to_face = {cell: face for face, cell in CUBEMAP_CROSS_LAYOUT.items()}
+    channels = 2 if is_scalar else 4
+    color_type = 4 if is_scalar else 6
+    if is_scalar:
+        empty = np.zeros((face_size, channels), dtype=np.uint8)
+    elif map_name == "normal":
+        empty = np.zeros((face_size, channels), dtype=np.uint8)
+        empty[:, 0] = 128
+        empty[:, 1] = 128
+        empty[:, 2] = 255
+    else:
+        empty = np.zeros((face_size, channels), dtype=np.uint8)
+
+    def load_column_faces(layout_col):
+        arrays = {}
+        for layout_row in range(3):
+            face = cell_to_face.get((layout_col, layout_row))
+            if face is None:
+                continue
+            path = out_dir / face / f"{map_name}.png"
+            with Image.open(path) as image:
+                if is_scalar:
+                    lum = np.asarray(image.convert("L"), dtype=np.uint8)
+                    alpha = np.full(lum.shape, 255, dtype=np.uint8)
+                    arrays[face] = np.stack((lum, alpha), axis=-1)
+                else:
+                    arrays[face] = np.asarray(image.convert("RGBA"), dtype=np.uint8)
+        return arrays
+
+    def rows():
+        for layout_col in range(4):
+            arrays = load_column_faces(layout_col)
+            for local_col in range(face_size):
+                chunks = []
+                for layout_row in (2, 1, 0):
+                    face = cell_to_face.get((layout_col, layout_row))
+                    if face is None:
+                        chunks.append(empty)
+                    else:
+                        chunks.append(arrays[face][::-1, local_col, :])
+                yield np.concatenate(chunks, axis=0).tobytes()
+            del arrays
+
+    write_streamed_png(
+        out_dir / f"{map_name}_cubemap_cross.png",
+        face_size * 3,
+        face_size * 4,
+        color_type,
+        rows(),
+    )
+
+
+def quad_sphere_low_memory_map_groups(selected_maps):
+    selected = set(selected_maps)
+    groups = []
+    for group in (
+        ("color",),
+        ("height", "normal"),
+        ("roughness",),
+        ("land_mask",),
+        ("shoreline_mask",),
+        ("ocean_depth",),
+        ("cloud_mask",),
+        ("city_lights",),
+    ):
+        present = tuple(name for name in group if name in selected)
+        if present:
+            groups.append(present)
+    return groups
+
+
+def should_write_quad_sphere_crosses(face_size):
+    value = os.environ.get("PLANET_WRITE_STITCHED_CROSSES")
+    if value is not None:
+        return value.strip().lower() not in {"0", "false", "no", "off"}
+    return True
+
+
+def resolve_quad_tile_rows(face_size):
+    value = os.environ.get("PLANET_QUAD_TILE_ROWS")
+    if value is None:
+        return 128 if int(face_size) >= 4096 else 256
+    try:
+        rows = int(value)
+    except ValueError as exc:
+        raise ValueError("PLANET_QUAD_TILE_ROWS must be an integer.") from exc
+    if rows < 16:
+        raise ValueError("PLANET_QUAD_TILE_ROWS must be at least 16.")
+    return min(rows, int(face_size))
+
+
+def iter_quad_sphere_face_tiles(face, face_size, tile_rows):
+    for row_start in range(0, int(face_size), int(tile_rows)):
+        row_stop = min(int(face_size), row_start + int(tile_rows))
+        x, y, z, lat, lon = quad_sphere_face_vectors_tile(face, face_size, row_start, row_stop)
+        yield row_start, row_stop, x, y, z, lat, lon
+
+
+def compute_quad_sphere_color_stats_tiled(cfg, face_size, tile_rows=None):
+    tile_rows = resolve_quad_tile_rows(face_size) if tile_rows is None else int(tile_rows)
+    land_hist = np.zeros(4096, dtype=np.int64)
+    for face in QUAD_SPHERE_FACES:
+        for _, _, x, y, z, lat, lon in iter_quad_sphere_face_tiles(face, face_size, tile_rows):
+            maps = build_maps_from_vectors(
+                cfg,
+                x,
+                y,
+                z,
+                lat,
+                lon,
+                normal_wrap_x=False,
+                return_raw_stats=True,
+                map_names=("color",),
+                stat_fields=("land",),
+            )
+            update_histogram(land_hist, maps["_land_field"])
+            del maps, x, y, z, lat, lon
+    land_threshold = histogram_quantile(land_hist, 1.0 - cfg.land_coverage)
+
+    moisture_min = math.inf
+    moisture_max = -math.inf
+    for face in QUAD_SPHERE_FACES:
+        for _, _, x, y, z, lat, lon in iter_quad_sphere_face_tiles(face, face_size, tile_rows):
+            maps = build_maps_from_vectors(
+                cfg,
+                x,
+                y,
+                z,
+                lat,
+                lon,
+                normal_wrap_x=False,
+                land_threshold=land_threshold,
+                return_raw_stats=True,
+                map_names=("color",),
+                stat_fields=("moisture",),
+            )
+            moisture = maps["_moisture_input"]
+            moisture_min = min(moisture_min, float(np.min(moisture)))
+            moisture_max = max(moisture_max, float(np.max(moisture)))
+            del maps, x, y, z, lat, lon
+    moisture_range = (moisture_min, moisture_max) if math.isfinite(moisture_min) else None
+    return land_threshold, moisture_range
+
+
+def save_quad_sphere_color_faces_tiled(out_dir, cfg, face_size, tile_rows=None):
+    tile_rows = resolve_quad_tile_rows(face_size) if tile_rows is None else int(tile_rows)
+    land_threshold, moisture_range = compute_quad_sphere_color_stats_tiled(cfg, face_size, tile_rows)
+    for face in QUAD_SPHERE_FACES:
+        face_dir = out_dir / face
+        face_dir.mkdir(parents=True, exist_ok=True)
+        image = Image.new("RGB", (int(face_size), int(face_size)))
+        for row_start, _, x, y, z, lat, lon in iter_quad_sphere_face_tiles(face, face_size, tile_rows):
+            maps = build_maps_from_vectors(
+                cfg,
+                x,
+                y,
+                z,
+                lat,
+                lon,
+                normal_wrap_x=False,
+                land_threshold=land_threshold,
+                moisture_range=moisture_range,
+                map_names=("color",),
+            )
+            tile = Image.fromarray(np.clip(maps["color"], 0, 255).astype(np.uint8), "RGB")
+            image.paste(tile, (0, row_start))
+            tile.close()
+            del maps, x, y, z, lat, lon
+        image.save(face_dir / "color.png")
+        image.close()
+
+
+def save_quad_sphere_maps_low_memory(out_dir, cfg, face_size, map_names=None, quad_workers=1, write_cubemap_crosses=None):
+    selected_maps = selected_texture_maps(map_names)
+    if selected_maps == ("color",):
+        save_quad_sphere_color_faces_tiled(out_dir, cfg, face_size)
+        if write_cubemap_crosses is None:
+            write_cubemap_crosses = should_write_quad_sphere_crosses(face_size)
+        if write_cubemap_crosses:
+            save_quad_sphere_cubemap_crosses_from_files(out_dir, face_size, selected_maps)
+        return
+
+    land_threshold, cloud_threshold, moisture_range, height_range = compute_quad_sphere_global_stats(
+        cfg,
+        face_size,
+        selected_maps,
+        quad_workers=quad_workers,
+    )
+    for group in quad_sphere_low_memory_map_groups(selected_maps):
+        for face, maps in iter_quad_sphere_face_pass(
+            cfg,
+            face_size,
+            group,
+            quad_workers=quad_workers,
+            land_threshold=land_threshold,
+            cloud_threshold=cloud_threshold,
+            moisture_range=moisture_range,
+            height_range=height_range,
+        ):
+            face_dir = out_dir / face
+            face_dir.mkdir(parents=True, exist_ok=True)
+            save_map_set(face_dir, maps, group)
+            del maps
+    if write_cubemap_crosses is None:
+        write_cubemap_crosses = should_write_quad_sphere_crosses(face_size)
+    if write_cubemap_crosses:
+        save_quad_sphere_cubemap_crosses_from_files(out_dir, face_size, selected_maps)
+
+
+def write_quad_sphere_manifest(out_dir, face_size, map_names=None, write_cubemap_crosses=None):
     selected = selected_texture_maps(map_names)
+    if write_cubemap_crosses is None:
+        write_cubemap_crosses = should_write_quad_sphere_crosses(face_size)
     manifest = {
         "layout": "quad_sphere_cubemap_faces",
         "face_size": face_size,
@@ -2323,7 +2694,11 @@ def write_quad_sphere_manifest(out_dir, face_size, map_names=None):
                 "nz": {"column": 1, "row": 3},
                 "ny": {"column": 0, "row": 1},
             },
-            "maps": [f"quad_sphere/{name}_cubemap_cross.png" for name in selected],
+            "maps": [f"quad_sphere/{name}_cubemap_cross.png" for name in selected] if write_cubemap_crosses else [],
+            "written": bool(write_cubemap_crosses),
+            "skip_reason": None
+            if write_cubemap_crosses
+            else "Skipped because PLANET_WRITE_STITCHED_CROSSES is disabled.",
             "empty_cells": {
                 "all_maps": "transparent alpha 0",
             },
@@ -2502,12 +2877,7 @@ def generate_planet_output(cfg, out_dir, quad_sphere=False, face_size=None, text
         resolved_quad_workers = resolve_quad_workers(quad_workers)
         quad_dir = out_dir / "quad_sphere"
         quad_dir.mkdir(parents=True, exist_ok=True)
-        quad_faces = build_quad_sphere_maps(cfg, face_size, selected_maps, quad_workers=resolved_quad_workers)
-        for face, maps in quad_faces.items():
-            face_dir = quad_dir / face
-            face_dir.mkdir(parents=True, exist_ok=True)
-            save_map_set(face_dir, maps, selected_maps)
-        save_quad_sphere_cubemap_crosses(quad_dir, quad_faces, face_size, selected_maps)
+        save_quad_sphere_maps_low_memory(quad_dir, cfg, face_size, selected_maps, quad_workers=resolved_quad_workers)
         write_quad_sphere_manifest(out_dir, face_size, selected_maps)
     else:
         maps = build_maps(cfg, selected_maps)

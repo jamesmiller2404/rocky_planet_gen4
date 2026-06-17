@@ -106,7 +106,7 @@ quad_sphere/pz
 quad_sphere/nz
 ```
 
-It also writes cubemap-cross atlases such as `quad_sphere/color_cubemap_cross.png`.
+It also writes cubemap-cross atlases such as `quad_sphere/color_cubemap_cross.png`. Large stitched atlases are streamed from the saved face PNGs instead of assembled as one giant in-memory array. Color-only quad-sphere saves are tiled internally to reduce peak memory. Set `PLANET_QUAD_TILE_ROWS` to a smaller value such as `64` if the computer still runs out of memory. Set `PLANET_WRITE_STITCHED_CROSSES=0` before running the CLI or web UI only if you want to skip stitched atlas output.
 
 ## Presets
 

@@ -32,13 +32,12 @@ from rocky_planet_gen import (
     PlanetConfig,
     TEXTURE_MAP_NAMES,
     build_maps,
-    build_quad_sphere_maps,
     ocean_colors_from_base,
     render_globe_preview,
     resolve_quad_workers,
     selected_texture_maps,
     save_map_set,
-    save_quad_sphere_cubemap_crosses,
+    save_quad_sphere_maps_low_memory,
     vary_palette,
     write_html_preview,
     write_quad_sphere_manifest,
@@ -349,12 +348,7 @@ def save_planet_output(payload: dict) -> Path:
             raise ValueError("Quad-sphere face size must be at least 32.")
         quad_dir = out_dir / "quad_sphere"
         quad_dir.mkdir(parents=True, exist_ok=True)
-        quad_faces = build_quad_sphere_maps(cfg, face_size, texture_maps, quad_workers=QUAD_WORKERS)
-        for face, maps in quad_faces.items():
-            face_dir = quad_dir / face
-            face_dir.mkdir(parents=True, exist_ok=True)
-            save_map_set(face_dir, maps, texture_maps)
-        save_quad_sphere_cubemap_crosses(quad_dir, quad_faces, face_size, texture_maps)
+        save_quad_sphere_maps_low_memory(quad_dir, cfg, face_size, texture_maps, quad_workers=QUAD_WORKERS)
         write_quad_sphere_manifest(out_dir, face_size, texture_maps)
         metadata = metadata_for_config(cfg, "quad_sphere", face_size, texture_maps)
     else:
@@ -846,10 +840,10 @@ img {
         <label for="projection">Projection</label>
         <select id="projection">
           <option value="equirectangular">Equirectangular</option>
-          <option value="quad_sphere">Quad-sphere faces + stitched crosses</option>
+          <option value="quad_sphere">Quad-sphere faces</option>
         </select>
       </div>
-      <p class="hint" id="projectionHint">Quad-sphere saves six face folders and stitched *_cubemap_cross.png atlases, matching the CLI --quad-sphere output.</p>
+      <p class="hint" id="projectionHint">Quad-sphere saves six face folders and streamed stitched *_cubemap_cross.png atlases.</p>
       <div class="map-header">
         <label>Texture maps</label>
         <div class="map-actions" aria-label="Texture map selection actions">
