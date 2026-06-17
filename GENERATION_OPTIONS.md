@@ -28,6 +28,42 @@ Example:
 | `--out` | `planet_output` | Output directory. Created if it does not exist. |
 | `--quad-sphere` | off | Writes six cube/quad-sphere face folders instead of only equirectangular maps. |
 | `--face-size` | `min(width, height)` | Quad-sphere face size in pixels. Minimum `32` when `--quad-sphere` is used. |
+| `--texture-maps` | all maps | One or more texture maps to save: `color`, `height`, `normal`, `roughness`, `land_mask`, `shoreline_mask`, `ocean_depth`, `cloud_mask`, `city_lights`. |
+| `--profile` | off | Prints `cProfile` timing for generation, saving, preview, and metadata writes. |
+| `--profile-limit` | `40` | Number of timing rows to print when `--profile` is enabled. |
+| `--profile-out` | unset | Optional raw `.prof` output path for external profile viewers. |
+
+Save only the color map:
+
+```powershell
+.\.venv\Scripts\python.exe rocky_planet_gen.py --preset earthlike --seed 42 --width 2048 --height 1024 --out output/color_only --texture-maps color
+```
+
+Save a specific Blender-oriented set:
+
+```powershell
+.\.venv\Scripts\python.exe rocky_planet_gen.py --preset earthlike --seed 42 --width 2048 --height 1024 --out output/blender_maps --texture-maps color height normal roughness
+```
+
+## Profiling
+
+Use profiling when a large texture run is slow and you want to see where time is going before optimizing.
+
+```powershell
+.\.venv\Scripts\python.exe rocky_planet_gen.py --preset earthlike --seed 42 --width 4096 --height 2048 --out output/profile_earthlike --profile
+```
+
+For quad-sphere output:
+
+```powershell
+.\.venv\Scripts\python.exe rocky_planet_gen.py --preset earthlike --seed 42 --quad-sphere --face-size 2048 --out output/profile_quad --profile
+```
+
+To save raw profile data for a viewer such as SnakeViz:
+
+```powershell
+.\.venv\Scripts\python.exe rocky_planet_gen.py --preset earthlike --seed 42 --width 4096 --height 2048 --out output/profile_earthlike --profile --profile-out output/profile_earthlike/generation.prof
+```
 
 ## Outputs
 

@@ -33,9 +33,11 @@ Quad-sphere output:
 from __future__ import annotations
 
 import argparse
+import cProfile
 import colorsys
 import json
 import math
+import pstats
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -2315,6 +2317,17 @@ def build_arg_parser():
     parser.add_argument("--quad-sphere", action="store_true", help="Write six quad-sphere face folders instead of equirectangular maps.")
     parser.add_argument("--face-size", type=int, default=None, help="Quad-sphere face size in pixels. Defaults to min(width, height).")
     parser.add_argument("--out", type=Path, default=Path("planet_output"))
+    parser.add_argument(
+        "--texture-maps",
+        nargs="+",
+        choices=TEXTURE_MAP_NAMES,
+        default=None,
+        metavar="MAP",
+        help="Texture maps to save. Omit to save all maps.",
+    )
+    parser.add_argument("--profile", action="store_true", help="Print cProfile timing for the generation and save path.")
+    parser.add_argument("--profile-limit", type=int, default=40, help="Number of profile rows to print when --profile is enabled.")
+    parser.add_argument("--profile-out", type=Path, default=None, help="Optional path to write raw .prof data for tools like snakeviz.")
     for key, value in PRESETS["earthlike"].items():
         if key == "land_palette":
             parser.add_argument(
@@ -2332,6 +2345,54 @@ def build_arg_parser():
     return parser
 
 
+def generate_planet_output(cfg, out_dir, quad_sphere=False, face_size=None, texture_maps=None):
+    selected_maps = selected_texture_maps(texture_maps)
+    if quad_sphere:
+        quad_dir = out_dir / "quad_sphere"
+        quad_dir.mkdir(parents=True, exist_ok=True)
+        quad_faces = build_quad_sphere_maps(cfg, face_size)
+        for face, maps in quad_faces.items():
+            face_dir = quad_dir / face
+            face_dir.mkdir(parents=True, exist_ok=True)
+            save_map_set(face_dir, maps, selected_maps)
+        save_quad_sphere_cubemap_crosses(quad_dir, quad_faces, face_size, selected_maps)
+        write_quad_sphere_manifest(out_dir, face_size, selected_maps)
+    else:
+        maps = build_maps(cfg)
+        save_map_set(out_dir, maps, selected_maps)
+        if "color" in selected_maps:
+            render_globe_preview(maps["color"], maps["height"], out_dir / "preview.png")
+            write_html_preview(out_dir, f"{cfg.preset} planet preview", selected_maps)
+
+    metadata = asdict(cfg)
+    metadata["output_projection"] = "quad_sphere" if quad_sphere else "equirectangular"
+    metadata["output_texture_maps"] = list(selected_maps)
+    if quad_sphere:
+        metadata["quad_sphere_face_size"] = face_size
+    resolved_palette = vary_palette(cfg.seed, cfg.preset, cfg.land_palette)
+    resolved_palette.update(ocean_colors_from_base(cfg.ocean_base_color))
+    metadata["resolved_palette_rgb"] = {
+        name: [int(round(channel)) for channel in color]
+        for name, color in resolved_palette.items()
+    }
+    (out_dir / "preset.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+
+
+def run_profiled(callable_obj, limit=40, profile_out=None):
+    profiler = cProfile.Profile()
+    profiler.enable()
+    try:
+        callable_obj()
+    finally:
+        profiler.disable()
+    if profile_out is not None:
+        profile_out.parent.mkdir(parents=True, exist_ok=True)
+        profiler.dump_stats(str(profile_out))
+        print(f"Wrote raw profile data to {profile_out.resolve()}")
+    stats = pstats.Stats(profiler).strip_dirs().sort_stats("cumtime")
+    stats.print_stats(max(1, int(limit)))
+
+
 def main():
     parser = build_arg_parser()
     args = parser.parse_args()
@@ -2345,33 +2406,14 @@ def main():
     out_dir = args.out
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    if args.quad_sphere:
-        quad_dir = out_dir / "quad_sphere"
-        quad_dir.mkdir(parents=True, exist_ok=True)
-        quad_faces = build_quad_sphere_maps(cfg, face_size)
-        for face, maps in quad_faces.items():
-            face_dir = quad_dir / face
-            face_dir.mkdir(parents=True, exist_ok=True)
-            save_map_set(face_dir, maps)
-        save_quad_sphere_cubemap_crosses(quad_dir, quad_faces, face_size)
-        write_quad_sphere_manifest(out_dir, face_size)
+    if args.profile:
+        run_profiled(
+            lambda: generate_planet_output(cfg, out_dir, args.quad_sphere, face_size, args.texture_maps),
+            limit=args.profile_limit,
+            profile_out=args.profile_out,
+        )
     else:
-        maps = build_maps(cfg)
-        save_map_set(out_dir, maps)
-        render_globe_preview(maps["color"], maps["height"], out_dir / "preview.png")
-        write_html_preview(out_dir, f"{cfg.preset} planet preview")
-
-    metadata = asdict(cfg)
-    metadata["output_projection"] = "quad_sphere" if args.quad_sphere else "equirectangular"
-    if args.quad_sphere:
-        metadata["quad_sphere_face_size"] = face_size
-    resolved_palette = vary_palette(cfg.seed, cfg.preset, cfg.land_palette)
-    resolved_palette.update(ocean_colors_from_base(cfg.ocean_base_color))
-    metadata["resolved_palette_rgb"] = {
-        name: [int(round(channel)) for channel in color]
-        for name, color in resolved_palette.items()
-    }
-    (out_dir / "preset.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+        generate_planet_output(cfg, out_dir, args.quad_sphere, face_size, args.texture_maps)
     print(f"Wrote planet maps to {out_dir.resolve()}")
 
 
