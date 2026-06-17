@@ -28,6 +28,7 @@ Example:
 | `--out` | `planet_output` | Output directory. Created if it does not exist. |
 | `--quad-sphere` | off | Writes six cube/quad-sphere face folders instead of only equirectangular maps. |
 | `--face-size` | `min(width, height)` | Quad-sphere face size in pixels. Minimum `32` when `--quad-sphere` is used. |
+| `--quad-workers` | `PLANET_QUAD_WORKERS` or `1` | Worker processes for quad-sphere face generation. Use `1` for serial generation; use up to `6` to process faces in parallel. |
 | `--texture-maps` | all maps | One or more texture maps to save: `color`, `height`, `normal`, `roughness`, `land_mask`, `shoreline_mask`, `ocean_depth`, `cloud_mask`, `city_lights`. |
 | `--profile` | off | Prints `cProfile` timing for generation, saving, preview, and metadata writes. |
 | `--profile-limit` | `40` | Number of timing rows to print when `--profile` is enabled. |
@@ -46,6 +47,14 @@ Save a specific Blender-oriented set:
 ```
 
 The selected texture maps also reduce avoidable computation where possible. For example, omitting `city_lights`, `cloud_mask`, `normal`, or `roughness` skips those final build steps instead of only skipping the saved PNG files.
+
+Parallel quad-sphere generation:
+
+```powershell
+.\.venv\Scripts\python.exe rocky_planet_gen.py --preset earthlike --seed 42 --quad-sphere --face-size 512 --out output/color_quad_parallel --texture-maps color --quad-workers 6
+```
+
+For large faces, start conservatively because each worker holds its own arrays and temporary noise fields. Try `--quad-workers 2` or `--quad-workers 3` for 2048+ face sizes, then increase only if RAM usage is stable. The browser UI uses the same setting through the `PLANET_QUAD_WORKERS` environment variable.
 
 ## Profiling
 

@@ -37,7 +37,9 @@ import cProfile
 import colorsys
 import json
 import math
+import os
 import pstats
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -2070,26 +2072,88 @@ def build_maps(cfg, map_names=None):
     return build_maps_from_vectors(cfg, x, y, z, lat, lon, normal_wrap_x=True, map_names=map_names)
 
 
-def build_quad_sphere_maps(cfg, face_size, map_names=None):
+QUAD_SPHERE_FACES = ("px", "nx", "py", "ny", "pz", "nz")
+
+
+def build_quad_sphere_face_worker(job):
+    (
+        cfg,
+        face,
+        face_size,
+        selected_maps,
+        land_threshold,
+        cloud_threshold,
+        moisture_range,
+        height_range,
+        return_raw_stats,
+        stat_fields,
+    ) = job
+    x, y, z, lat, lon = quad_sphere_face_vectors(face, face_size)
+    maps = build_maps_from_vectors(
+        cfg,
+        x,
+        y,
+        z,
+        lat,
+        lon,
+        normal_wrap_x=False,
+        land_threshold=land_threshold,
+        cloud_threshold=cloud_threshold,
+        moisture_range=moisture_range,
+        height_range=height_range,
+        return_raw_stats=return_raw_stats,
+        map_names=selected_maps,
+        stat_fields=stat_fields,
+    )
+    return face, maps
+
+
+def build_quad_sphere_face_pass(
+    cfg,
+    face_size,
+    selected_maps,
+    *,
+    quad_workers=1,
+    land_threshold=None,
+    cloud_threshold=None,
+    moisture_range=None,
+    height_range=None,
+    return_raw_stats=False,
+    stat_fields=None,
+):
+    worker_count = max(1, min(int(quad_workers), len(QUAD_SPHERE_FACES)))
+    jobs = [
+        (
+            cfg,
+            face,
+            face_size,
+            selected_maps,
+            land_threshold,
+            cloud_threshold,
+            moisture_range,
+            height_range,
+            return_raw_stats,
+            tuple(stat_fields or ()),
+        )
+        for face in QUAD_SPHERE_FACES
+    ]
+    if worker_count == 1:
+        return dict(build_quad_sphere_face_worker(job) for job in jobs)
+    with ProcessPoolExecutor(max_workers=worker_count) as executor:
+        return dict(executor.map(build_quad_sphere_face_worker, jobs))
+
+
+def build_quad_sphere_maps(cfg, face_size, map_names=None, quad_workers=1):
     selected_maps = selected_texture_maps(map_names)
     selected_set = set(selected_maps)
-    vectors = {}
-    probe_maps = {}
-    for face in ("px", "nx", "py", "ny", "pz", "nz"):
-        x, y, z, lat, lon = quad_sphere_face_vectors(face, face_size)
-        vectors[face] = (x, y, z, lat, lon)
-        probe_maps[face] = build_maps_from_vectors(
-            cfg,
-            x,
-            y,
-            z,
-            lat,
-            lon,
-            normal_wrap_x=False,
-            return_raw_stats=True,
-            map_names=selected_maps,
-            stat_fields=("land",),
-        )
+    probe_maps = build_quad_sphere_face_pass(
+        cfg,
+        face_size,
+        selected_maps,
+        quad_workers=quad_workers,
+        return_raw_stats=True,
+        stat_fields=("land",),
+    )
 
     all_land = np.concatenate([maps["_land_field"].ravel() for maps in probe_maps.values()])
     land_threshold = float(np.quantile(all_land, 1.0 - cfg.land_coverage))
@@ -2106,21 +2170,15 @@ def build_quad_sphere_maps(cfg, face_size, map_names=None):
     height_range = None
     cloud_threshold = None
     if stat_fields:
-        probe_maps = {}
-        for face, (x, y, z, lat, lon) in vectors.items():
-            probe_maps[face] = build_maps_from_vectors(
-                cfg,
-                x,
-                y,
-                z,
-                lat,
-                lon,
-                normal_wrap_x=False,
-                land_threshold=land_threshold,
-                return_raw_stats=True,
-                map_names=selected_maps,
-                stat_fields=stat_fields,
-            )
+        probe_maps = build_quad_sphere_face_pass(
+            cfg,
+            face_size,
+            selected_maps,
+            quad_workers=quad_workers,
+            land_threshold=land_threshold,
+            return_raw_stats=True,
+            stat_fields=stat_fields,
+        )
 
         if "moisture" in stat_fields:
             all_moisture = np.concatenate([maps["_moisture_input"].ravel() for maps in probe_maps.values()])
@@ -2133,23 +2191,16 @@ def build_quad_sphere_maps(cfg, face_size, map_names=None):
             cloud_coverage = float(np.clip(cfg.cloud_coverage, 0.0, 1.0))
             cloud_threshold = float(np.quantile(all_cloud, 1.0 - cloud_coverage)) if 0.0 < cloud_coverage < 1.0 else 1.0
 
-    faces = {}
-    for face, (x, y, z, lat, lon) in vectors.items():
-        faces[face] = build_maps_from_vectors(
-            cfg,
-            x,
-            y,
-            z,
-            lat,
-            lon,
-            normal_wrap_x=False,
-            land_threshold=land_threshold,
-            cloud_threshold=cloud_threshold,
-            moisture_range=moisture_range,
-            height_range=height_range,
-            map_names=selected_maps,
-        )
-    return faces
+    return build_quad_sphere_face_pass(
+        cfg,
+        face_size,
+        selected_maps,
+        quad_workers=quad_workers,
+        land_threshold=land_threshold,
+        cloud_threshold=cloud_threshold,
+        moisture_range=moisture_range,
+        height_range=height_range,
+    )
 
 
 TEXTURE_MAP_NAMES = (
@@ -2174,6 +2225,18 @@ def selected_texture_maps(map_names=None):
     if not selected:
         raise ValueError("Choose at least one texture map to save.")
     return selected
+
+
+def resolve_quad_workers(value=None):
+    if value is None:
+        value = os.environ.get("PLANET_QUAD_WORKERS", "1")
+    try:
+        workers = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Quad workers must be an integer.") from exc
+    if workers < 1:
+        raise ValueError("Quad workers must be at least 1.")
+    return min(workers, len(QUAD_SPHERE_FACES))
 
 
 def save_map_set(out_dir, maps, map_names=None):
@@ -2403,6 +2466,7 @@ def build_arg_parser():
     parser.add_argument("--height", type=int, default=1024)
     parser.add_argument("--quad-sphere", action="store_true", help="Write six quad-sphere face folders instead of equirectangular maps.")
     parser.add_argument("--face-size", type=int, default=None, help="Quad-sphere face size in pixels. Defaults to min(width, height).")
+    parser.add_argument("--quad-workers", type=int, default=None, help="Worker processes for quad-sphere face generation. Defaults to PLANET_QUAD_WORKERS or 1.")
     parser.add_argument("--out", type=Path, default=Path("planet_output"))
     parser.add_argument(
         "--texture-maps",
@@ -2432,12 +2496,13 @@ def build_arg_parser():
     return parser
 
 
-def generate_planet_output(cfg, out_dir, quad_sphere=False, face_size=None, texture_maps=None):
+def generate_planet_output(cfg, out_dir, quad_sphere=False, face_size=None, texture_maps=None, quad_workers=1):
     selected_maps = selected_texture_maps(texture_maps)
     if quad_sphere:
+        resolved_quad_workers = resolve_quad_workers(quad_workers)
         quad_dir = out_dir / "quad_sphere"
         quad_dir.mkdir(parents=True, exist_ok=True)
-        quad_faces = build_quad_sphere_maps(cfg, face_size, selected_maps)
+        quad_faces = build_quad_sphere_maps(cfg, face_size, selected_maps, quad_workers=resolved_quad_workers)
         for face, maps in quad_faces.items():
             face_dir = quad_dir / face
             face_dir.mkdir(parents=True, exist_ok=True)
@@ -2495,12 +2560,12 @@ def main():
 
     if args.profile:
         run_profiled(
-            lambda: generate_planet_output(cfg, out_dir, args.quad_sphere, face_size, args.texture_maps),
+            lambda: generate_planet_output(cfg, out_dir, args.quad_sphere, face_size, args.texture_maps, args.quad_workers),
             limit=args.profile_limit,
             profile_out=args.profile_out,
         )
     else:
-        generate_planet_output(cfg, out_dir, args.quad_sphere, face_size, args.texture_maps)
+        generate_planet_output(cfg, out_dir, args.quad_sphere, face_size, args.texture_maps, args.quad_workers)
     print(f"Wrote planet maps to {out_dir.resolve()}")
 
 

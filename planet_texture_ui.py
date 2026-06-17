@@ -35,6 +35,7 @@ from rocky_planet_gen import (
     build_quad_sphere_maps,
     ocean_colors_from_base,
     render_globe_preview,
+    resolve_quad_workers,
     selected_texture_maps,
     save_map_set,
     save_quad_sphere_cubemap_crosses,
@@ -46,6 +47,7 @@ from rocky_planet_gen import (
 
 HOST = "127.0.0.1"
 PORT = int(os.environ.get("PLANET_TEXTURE_UI_PORT", "8765"))
+QUAD_WORKERS = resolve_quad_workers(os.environ.get("PLANET_QUAD_WORKERS", "1"))
 OUTPUT_ROOT = Path("output")
 
 
@@ -347,7 +349,7 @@ def save_planet_output(payload: dict) -> Path:
             raise ValueError("Quad-sphere face size must be at least 32.")
         quad_dir = out_dir / "quad_sphere"
         quad_dir.mkdir(parents=True, exist_ok=True)
-        quad_faces = build_quad_sphere_maps(cfg, face_size, texture_maps)
+        quad_faces = build_quad_sphere_maps(cfg, face_size, texture_maps, quad_workers=QUAD_WORKERS)
         for face, maps in quad_faces.items():
             face_dir = quad_dir / face
             face_dir.mkdir(parents=True, exist_ok=True)
