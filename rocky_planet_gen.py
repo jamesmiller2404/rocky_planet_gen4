@@ -1638,10 +1638,23 @@ def build_maps_from_vectors(
     moisture_range=None,
     height_range=None,
     return_raw_stats=False,
+    map_names=None,
+    stat_fields=None,
 ):
+    selected_maps = selected_texture_maps(map_names)
+    stats = set(stat_fields or ())
+    stats_only = return_raw_stats and bool(stats)
+    requested_outputs = set() if stats_only else set(selected_maps)
+    needs_cloud = "cloud_mask" in requested_outputs or "cloud" in stats
+    needs_moisture = bool({"color", "city_lights"} & requested_outputs) or "moisture" in stats
+    needs_height = bool({"height", "normal"} & requested_outputs) or "height" in stats
+    needs_preview_height = "color" in requested_outputs and normal_wrap_x
+    needs_height = needs_height or needs_preview_height
+    needs_roughness = "roughness" in requested_outputs
+    needs_city_lights = "city_lights" in requested_outputs
+    needs_color = "color" in requested_outputs
+
     lat_abs = np.abs(np.sin(lat))
-    colors = vary_palette(cfg.seed, cfg.preset, cfg.land_palette)
-    colors.update(ocean_colors_from_base(cfg.ocean_base_color))
 
     continent = fbm_3d(
         x,
@@ -1674,14 +1687,20 @@ def build_maps_from_vectors(
     map_height, map_width = x.shape
     island_land = np.zeros_like(continent_land, dtype=bool)
     land = continent_land
-    cloud_field = build_cloud_field(cfg, x, y, z, lat, land_field, threshold)
-    if cloud_threshold is None:
-        cloud_threshold = (
-            float(np.quantile(cloud_field, 1.0 - float(np.clip(cfg.cloud_coverage, 0.0, 1.0))))
-            if 0.0 < cfg.cloud_coverage < 1.0
-            else 1.0
-        )
-    cloud_mask = cloud_mask_from_field(cfg, cloud_field, float(cloud_threshold))
+    if stats_only and stats <= {"land"}:
+        return {"_land_field": land_field}
+
+    cloud_field = None
+    cloud_mask = None
+    if needs_cloud:
+        cloud_field = build_cloud_field(cfg, x, y, z, lat, land_field, threshold)
+        if cloud_threshold is None:
+            cloud_threshold = (
+                float(np.quantile(cloud_field, 1.0 - float(np.clip(cfg.cloud_coverage, 0.0, 1.0))))
+                if 0.0 < cfg.cloud_coverage < 1.0
+                else 1.0
+            )
+        cloud_mask = cloud_mask_from_field(cfg, cloud_field, float(cloud_threshold))
 
     continent_shoreline_distance = np.abs(land_field - threshold)
     continent_shoreline = 1.0 - smoothstep(0.0, max(cfg.beach_width, 0.005), continent_shoreline_distance)
@@ -1697,6 +1716,9 @@ def build_maps_from_vectors(
         + shelf * 0.28
         + (1.0 - lat_abs) * 0.16
     )
+    if stats_only and stats <= {"moisture"}:
+        return {"_land_field": land_field, "_moisture_input": moisture_input}
+
     moisture = normalize01(moisture_input, moisture_range)
     desert_bias = cfg.desert_coverage * (0.45 + (1.0 - moisture) * 0.75)
     forest_bias = cfg.forest_coverage * (0.35 + moisture * 0.85)
@@ -1708,120 +1730,135 @@ def build_maps_from_vectors(
     mountain_mask = smoothstep(mountain_cut, min(1.0, mountain_cut + 0.28), ridge)
     mountain_mask *= smoothstep(0.45, 0.76, mountain_gate)
 
-    color = np.zeros((map_height, map_width, 3), dtype=np.float32)
+    color = None
+    regional_debug = None
+    raw_height = None
+    height = None
+    roughness = None
+    if needs_color:
+        colors = vary_palette(cfg.seed, cfg.preset, cfg.land_palette)
+        colors.update(ocean_colors_from_base(cfg.ocean_base_color))
+        color = np.zeros((map_height, map_width, 3), dtype=np.float32)
+    else:
+        colors = None
+
     ocean_variation = fbm_3d(x, y, z, 18.0, 4, 0.5, cfg.seed + 5111)
-    ocean_color = color_blend(
-        colors["deep_ocean"],
-        colors["ocean_mid"],
-        np.clip(ocean_variation * cfg.ocean_current_strength * 1.8, 0.0, 0.72),
-    )
-    ocean_color = color_blend(ocean_color, colors["shallow_ocean"], shelf)
+    if needs_color:
+        ocean_color = color_blend(
+            colors["deep_ocean"],
+            colors["ocean_mid"],
+            np.clip(ocean_variation * cfg.ocean_current_strength * 1.8, 0.0, 0.72),
+        )
+        ocean_color = color_blend(ocean_color, colors["shallow_ocean"], shelf)
     ocean_texture = fbm_3d(x, y, z, 32.0, 4, 0.52, cfg.seed + 5221)
     equator = 1.0 - lat_abs
 
-    warm_shallow = np.array([68, 205, 190], dtype=np.float32)
-    warm_shallow = (warm_shallow - 127.5) * cfg.ocean_shelf_contrast + 127.5
-    warm_shallow = warm_shallow + cfg.ocean_shelf_brightness * 255.0
-    warm_shallow = np.clip(warm_shallow, 0.0, 255.0)
-    depth_blue = np.array([0, 8, 38], dtype=np.float32)
-    cold_deep = np.array([42, 72, 102], dtype=np.float32)
-    productive_teal = np.array([18, 154, 96], dtype=np.float32)
-    sediment_tint = np.array([172, 154, 82], dtype=np.float32)
     legacy_ocean_variation = np.clip(cfg.ocean_color_variation, 0.0, 1.0)
     shallow_tint_weight = np.power(np.clip(shelf, 0.0, 1.0), 0.65)
     deep_tint_weight = smoothstep(0.22, 1.0, ocean_depth)
 
-    ocean_color = color_blend(
-        ocean_color,
-        warm_shallow,
-        np.clip(
-            shallow_tint_weight
-            * (0.65 + equator * 0.45)
-            * (0.65 + ocean_texture * 0.60)
-            * (cfg.ocean_shallow_tint_strength + legacy_ocean_variation * 0.65),
-            0.0,
-            0.72,
-        ),
-    )
-    ocean_color = color_blend(
-        ocean_color,
-        depth_blue,
-        np.clip(
-            deep_tint_weight
-            * (0.70 + ocean_texture * 0.55)
-            * (cfg.ocean_depth_tint_strength + legacy_ocean_variation * 0.45),
-            0.0,
-            0.58,
-        ),
-    )
-    ocean_color = color_blend(
-        ocean_color,
-        cold_deep,
-        np.clip(
-            deep_tint_weight
-            * smoothstep(0.30, 0.92, lat_abs)
-            * (cfg.ocean_latitude_tint_strength + legacy_ocean_variation * 0.50),
-            0.0,
-            0.58,
-        ),
-    )
+    if needs_color:
+        warm_shallow = np.array([68, 205, 190], dtype=np.float32)
+        warm_shallow = (warm_shallow - 127.5) * cfg.ocean_shelf_contrast + 127.5
+        warm_shallow = warm_shallow + cfg.ocean_shelf_brightness * 255.0
+        warm_shallow = np.clip(warm_shallow, 0.0, 255.0)
+        depth_blue = np.array([0, 8, 38], dtype=np.float32)
+        cold_deep = np.array([42, 72, 102], dtype=np.float32)
+        productive_teal = np.array([18, 154, 96], dtype=np.float32)
+        sediment_tint = np.array([172, 154, 82], dtype=np.float32)
+        ocean_color = color_blend(
+            ocean_color,
+            warm_shallow,
+            np.clip(
+                shallow_tint_weight
+                * (0.65 + equator * 0.45)
+                * (0.65 + ocean_texture * 0.60)
+                * (cfg.ocean_shallow_tint_strength + legacy_ocean_variation * 0.65),
+                0.0,
+                0.72,
+            ),
+        )
+        ocean_color = color_blend(
+            ocean_color,
+            depth_blue,
+            np.clip(
+                deep_tint_weight
+                * (0.70 + ocean_texture * 0.55)
+                * (cfg.ocean_depth_tint_strength + legacy_ocean_variation * 0.45),
+                0.0,
+                0.58,
+            ),
+        )
+        ocean_color = color_blend(
+            ocean_color,
+            cold_deep,
+            np.clip(
+                deep_tint_weight
+                * smoothstep(0.30, 0.92, lat_abs)
+                * (cfg.ocean_latitude_tint_strength + legacy_ocean_variation * 0.50),
+                0.0,
+                0.58,
+            ),
+        )
     productivity_noise = fbm_3d(x, y, z, 7.0, 4, 0.56, cfg.seed + 5331)
-    upwelling = np.clip(
-        shallow_tint_weight * 0.80
-        + smoothstep(0.38, 0.78, lat_abs) * 0.28
-        + equator * ocean_variation * 0.38,
-        0.0,
-        1.0,
-    )
-    ocean_color = color_blend(
-        ocean_color,
-        productive_teal,
-        np.clip(
-            smoothstep(0.30, 0.78, productivity_noise)
-            * upwelling
-            * cfg.ocean_productivity_strength
-            * 1.8,
+    if needs_color:
+        upwelling = np.clip(
+            shallow_tint_weight * 0.80
+            + smoothstep(0.38, 0.78, lat_abs) * 0.28
+            + equator * ocean_variation * 0.38,
             0.0,
-            0.56,
-        ),
-    )
+            1.0,
+        )
+        ocean_color = color_blend(
+            ocean_color,
+            productive_teal,
+            np.clip(
+                smoothstep(0.30, 0.78, productivity_noise)
+                * upwelling
+                * cfg.ocean_productivity_strength
+                * 1.8,
+                0.0,
+                0.56,
+            ),
+        )
     sediment_noise = fbm_3d(x, y, z, 45.0, 3, 0.52, cfg.seed + 5441)
-    coastal_sediment = np.clip(shoreline * 0.85 + shallow_tint_weight * 0.58, 0.0, 1.0)
-    ocean_color = color_blend(
-        ocean_color,
-        sediment_tint,
-        np.clip(
-            coastal_sediment
-            * smoothstep(0.24, 0.72, sediment_noise)
-            * cfg.ocean_sediment_strength
-            * 2.2,
+    if needs_color:
+        coastal_sediment = np.clip(shoreline * 0.85 + shallow_tint_weight * 0.58, 0.0, 1.0)
+        ocean_color = color_blend(
+            ocean_color,
+            sediment_tint,
+            np.clip(
+                coastal_sediment
+                * smoothstep(0.24, 0.72, sediment_noise)
+                * cfg.ocean_sediment_strength
+                * 2.2,
+                0.0,
+                0.62,
+            ),
+        )
+        shelf_color_control_mask = np.clip(
+            shallow_tint_weight
+            * (0.70 + cfg.ocean_shallow_tint_strength * 0.55 + legacy_ocean_variation * 0.25),
             0.0,
-            0.62,
-        ),
-    )
-    shelf_color_control_mask = np.clip(
-        shallow_tint_weight
-        * (0.70 + cfg.ocean_shallow_tint_strength * 0.55 + legacy_ocean_variation * 0.25),
-        0.0,
-        1.0,
-    )
-    shelf_adjusted_ocean = (ocean_color - 127.5) * cfg.ocean_shelf_contrast + 127.5
-    shelf_adjusted_ocean = shelf_adjusted_ocean + cfg.ocean_shelf_brightness * 255.0
-    shelf_adjusted_ocean = np.clip(shelf_adjusted_ocean, 0.0, 255.0)
-    ocean_color = color_blend(ocean_color, shelf_adjusted_ocean, shelf_color_control_mask)
-    ocean_color = adjust_ocean_hsv_color(ocean_color, cfg)
-    ocean_color = (ocean_color - 127.5) * cfg.ocean_contrast + 127.5
-    ocean_color = ocean_color + cfg.ocean_brightness * 255.0
-    ocean_color = np.clip(ocean_color, 0.0, 255.0)
-    color[:] = ocean_color
+            1.0,
+        )
+        shelf_adjusted_ocean = (ocean_color - 127.5) * cfg.ocean_shelf_contrast + 127.5
+        shelf_adjusted_ocean = shelf_adjusted_ocean + cfg.ocean_shelf_brightness * 255.0
+        shelf_adjusted_ocean = np.clip(shelf_adjusted_ocean, 0.0, 255.0)
+        ocean_color = color_blend(ocean_color, shelf_adjusted_ocean, shelf_color_control_mask)
+        ocean_color = adjust_ocean_hsv_color(ocean_color, cfg)
+        ocean_color = (ocean_color - 127.5) * cfg.ocean_contrast + 127.5
+        ocean_color = ocean_color + cfg.ocean_brightness * 255.0
+        ocean_color = np.clip(ocean_color, 0.0, 255.0)
+        color[:] = ocean_color
 
-    land_color = color_blend(colors["grass"], colors["dry_plain"], np.clip(biome + desert_bias - 0.45, 0.0, 1.0))
-    land_color = color_blend(land_color, colors["desert"], np.clip(desert_bias + biome * 0.35 - 0.28, 0.0, 1.0))
-    forest_mix = np.clip(forest_bias + moisture * 0.35 - biome * 0.35, 0.0, 1.0)
-    land_color = color_blend(land_color, colors["forest"], forest_mix)
-    land_color = color_blend(land_color, colors["dark_forest"], np.clip(forest_mix * moisture - 0.15, 0.0, 0.65))
-    land_color = color_blend(land_color, colors["rock"], mountain_mask * 0.74)
-    land_color = color_blend(land_color, colors["beach"], shoreline * 0.78)
+        land_color = color_blend(colors["grass"], colors["dry_plain"], np.clip(biome + desert_bias - 0.45, 0.0, 1.0))
+        land_color = color_blend(land_color, colors["desert"], np.clip(desert_bias + biome * 0.35 - 0.28, 0.0, 1.0))
+        forest_mix = np.clip(forest_bias + moisture * 0.35 - biome * 0.35, 0.0, 1.0)
+        land_color = color_blend(land_color, colors["forest"], forest_mix)
+        land_color = color_blend(land_color, colors["dark_forest"], np.clip(forest_mix * moisture - 0.15, 0.0, 0.65))
+        land_color = color_blend(land_color, colors["rock"], mountain_mask * 0.74)
+        land_color = color_blend(land_color, colors["beach"], shoreline * 0.78)
 
     snow_mask = smoothstep(cfg.snow_threshold, 1.0, mountain_mask * 0.72 + lat_abs * 0.38)
     polar_ice, ice_texture = build_polar_ice_formation(cfg, x, y, z, lat, lon)
@@ -1834,178 +1871,208 @@ def build_maps_from_vectors(
     non_ice_land = 1.0 - np.clip(ice_mask, 0.0, 1.0)
     continent_lowland = 1.0 - smoothstep(threshold, threshold + cfg.continent_contrast * 1.8, land_field)
     lowland = continent_lowland
-    land_tints = land_palette_values(cfg.land_palette)["tints"]
-    ochre_tint = land_tints["ochre"]
-    rust_tint = land_tints["rust"]
-    dark_wet_tint = land_tints["dark_wet"]
-    cool_tundra_tint = land_tints["cool_tundra"]
-    pale_highland_tint = land_tints["pale_highland"]
-    iron_oxide_tint = land_tints["iron_oxide"]
-    basalt_tint = land_tints["basalt"]
-    salt_flat_tint = land_tints["salt_flat"]
-    clay_tint = land_tints["clay"]
-
-    regional_tint, regional_weight, regional_debug = build_continent_color_provinces(
-        cfg,
-        x,
-        y,
-        z,
-        land,
-        arid,
-        moisture,
-        mountain_mask,
-        lowland,
-        shoreline,
-        mineral_noise,
-        cold_lat,
-        non_ice_land,
-    )
-    land_color = color_blend(land_color, regional_tint, regional_weight)
-
-    land_color = color_blend(
-        land_color,
-        ochre_tint,
-        np.clip(arid * soil_noise * cfg.land_color_variation * non_ice_land, 0.0, 0.28),
-    )
-    land_color = color_blend(
-        land_color,
-        dark_wet_tint,
-        np.clip(moisture * (1.0 - mountain_mask) * soil_noise * cfg.wetland_tint_strength * non_ice_land, 0.0, 0.22),
-    )
-    land_color = color_blend(
-        land_color,
-        cool_tundra_tint,
-        np.clip(cold_lat * cfg.land_color_variation * 0.72 * non_ice_land, 0.0, 0.20),
-    )
-    land_color = color_blend(
-        land_color,
-        pale_highland_tint,
-        np.clip(mountain_mask * mineral_noise * cfg.land_color_variation * 0.72 * non_ice_land, 0.0, 0.22),
-    )
-    mineral_exposure = np.clip(mountain_mask * 0.80 + arid * 0.30 + soil_noise * 0.12, 0.0, 1.0)
-    land_color = color_blend(
-        land_color,
-        rust_tint,
-        np.clip(mineral_noise * mineral_exposure * cfg.mineral_tint_strength * non_ice_land, 0.0, 0.58),
-    )
-    exposed_dry = np.clip(arid * (0.65 + mountain_mask * 0.35) * (0.45 + soil_noise * 0.55), 0.0, 1.0)
-    basalt_exposure = np.clip((mountain_mask * 0.65 + mineral_noise * 0.35) * smoothstep(0.48, 0.90, mineral_noise), 0.0, 1.0)
-    salt_basin = np.clip(arid * lowland * smoothstep(0.45, 0.95, soil_noise) * (1.0 - moisture * 0.55), 0.0, 1.0)
-    clay_basin = np.clip((moisture * 0.55 + shoreline * 0.45) * lowland * (1.0 - mountain_mask * 0.70), 0.0, 1.0)
-    land_color = color_blend(
-        land_color,
-        iron_oxide_tint,
-        np.clip(exposed_dry * cfg.iron_oxide_tint_strength * non_ice_land, 0.0, 0.50),
-    )
-    land_color = color_blend(
-        land_color,
-        basalt_tint,
-        np.clip(basalt_exposure * cfg.basalt_tint_strength * non_ice_land, 0.0, 0.54),
-    )
-    land_color = color_blend(
-        land_color,
-        clay_tint,
-        np.clip(clay_basin * cfg.clay_tint_strength * non_ice_land, 0.0, 0.42),
-    )
-    land_color = color_blend(
-        land_color,
-        salt_flat_tint,
-        np.clip(salt_basin * cfg.salt_flat_tint_strength * non_ice_land, 0.0, 0.48),
-    )
-    land_color = (land_color - 127.5) * cfg.land_contrast + 127.5
-    land_color = land_color + cfg.land_brightness * 255.0
-    land_color = np.clip(land_color, 0.0, 255.0)
     ice_solidity = np.clip(cfg.polar_ice_solidity, 0.0, 1.0)
-    solid_ice_tint = land_tints["solid_ice"]
-    ice_highlight = color_blend(
-        colors["ice"],
-        colors["snow"],
-        np.clip(ice_texture * 0.20 + ice_solidity * 0.54, 0.0, 0.76),
-    )
-    ice_highlight = color_blend(ice_highlight, solid_ice_tint, ice_solidity * 0.35)
-    land_color = color_blend(land_color, colors["snow"], snow_mask)
-    land_ice_strength = np.clip(polar_ice * (0.70 + ice_solidity * 0.42), 0.0, 1.0)
-    land_color = color_blend(land_color, ice_highlight, land_ice_strength)
-    ocean_ice_strength = np.clip(
-        polar_ice * (0.30 + cfg.polar_ice_shelf_strength * 0.45 + ice_solidity * 0.46),
-        0.0,
-        1.0,
-    )
-    ocean_color_with_ice = color_blend(color, ice_highlight, np.where(~land, ocean_ice_strength, 0.0))
-    color = np.where(land[..., None], land_color, ocean_color_with_ice)
-    flat_ocean_strength = float(np.clip(cfg.ocean_flat_color_strength, 0.0, 1.0))
-    if flat_ocean_strength > 0.0:
-        flat_ocean_color = rgb_from_hex(cfg.ocean_base_color)
-        flat_ocean_mask = np.where(~land, flat_ocean_strength, 0.0)
-        color = color_blend(color, flat_ocean_color, flat_ocean_mask)
-    shelf_color_strength = float(np.clip(cfg.ocean_shelf_color_strength, 0.0, 1.0))
-    if shelf_color_strength > 0.0:
-        shelf_layer_color = rgb_from_hex(cfg.ocean_shelf_color)
-        shelf_layer_color = (shelf_layer_color - 127.5) * cfg.ocean_shelf_contrast + 127.5
-        shelf_layer_color = shelf_layer_color + cfg.ocean_shelf_brightness * 255.0
-        shelf_layer_color = np.clip(shelf_layer_color, 0.0, 255.0)
-        shelf_layer_mask = np.clip(shallow_tint_weight * shelf_color_strength, 0.0, 1.0)
-        shelf_layer_mask = np.where(~land, shelf_layer_mask, 0.0)
-        color = color_blend(color, shelf_layer_color, shelf_layer_mask)
+    if needs_color:
+        land_tints = land_palette_values(cfg.land_palette)["tints"]
+        ochre_tint = land_tints["ochre"]
+        rust_tint = land_tints["rust"]
+        dark_wet_tint = land_tints["dark_wet"]
+        cool_tundra_tint = land_tints["cool_tundra"]
+        pale_highland_tint = land_tints["pale_highland"]
+        iron_oxide_tint = land_tints["iron_oxide"]
+        basalt_tint = land_tints["basalt"]
+        salt_flat_tint = land_tints["salt_flat"]
+        clay_tint = land_tints["clay"]
 
-    continent_base_land_height = smoothstep(threshold - cfg.continent_contrast, threshold + cfg.continent_contrast, land_field)
-    base_land_height = continent_base_land_height
-    height = np.where(land, 0.38 + base_land_height * 0.20, 0.18 - ocean_depth * 0.18)
-    height += np.where(land, mountain_mask * cfg.mountain_height * 0.36, 0.0)
-    height += np.where(land, shoreline * 0.025, 0.0)
-    height += np.where(
-        land,
-        polar_ice * (0.018 + ice_solidity * 0.034 + ice_texture * 0.026),
-        polar_ice * cfg.polar_ice_shelf_strength * (0.008 + ice_solidity * 0.014),
-    )
-    raw_height = height
-    height = normalize01(raw_height, height_range)
+        regional_tint, regional_weight, regional_debug = build_continent_color_provinces(
+            cfg,
+            x,
+            y,
+            z,
+            land,
+            arid,
+            moisture,
+            mountain_mask,
+            lowland,
+            shoreline,
+            mineral_noise,
+            cold_lat,
+            non_ice_land,
+        )
+        land_color = color_blend(land_color, regional_tint, regional_weight)
 
-    roughness = np.where(land, 0.72, 0.24)
-    roughness = roughness + mountain_mask * 0.12 - shelf * 0.07
-    roughness = roughness + polar_ice * (0.06 + ice_solidity * 0.12 + ice_texture * 0.16)
-    roughness = np.clip(roughness, 0.0, 1.0)
-    city_lights = build_city_lights_map(
-        cfg,
-        x,
-        y,
-        z,
-        lat,
-        land,
-        shoreline,
-        moisture,
-        mountain_mask,
-        polar_ice,
-    )
+        land_color = color_blend(
+            land_color,
+            ochre_tint,
+            np.clip(arid * soil_noise * cfg.land_color_variation * non_ice_land, 0.0, 0.28),
+        )
+        land_color = color_blend(
+            land_color,
+            dark_wet_tint,
+            np.clip(moisture * (1.0 - mountain_mask) * soil_noise * cfg.wetland_tint_strength * non_ice_land, 0.0, 0.22),
+        )
+        land_color = color_blend(
+            land_color,
+            cool_tundra_tint,
+            np.clip(cold_lat * cfg.land_color_variation * 0.72 * non_ice_land, 0.0, 0.20),
+        )
+        land_color = color_blend(
+            land_color,
+            pale_highland_tint,
+            np.clip(mountain_mask * mineral_noise * cfg.land_color_variation * 0.72 * non_ice_land, 0.0, 0.22),
+        )
+        mineral_exposure = np.clip(mountain_mask * 0.80 + arid * 0.30 + soil_noise * 0.12, 0.0, 1.0)
+        land_color = color_blend(
+            land_color,
+            rust_tint,
+            np.clip(mineral_noise * mineral_exposure * cfg.mineral_tint_strength * non_ice_land, 0.0, 0.58),
+        )
+        exposed_dry = np.clip(arid * (0.65 + mountain_mask * 0.35) * (0.45 + soil_noise * 0.55), 0.0, 1.0)
+        basalt_exposure = np.clip((mountain_mask * 0.65 + mineral_noise * 0.35) * smoothstep(0.48, 0.90, mineral_noise), 0.0, 1.0)
+        salt_basin = np.clip(arid * lowland * smoothstep(0.45, 0.95, soil_noise) * (1.0 - moisture * 0.55), 0.0, 1.0)
+        clay_basin = np.clip((moisture * 0.55 + shoreline * 0.45) * lowland * (1.0 - mountain_mask * 0.70), 0.0, 1.0)
+        land_color = color_blend(
+            land_color,
+            iron_oxide_tint,
+            np.clip(exposed_dry * cfg.iron_oxide_tint_strength * non_ice_land, 0.0, 0.50),
+        )
+        land_color = color_blend(
+            land_color,
+            basalt_tint,
+            np.clip(basalt_exposure * cfg.basalt_tint_strength * non_ice_land, 0.0, 0.54),
+        )
+        land_color = color_blend(
+            land_color,
+            clay_tint,
+            np.clip(clay_basin * cfg.clay_tint_strength * non_ice_land, 0.0, 0.42),
+        )
+        land_color = color_blend(
+            land_color,
+            salt_flat_tint,
+            np.clip(salt_basin * cfg.salt_flat_tint_strength * non_ice_land, 0.0, 0.48),
+        )
+        land_color = (land_color - 127.5) * cfg.land_contrast + 127.5
+        land_color = land_color + cfg.land_brightness * 255.0
+        land_color = np.clip(land_color, 0.0, 255.0)
+        solid_ice_tint = land_tints["solid_ice"]
+        ice_highlight = color_blend(
+            colors["ice"],
+            colors["snow"],
+            np.clip(ice_texture * 0.20 + ice_solidity * 0.54, 0.0, 0.76),
+        )
+        ice_highlight = color_blend(ice_highlight, solid_ice_tint, ice_solidity * 0.35)
+        land_color = color_blend(land_color, colors["snow"], snow_mask)
+        land_ice_strength = np.clip(polar_ice * (0.70 + ice_solidity * 0.42), 0.0, 1.0)
+        land_color = color_blend(land_color, ice_highlight, land_ice_strength)
+        ocean_ice_strength = np.clip(
+            polar_ice * (0.30 + cfg.polar_ice_shelf_strength * 0.45 + ice_solidity * 0.46),
+            0.0,
+            1.0,
+        )
+        ocean_color_with_ice = color_blend(color, ice_highlight, np.where(~land, ocean_ice_strength, 0.0))
+        color = np.where(land[..., None], land_color, ocean_color_with_ice)
+        flat_ocean_strength = float(np.clip(cfg.ocean_flat_color_strength, 0.0, 1.0))
+        if flat_ocean_strength > 0.0:
+            flat_ocean_color = rgb_from_hex(cfg.ocean_base_color)
+            flat_ocean_mask = np.where(~land, flat_ocean_strength, 0.0)
+            color = color_blend(color, flat_ocean_color, flat_ocean_mask)
+        shelf_color_strength = float(np.clip(cfg.ocean_shelf_color_strength, 0.0, 1.0))
+        if shelf_color_strength > 0.0:
+            shelf_layer_color = rgb_from_hex(cfg.ocean_shelf_color)
+            shelf_layer_color = (shelf_layer_color - 127.5) * cfg.ocean_shelf_contrast + 127.5
+            shelf_layer_color = shelf_layer_color + cfg.ocean_shelf_brightness * 255.0
+            shelf_layer_color = np.clip(shelf_layer_color, 0.0, 255.0)
+            shelf_layer_mask = np.clip(shallow_tint_weight * shelf_color_strength, 0.0, 1.0)
+            shelf_layer_mask = np.where(~land, shelf_layer_mask, 0.0)
+            color = color_blend(color, shelf_layer_color, shelf_layer_mask)
 
-    maps = {
-        "color": color,
-        "height": height,
-        "normal": normal_from_height(height, wrap_x=normal_wrap_x),
-        "roughness": roughness,
-        "land_mask": land.astype(np.float32),
-        "shoreline_mask": shoreline,
-        "ocean_depth": ocean_depth,
-        "cloud_mask": cloud_mask,
-        "city_lights": city_lights,
-    }
+    if needs_height:
+        continent_base_land_height = smoothstep(threshold - cfg.continent_contrast, threshold + cfg.continent_contrast, land_field)
+        base_land_height = continent_base_land_height
+        height = np.where(land, 0.38 + base_land_height * 0.20, 0.18 - ocean_depth * 0.18)
+        height += np.where(land, mountain_mask * cfg.mountain_height * 0.36, 0.0)
+        height += np.where(land, shoreline * 0.025, 0.0)
+        height += np.where(
+            land,
+            polar_ice * (0.018 + ice_solidity * 0.034 + ice_texture * 0.026),
+            polar_ice * cfg.polar_ice_shelf_strength * (0.008 + ice_solidity * 0.014),
+        )
+        raw_height = height
+        height = normalize01(raw_height, height_range)
+
+    if stats_only and stats <= {"height"}:
+        return {"_land_field": land_field, "_raw_height": raw_height}
+    if stats_only and stats <= {"cloud"}:
+        return {"_land_field": land_field, "_cloud_field": cloud_field}
+    if stats_only:
+        maps = {"_land_field": land_field}
+        if "moisture" in stats:
+            maps["_moisture_input"] = moisture_input
+        if "height" in stats:
+            maps["_raw_height"] = raw_height
+        if "cloud" in stats:
+            maps["_cloud_field"] = cloud_field
+        return maps
+
+    if needs_roughness:
+        roughness = np.where(land, 0.72, 0.24)
+        roughness = roughness + mountain_mask * 0.12 - shelf * 0.07
+        roughness = roughness + polar_ice * (0.06 + ice_solidity * 0.12 + ice_texture * 0.16)
+        roughness = np.clip(roughness, 0.0, 1.0)
+
+    maps = {}
+    if "color" in selected_maps:
+        maps["color"] = color
+    if needs_height:
+        maps["height"] = height
+    if "normal" in selected_maps:
+        maps["normal"] = normal_from_height(height, wrap_x=normal_wrap_x)
+    if "roughness" in selected_maps:
+        maps["roughness"] = roughness
+    if "land_mask" in selected_maps:
+        maps["land_mask"] = land.astype(np.float32)
+    if "shoreline_mask" in selected_maps:
+        maps["shoreline_mask"] = shoreline
+    if "ocean_depth" in selected_maps:
+        maps["ocean_depth"] = ocean_depth
+    if "cloud_mask" in selected_maps:
+        maps["cloud_mask"] = cloud_mask
+    if needs_city_lights:
+        maps["city_lights"] = build_city_lights_map(
+            cfg,
+            x,
+            y,
+            z,
+            lat,
+            land,
+            shoreline,
+            moisture,
+            mountain_mask,
+            polar_ice,
+        )
     if return_raw_stats:
         maps["_land_field"] = land_field
-        maps["_cloud_field"] = cloud_field
-        maps["_moisture_input"] = moisture_input
-        maps["_raw_height"] = raw_height
+        if cloud_field is not None:
+            maps["_cloud_field"] = cloud_field
+        if needs_moisture:
+            maps["_moisture_input"] = moisture_input
+        if raw_height is not None:
+            maps["_raw_height"] = raw_height
         maps["_continent_land"] = continent_land.astype(np.float32)
         maps["_island_land"] = island_land.astype(np.float32)
-        maps["_continent_color_region"] = regional_debug
+        if regional_debug is not None:
+            maps["_continent_color_region"] = regional_debug
     return maps
 
 
-def build_maps(cfg):
+def build_maps(cfg, map_names=None):
     x, y, z, lat, lon = sphere_vectors(cfg.width, cfg.height)
-    return build_maps_from_vectors(cfg, x, y, z, lat, lon, normal_wrap_x=True)
+    return build_maps_from_vectors(cfg, x, y, z, lat, lon, normal_wrap_x=True, map_names=map_names)
 
 
-def build_quad_sphere_maps(cfg, face_size):
+def build_quad_sphere_maps(cfg, face_size, map_names=None):
+    selected_maps = selected_texture_maps(map_names)
+    selected_set = set(selected_maps)
     vectors = {}
     probe_maps = {}
     for face in ("px", "nx", "py", "ny", "pz", "nz"):
@@ -2020,32 +2087,51 @@ def build_quad_sphere_maps(cfg, face_size):
             lon,
             normal_wrap_x=False,
             return_raw_stats=True,
+            map_names=selected_maps,
+            stat_fields=("land",),
         )
 
     all_land = np.concatenate([maps["_land_field"].ravel() for maps in probe_maps.values()])
     land_threshold = float(np.quantile(all_land, 1.0 - cfg.land_coverage))
 
-    probe_maps = {}
-    for face, (x, y, z, lat, lon) in vectors.items():
-        probe_maps[face] = build_maps_from_vectors(
-            cfg,
-            x,
-            y,
-            z,
-            lat,
-            lon,
-            normal_wrap_x=False,
-            land_threshold=land_threshold,
-            return_raw_stats=True,
-        )
+    stat_fields = []
+    if selected_set & {"color", "city_lights"}:
+        stat_fields.append("moisture")
+    if selected_set & {"height", "normal"}:
+        stat_fields.append("height")
+    if "cloud_mask" in selected_set:
+        stat_fields.append("cloud")
 
-    all_moisture = np.concatenate([maps["_moisture_input"].ravel() for maps in probe_maps.values()])
-    all_height = np.concatenate([maps["_raw_height"].ravel() for maps in probe_maps.values()])
-    all_cloud = np.concatenate([maps["_cloud_field"].ravel() for maps in probe_maps.values()])
-    moisture_range = (float(np.min(all_moisture)), float(np.max(all_moisture)))
-    height_range = (float(np.min(all_height)), float(np.max(all_height)))
-    cloud_coverage = float(np.clip(cfg.cloud_coverage, 0.0, 1.0))
-    cloud_threshold = float(np.quantile(all_cloud, 1.0 - cloud_coverage)) if 0.0 < cloud_coverage < 1.0 else 1.0
+    moisture_range = None
+    height_range = None
+    cloud_threshold = None
+    if stat_fields:
+        probe_maps = {}
+        for face, (x, y, z, lat, lon) in vectors.items():
+            probe_maps[face] = build_maps_from_vectors(
+                cfg,
+                x,
+                y,
+                z,
+                lat,
+                lon,
+                normal_wrap_x=False,
+                land_threshold=land_threshold,
+                return_raw_stats=True,
+                map_names=selected_maps,
+                stat_fields=stat_fields,
+            )
+
+        if "moisture" in stat_fields:
+            all_moisture = np.concatenate([maps["_moisture_input"].ravel() for maps in probe_maps.values()])
+            moisture_range = (float(np.min(all_moisture)), float(np.max(all_moisture)))
+        if "height" in stat_fields:
+            all_height = np.concatenate([maps["_raw_height"].ravel() for maps in probe_maps.values()])
+            height_range = (float(np.min(all_height)), float(np.max(all_height)))
+        if "cloud" in stat_fields:
+            all_cloud = np.concatenate([maps["_cloud_field"].ravel() for maps in probe_maps.values()])
+            cloud_coverage = float(np.clip(cfg.cloud_coverage, 0.0, 1.0))
+            cloud_threshold = float(np.quantile(all_cloud, 1.0 - cloud_coverage)) if 0.0 < cloud_coverage < 1.0 else 1.0
 
     faces = {}
     for face, (x, y, z, lat, lon) in vectors.items():
@@ -2061,6 +2147,7 @@ def build_quad_sphere_maps(cfg, face_size):
             cloud_threshold=cloud_threshold,
             moisture_range=moisture_range,
             height_range=height_range,
+            map_names=selected_maps,
         )
     return faces
 
@@ -2350,7 +2437,7 @@ def generate_planet_output(cfg, out_dir, quad_sphere=False, face_size=None, text
     if quad_sphere:
         quad_dir = out_dir / "quad_sphere"
         quad_dir.mkdir(parents=True, exist_ok=True)
-        quad_faces = build_quad_sphere_maps(cfg, face_size)
+        quad_faces = build_quad_sphere_maps(cfg, face_size, selected_maps)
         for face, maps in quad_faces.items():
             face_dir = quad_dir / face
             face_dir.mkdir(parents=True, exist_ok=True)
@@ -2358,7 +2445,7 @@ def generate_planet_output(cfg, out_dir, quad_sphere=False, face_size=None, text
         save_quad_sphere_cubemap_crosses(quad_dir, quad_faces, face_size, selected_maps)
         write_quad_sphere_manifest(out_dir, face_size, selected_maps)
     else:
-        maps = build_maps(cfg)
+        maps = build_maps(cfg, selected_maps)
         save_map_set(out_dir, maps, selected_maps)
         if "color" in selected_maps:
             render_globe_preview(maps["color"], maps["height"], out_dir / "preview.png")

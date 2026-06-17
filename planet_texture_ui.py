@@ -347,7 +347,7 @@ def save_planet_output(payload: dict) -> Path:
             raise ValueError("Quad-sphere face size must be at least 32.")
         quad_dir = out_dir / "quad_sphere"
         quad_dir.mkdir(parents=True, exist_ok=True)
-        quad_faces = build_quad_sphere_maps(cfg, face_size)
+        quad_faces = build_quad_sphere_maps(cfg, face_size, texture_maps)
         for face, maps in quad_faces.items():
             face_dir = quad_dir / face
             face_dir.mkdir(parents=True, exist_ok=True)
@@ -356,10 +356,10 @@ def save_planet_output(payload: dict) -> Path:
         write_quad_sphere_manifest(out_dir, face_size, texture_maps)
         metadata = metadata_for_config(cfg, "quad_sphere", face_size, texture_maps)
     else:
-        maps = build_maps(cfg)
+        maps = build_maps(cfg, texture_maps)
         save_map_set(out_dir, maps, texture_maps)
-        render_globe_preview(maps["color"], maps["height"], out_dir / "preview.png")
         if "color" in texture_maps:
+            render_globe_preview(maps["color"], maps["height"], out_dir / "preview.png")
             write_html_preview(out_dir, f"{cfg.preset} planet preview", texture_maps)
         metadata = metadata_for_config(cfg, "equirectangular", texture_maps=texture_maps)
 

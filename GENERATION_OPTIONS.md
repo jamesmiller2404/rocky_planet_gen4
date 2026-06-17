@@ -45,6 +45,8 @@ Save a specific Blender-oriented set:
 .\.venv\Scripts\python.exe rocky_planet_gen.py --preset earthlike --seed 42 --width 2048 --height 1024 --out output/blender_maps --texture-maps color height normal roughness
 ```
 
+The selected texture maps also reduce avoidable computation where possible. For example, omitting `city_lights`, `cloud_mask`, `normal`, or `roughness` skips those final build steps instead of only skipping the saved PNG files.
+
 ## Profiling
 
 Use profiling when a large texture run is slow and you want to see where time is going before optimizing.
