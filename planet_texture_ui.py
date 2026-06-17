@@ -140,6 +140,8 @@ PARAM_GROUPS = [
             ("continent_color_blend_smoothness", 0.00, 1.00, 0.01),
             ("ocean_base_color", "#000000", "#ffffff", "color"),
             ("ocean_flat_color_strength", 0.00, 1.00, 0.01),
+            ("ocean_shelf_color", "#000000", "#ffffff", "color"),
+            ("ocean_shelf_color_strength", 0.00, 1.00, 0.01),
             ("land_brightness", -0.50, 0.50, 0.01),
             ("land_contrast", 0.50, 2.00, 0.01),
             ("ocean_color_variation", 0.00, 0.70, 0.01),

@@ -89,6 +89,8 @@ PRESETS = {
         "continent_color_blend_smoothness": 0.65,
         "ocean_base_color": "#074876",
         "ocean_flat_color_strength": 0.00,
+        "ocean_shelf_color": "#44cdbc",
+        "ocean_shelf_color_strength": 0.00,
         "ocean_color_variation": 0.18,
         "ocean_shallow_tint_strength": 0.38,
         "ocean_shelf_brightness": 0.00,
@@ -171,6 +173,8 @@ PRESETS = {
         "continent_color_blend_smoothness": 0.70,
         "ocean_base_color": "#0b6d92",
         "ocean_flat_color_strength": 0.00,
+        "ocean_shelf_color": "#44cdbc",
+        "ocean_shelf_color_strength": 0.00,
         "ocean_color_variation": 0.24,
         "ocean_shallow_tint_strength": 0.56,
         "ocean_shelf_brightness": 0.00,
@@ -253,6 +257,8 @@ PRESETS = {
         "continent_color_blend_smoothness": 0.55,
         "ocean_base_color": "#063f70",
         "ocean_flat_color_strength": 0.00,
+        "ocean_shelf_color": "#44cdbc",
+        "ocean_shelf_color_strength": 0.00,
         "ocean_color_variation": 0.14,
         "ocean_shallow_tint_strength": 0.24,
         "ocean_shelf_brightness": 0.00,
@@ -335,6 +341,8 @@ PRESETS = {
         "continent_color_blend_smoothness": 0.42,
         "ocean_base_color": "#05315e",
         "ocean_flat_color_strength": 0.00,
+        "ocean_shelf_color": "#44cdbc",
+        "ocean_shelf_color_strength": 0.00,
         "ocean_color_variation": 0.08,
         "ocean_shallow_tint_strength": 0.16,
         "ocean_shelf_brightness": 0.00,
@@ -417,6 +425,8 @@ PRESETS = {
         "continent_color_blend_smoothness": 0.75,
         "ocean_base_color": "#294f72",
         "ocean_flat_color_strength": 0.00,
+        "ocean_shelf_color": "#44cdbc",
+        "ocean_shelf_color_strength": 0.00,
         "ocean_color_variation": 0.16,
         "ocean_shallow_tint_strength": 0.18,
         "ocean_shelf_brightness": 0.00,
@@ -918,6 +928,8 @@ class PlanetConfig:
     continent_color_blend_smoothness: float
     ocean_base_color: str
     ocean_flat_color_strength: float
+    ocean_shelf_color: str
+    ocean_shelf_color_strength: float
     ocean_color_variation: float
     ocean_shallow_tint_strength: float
     ocean_shelf_brightness: float
@@ -1924,6 +1936,15 @@ def build_maps_from_vectors(
         flat_ocean_color = rgb_from_hex(cfg.ocean_base_color)
         flat_ocean_mask = np.where(~land, flat_ocean_strength, 0.0)
         color = color_blend(color, flat_ocean_color, flat_ocean_mask)
+    shelf_color_strength = float(np.clip(cfg.ocean_shelf_color_strength, 0.0, 1.0))
+    if shelf_color_strength > 0.0:
+        shelf_layer_color = rgb_from_hex(cfg.ocean_shelf_color)
+        shelf_layer_color = (shelf_layer_color - 127.5) * cfg.ocean_shelf_contrast + 127.5
+        shelf_layer_color = shelf_layer_color + cfg.ocean_shelf_brightness * 255.0
+        shelf_layer_color = np.clip(shelf_layer_color, 0.0, 255.0)
+        shelf_layer_mask = np.clip(shallow_tint_weight * shelf_color_strength, 0.0, 1.0)
+        shelf_layer_mask = np.where(~land, shelf_layer_mask, 0.0)
+        color = color_blend(color, shelf_layer_color, shelf_layer_mask)
 
     continent_base_land_height = smoothstep(threshold - cfg.continent_contrast, threshold + cfg.continent_contrast, land_field)
     base_land_height = continent_base_land_height
