@@ -1544,27 +1544,17 @@ def build_continent_color_provinces(
     best_score = np.full_like(x, -2.0, dtype=np.float32)
     second_score = np.full_like(x, -2.0, dtype=np.float32)
     province_id = np.zeros_like(x, dtype=np.int32)
-    second_province_id = np.zeros_like(x, dtype=np.int32)
     for index, anchor in enumerate(anchors):
         score = wx * anchor[0] + wy * anchor[1] + wz * anchor[2]
         better = score > best_score
         between = (~better) & (score > second_score)
-        second_province_id = np.where(better, province_id, np.where(between, index, second_province_id))
         second_score = np.where(better, best_score, np.where(between, score, second_score))
         best_score = np.where(better, score, best_score)
         province_id = np.where(better, index, province_id)
 
-    style_map = styles[province_id]
-    second_style_map = styles[second_province_id]
-    best_color = region_tints[style_map]
-    second_color = region_tints[second_style_map]
-    bias_map = province_bias[province_id]
     boundary_margin = best_score - second_score
     blend_width = 0.045 + blend_smoothness * 0.360 + (1.0 - diversity) * 0.060
     boundary_soft = smoothstep(0.006, blend_width, boundary_margin)
-    neighbor_mix = (1.0 - boundary_soft) * (0.16 + blend_smoothness * 0.84)
-    target_color = color_blend(best_color, second_color, neighbor_mix)
-    province_texture = 0.82 + fbm_3d(x, y, z, scale * 5.2 + 3.0, 3, 0.50, cfg.seed + 6637) * 0.34
 
     warm_gate = np.clip(0.46 + arid * 0.40 + lowland * 0.22, 0.0, 1.0)
     red_gate = np.clip(0.34 + arid * 0.48 + mineral_noise * 0.28 + mountain_mask * 0.16, 0.0, 1.0)
@@ -1573,15 +1563,41 @@ def build_continent_color_provinces(
     pale_gate = np.clip(0.34 + lowland * 0.38 + shoreline * 0.20 + (1.0 - arid) * 0.16, 0.0, 1.0)
     cool_gate = np.clip(0.30 + cold_lat * 0.64 + moisture * 0.12 - arid * 0.16, 0.0, 1.0)
 
+    soft_temperature = 0.018 + blend_smoothness * 0.095 + (1.0 - diversity) * 0.035
+    influence_span = 0.12 + blend_smoothness * 0.32 + (1.0 - diversity) * 0.08
+    influence_floor = best_score - influence_span
+    weight_sum = np.zeros_like(x, dtype=np.float32)
+    color_sum = np.zeros((map_height, map_width, 3), dtype=np.float32)
+    gate_sum = np.zeros_like(x, dtype=np.float32)
+    bias_sum = np.zeros_like(x, dtype=np.float32)
+    style_gates = (warm_gate, red_gate, dark_gate, humid_gate, pale_gate, cool_gate)
+    for index, anchor in enumerate(anchors):
+        score = wx * anchor[0] + wy * anchor[1] + wz * anchor[2]
+        influence = np.exp(np.clip((score - best_score) / soft_temperature, -18.0, 0.0)).astype(np.float32)
+        influence = np.where(score >= influence_floor, influence, 0.0)
+        style_index = int(styles[index])
+        weight_sum += influence
+        color_sum += influence[..., None] * region_tints[style_index]
+        gate_sum += influence * style_gates[style_index]
+        bias_sum += influence * province_bias[index]
+    weight_sum = np.maximum(weight_sum, 1e-6)
+    blended_color = color_sum / weight_sum[..., None]
+    blended_style_gate = gate_sum / weight_sum
+    blended_bias = bias_sum / weight_sum
+    best_style_map = styles[province_id]
+    best_color = region_tints[best_style_map]
     best_style_gate = np.zeros_like(x, dtype=np.float32)
-    second_style_gate = np.zeros_like(x, dtype=np.float32)
-    for style_index, gate in enumerate((warm_gate, red_gate, dark_gate, humid_gate, pale_gate, cool_gate)):
-        best_style_gate = np.where(style_map == style_index, gate, best_style_gate)
-        second_style_gate = np.where(second_style_map == style_index, gate, second_style_gate)
-    style_gate = best_style_gate * (1.0 - neighbor_mix) + second_style_gate * neighbor_mix
+    for style_index, gate in enumerate(style_gates):
+        best_style_gate = np.where(best_style_map == style_index, gate, best_style_gate)
+    best_bias = province_bias[province_id]
+    province_core = boundary_soft * (0.62 + diversity * 0.30) * (1.0 - blend_smoothness * 0.04)
+    target_color = color_blend(blended_color, best_color, province_core)
+    style_gate = lerp(blended_style_gate, best_style_gate, province_core)
+    bias_map = lerp(blended_bias, best_bias, province_core)
+    province_texture = 0.82 + fbm_3d(x, y, z, scale * 5.2 + 3.0, 3, 0.50, cfg.seed + 6637) * 0.34
 
     land_region = land.astype(np.float32) * non_ice_land
-    gain = strength * (1.35 + diversity * 1.05)
+    gain = strength * (1.55 + diversity * 1.20)
     region_weight = (
         (0.48 + boundary_soft * (0.52 - blend_smoothness * 0.16))
         * gain
@@ -1590,7 +1606,7 @@ def build_continent_color_provinces(
         * province_texture
         * land_region
     )
-    region_weight = np.clip(region_weight, 0.0, 0.58 + diversity * 0.22)
+    region_weight = np.clip(region_weight, 0.0, 0.68 + diversity * 0.24)
     debug = ((province_id.astype(np.float32) + 1.0) / float(province_count)) * land.astype(np.float32)
     return target_color, region_weight, debug
 
