@@ -103,6 +103,21 @@ PARAM_GROUPS = [
             ("mountain_scale", 2.00, 40.00, 0.50),
             ("mountain_sharpness", 0.00, 1.00, 0.01),
             ("mountain_height", 0.00, 1.20, 0.01),
+            ("mountain_boundary_alignment", 0.00, 1.00, 0.01),
+        ],
+    },
+    {
+        "name": "Impact Craters",
+        "params": [
+            ("crater_density", 0.00, 1.00, 0.01),
+            ("crater_min_radius", 0.001, 0.060, 0.001),
+            ("crater_max_radius", 0.002, 0.140, 0.001),
+            ("crater_depth", 0.00, 1.00, 0.01),
+            ("crater_rim_height", 0.00, 1.00, 0.01),
+            ("crater_rim_width", 0.00, 1.00, 0.01),
+            ("crater_erosion", 0.00, 1.00, 0.01),
+            ("crater_land_bias", 0.00, 1.00, 0.01),
+            ("crater_color_strength", 0.00, 1.00, 0.01),
         ],
     },
     {

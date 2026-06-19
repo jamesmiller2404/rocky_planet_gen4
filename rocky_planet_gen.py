@@ -77,10 +77,20 @@ PRESETS = {
         "biome_complexity": 6,
         "desert_coverage": 0.27,
         "forest_coverage": 0.56,
-        "mountain_density": 0.42,
+        "mountain_density": 0.52,
         "mountain_scale": 16.0,
-        "mountain_sharpness": 0.68,
-        "mountain_height": 0.62,
+        "mountain_sharpness": 0.76,
+        "mountain_height": 0.84,
+        "mountain_boundary_alignment": 0.55,
+        "crater_density": 0.24,
+        "crater_min_radius": 0.010,
+        "crater_max_radius": 0.085,
+        "crater_depth": 0.65,
+        "crater_rim_height": 0.55,
+        "crater_rim_width": 0.14,
+        "crater_erosion": 0.25,
+        "crater_land_bias": 0.85,
+        "crater_color_strength": 0.45,
         "polar_ice_size": 0.16,
         "polar_ice_scale": 2.15,
         "polar_ice_complexity": 0.62,
@@ -161,10 +171,20 @@ PRESETS = {
         "biome_complexity": 7,
         "desert_coverage": 0.18,
         "forest_coverage": 0.66,
-        "mountain_density": 0.34,
+        "mountain_density": 0.44,
         "mountain_scale": 20.0,
-        "mountain_sharpness": 0.55,
-        "mountain_height": 0.42,
+        "mountain_sharpness": 0.64,
+        "mountain_height": 0.58,
+        "mountain_boundary_alignment": 0.45,
+        "crater_density": 0.14,
+        "crater_min_radius": 0.008,
+        "crater_max_radius": 0.060,
+        "crater_depth": 0.48,
+        "crater_rim_height": 0.40,
+        "crater_rim_width": 0.12,
+        "crater_erosion": 0.38,
+        "crater_land_bias": 0.88,
+        "crater_color_strength": 0.32,
         "polar_ice_size": 0.08,
         "polar_ice_scale": 2.80,
         "polar_ice_complexity": 0.76,
@@ -245,10 +265,20 @@ PRESETS = {
         "biome_complexity": 6,
         "desert_coverage": 0.46,
         "forest_coverage": 0.36,
-        "mountain_density": 0.55,
+        "mountain_density": 0.64,
         "mountain_scale": 11.0,
-        "mountain_sharpness": 0.78,
-        "mountain_height": 0.78,
+        "mountain_sharpness": 0.86,
+        "mountain_height": 0.98,
+        "mountain_boundary_alignment": 0.68,
+        "crater_density": 0.30,
+        "crater_min_radius": 0.010,
+        "crater_max_radius": 0.095,
+        "crater_depth": 0.68,
+        "crater_rim_height": 0.58,
+        "crater_rim_width": 0.16,
+        "crater_erosion": 0.22,
+        "crater_land_bias": 0.92,
+        "crater_color_strength": 0.50,
         "polar_ice_size": 0.20,
         "polar_ice_scale": 1.65,
         "polar_ice_complexity": 0.48,
@@ -329,10 +359,20 @@ PRESETS = {
         "biome_complexity": 7,
         "desert_coverage": 0.72,
         "forest_coverage": 0.12,
-        "mountain_density": 0.62,
+        "mountain_density": 0.70,
         "mountain_scale": 18.0,
-        "mountain_sharpness": 0.86,
-        "mountain_height": 0.86,
+        "mountain_sharpness": 0.92,
+        "mountain_height": 1.05,
+        "mountain_boundary_alignment": 0.60,
+        "crater_density": 0.48,
+        "crater_min_radius": 0.008,
+        "crater_max_radius": 0.095,
+        "crater_depth": 0.78,
+        "crater_rim_height": 0.68,
+        "crater_rim_width": 0.13,
+        "crater_erosion": 0.18,
+        "crater_land_bias": 0.96,
+        "crater_color_strength": 0.66,
         "polar_ice_size": 0.04,
         "polar_ice_scale": 2.40,
         "polar_ice_complexity": 0.56,
@@ -413,10 +453,20 @@ PRESETS = {
         "biome_complexity": 5,
         "desert_coverage": 0.10,
         "forest_coverage": 0.18,
-        "mountain_density": 0.38,
+        "mountain_density": 0.48,
         "mountain_scale": 13.0,
-        "mountain_sharpness": 0.60,
-        "mountain_height": 0.38,
+        "mountain_sharpness": 0.70,
+        "mountain_height": 0.56,
+        "mountain_boundary_alignment": 0.50,
+        "crater_density": 0.14,
+        "crater_min_radius": 0.010,
+        "crater_max_radius": 0.070,
+        "crater_depth": 0.52,
+        "crater_rim_height": 0.44,
+        "crater_rim_width": 0.12,
+        "crater_erosion": 0.36,
+        "crater_land_bias": 0.82,
+        "crater_color_strength": 0.32,
         "polar_ice_size": 0.48,
         "polar_ice_scale": 1.30,
         "polar_ice_complexity": 0.58,
@@ -920,6 +970,16 @@ class PlanetConfig:
     mountain_scale: float
     mountain_sharpness: float
     mountain_height: float
+    mountain_boundary_alignment: float
+    crater_density: float
+    crater_min_radius: float
+    crater_max_radius: float
+    crater_depth: float
+    crater_rim_height: float
+    crater_rim_width: float
+    crater_erosion: float
+    crater_land_bias: float
+    crater_color_strength: float
     polar_ice_size: float
     polar_ice_scale: float
     polar_ice_complexity: float
@@ -995,6 +1055,50 @@ def normalize01(a, value_range=None):
     if amax - amin < 1e-9:
         return np.zeros_like(a)
     return (a - amin) / (amax - amin)
+
+
+def build_mountain_range_bands(x, y, z, cfg):
+    density = float(np.clip(cfg.mountain_density, 0.0, 1.0))
+    range_count = int(round(4 + density * 5))
+    width_base = 0.018 + density * 0.042
+    rng = np.random.default_rng(int(cfg.seed) + 4051)
+    bands = np.zeros(x.shape, dtype=np.float32)
+
+    for _ in range(range_count):
+        normal = rng.normal(size=3).astype(np.float32)
+        normal /= max(1e-6, float(np.linalg.norm(normal)))
+        tangent = rng.normal(size=3).astype(np.float32)
+        tangent -= normal * float(np.dot(tangent, normal))
+        tangent /= max(1e-6, float(np.linalg.norm(tangent)))
+        bitangent = np.cross(normal, tangent).astype(np.float32)
+        bitangent /= max(1e-6, float(np.linalg.norm(bitangent)))
+
+        plane = x * normal[0] + y * normal[1] + z * normal[2]
+        arc_x = x * tangent[0] + y * tangent[1] + z * tangent[2]
+        arc_y = x * bitangent[0] + y * bitangent[1] + z * bitangent[2]
+        arc_angle = np.arctan2(arc_y, arc_x)
+        center = float(rng.uniform(-math.pi, math.pi))
+        half_length = float(rng.uniform(0.55, 1.35))
+        arc_delta = np.arctan2(np.sin(arc_angle - center), np.cos(arc_angle - center))
+
+        width = width_base * float(rng.uniform(0.72, 1.35))
+        phase = float(rng.uniform(0.0, math.tau))
+        meander = (
+            np.sin(arc_angle * float(rng.uniform(1.4, 2.6)) + phase) * 0.62
+            + np.sin(arc_angle * float(rng.uniform(3.2, 5.4)) - phase * 0.7) * 0.28
+        ) * width
+        distance = np.abs(plane + meander)
+        core = 1.0 - smoothstep(width * 0.28, width, distance)
+        length_gate = 1.0 - smoothstep(half_length, half_length + 0.45, np.abs(arc_delta))
+        breakup = 0.42 + 0.58 * smoothstep(
+            -0.28,
+            0.72,
+            np.sin(arc_angle * float(rng.uniform(4.5, 8.5)) + phase * 1.7)
+            + np.sin(arc_angle * float(rng.uniform(8.0, 13.0)) - phase) * 0.35,
+        )
+        bands = np.maximum(bands, core * length_gate * breakup * float(rng.uniform(0.72, 1.0)))
+
+    return np.clip(bands, 0.0, 1.0)
 
 
 def build_cloud_field(cfg, x, y, z, lat, land_field, land_threshold):
@@ -1173,6 +1277,58 @@ def build_city_lights_map(
     if temperature > 0.62:
         light_color = lerp(neutral, cool, (temperature - 0.62) / 0.38)
     return np.clip(city_intensity[..., None] * light_color, 0.0, 255.0).astype(np.float32)
+
+
+def build_crater_field(cfg, x, y, z, land):
+    density = float(np.clip(cfg.crater_density, 0.0, 1.0))
+    if density <= 0.0:
+        blank = np.zeros_like(x, dtype=np.float32)
+        return blank, blank, blank
+
+    min_radius = max(0.001, float(cfg.crater_min_radius))
+    max_radius = max(min_radius, float(cfg.crater_max_radius))
+    crater_count = max(1, int(round(density * 150.0)))
+    erosion = float(np.clip(cfg.crater_erosion, 0.0, 1.0))
+    land_bias = float(np.clip(cfg.crater_land_bias, 0.0, 1.0))
+    rim_width = float(np.clip(cfg.crater_rim_width, 0.0, 1.0))
+
+    rng = np.random.default_rng(cfg.seed + 7019)
+    centers = rng.normal(size=(crater_count, 3)).astype(np.float32)
+    centers /= np.maximum(np.linalg.norm(centers, axis=1, keepdims=True), 1e-6)
+    radius_mix = rng.random(crater_count) ** 1.65
+    radii = min_radius + (max_radius - min_radius) * radius_mix
+    strengths = 0.85 + rng.random(crater_count) * 0.55
+
+    wear_noise = fbm_3d(x, y, z, 42.0, 3, 0.52, cfg.seed + 7103)
+    wear = lerp(1.0, 0.62 + wear_noise * 0.38, erosion)
+    target = lerp(np.ones_like(x, dtype=np.float32), land.astype(np.float32), land_bias)
+
+    floor = np.zeros_like(x, dtype=np.float32)
+    rim = np.zeros_like(x, dtype=np.float32)
+    ejecta = np.zeros_like(x, dtype=np.float32)
+
+    for center, radius, strength in zip(centers, radii, strengths):
+        dot = np.clip(x * center[0] + y * center[1] + z * center[2], -1.0, 1.0)
+        chord_radius = max(1e-6, 2.0 * math.sin(float(radius) * 0.5))
+        radial = np.sqrt(np.maximum(0.0, 2.0 - 2.0 * dot)) / chord_radius
+
+        bowl = 1.0 - smoothstep(0.0, 1.00 + erosion * 0.12, radial)
+        bowl *= 0.58 + 0.42 * (1.0 - smoothstep(0.0, 0.18 + erosion * 0.18, radial))
+        rim_inner_start = 0.92 - rim_width * 0.18
+        rim_inner_peak = 0.985 - rim_width * 0.035
+        rim_outer_end = 1.025 + rim_width * 0.18 + erosion * 0.05
+        ring = smoothstep(rim_inner_start, rim_inner_peak, radial) * (1.0 - smoothstep(1.0, rim_outer_end, radial))
+        rays = smoothstep(0.98, 1.05, radial) * (1.0 - smoothstep(1.08, 2.05 + erosion * 0.42, radial))
+
+        local_wear = wear * (1.0 - erosion * 0.12)
+        floor += bowl * strength * local_wear * (1.0 - erosion * 0.25)
+        rim += ring * strength * local_wear * (1.0 - erosion * 0.16)
+        ejecta += rays * strength * local_wear * (1.0 - erosion * 0.12)
+
+    floor = np.clip(floor * target, 0.0, 1.0)
+    rim = np.clip(rim * target, 0.0, 1.0)
+    ejecta = np.clip(ejecta * target, 0.0, 1.0)
+    return floor.astype(np.float32), rim.astype(np.float32), ejecta.astype(np.float32)
 
 
 def distance_from_mask(mask, wrap_x=False):
@@ -1496,6 +1652,47 @@ def adjust_ocean_hsv_color(ocean_color, cfg):
     return np.clip(adjusted, 0.0, 255.0)
 
 
+def build_continent_color_boundary_mask(cfg, x, y, z, land):
+    alignment = float(np.clip(cfg.mountain_boundary_alignment, 0.0, 1.0))
+    strength = float(np.clip(cfg.continent_color_variation, 0.0, 1.0))
+    if alignment <= 0.0 or strength <= 0.0:
+        return np.zeros_like(x, dtype=np.float32)
+
+    scale = max(0.25, float(cfg.continent_color_scale))
+    diversity = float(np.clip(cfg.continent_color_diversity, 0.0, 1.0))
+    blend_smoothness = float(np.clip(cfg.continent_color_blend_smoothness, 0.0, 1.0))
+    province_count = int(np.clip(round(7.0 + scale * 4.2), 6, 38))
+    rng = np.random.default_rng(int(cfg.seed) * 1709 + 9176)
+
+    anchors = rng.normal(size=(province_count, 3)).astype(np.float32)
+    anchors /= np.linalg.norm(anchors, axis=1, keepdims=True)
+
+    warp_strength = 0.06 + diversity * 0.16
+    warp_scale = max(0.50, scale * 0.92)
+    wx = x + (fbm_3d(x, y, z, warp_scale, 3, 0.52, cfg.seed + 6581) - 0.5) * warp_strength
+    wy = y + (fbm_3d(x, y, z, warp_scale * 1.13, 3, 0.52, cfg.seed + 6599) - 0.5) * warp_strength
+    wz = z + (fbm_3d(x, y, z, warp_scale * 0.87, 3, 0.52, cfg.seed + 6619) - 0.5) * warp_strength
+    warp_len = np.sqrt(wx * wx + wy * wy + wz * wz)
+    wx = wx / np.maximum(warp_len, 1e-6)
+    wy = wy / np.maximum(warp_len, 1e-6)
+    wz = wz / np.maximum(warp_len, 1e-6)
+
+    best_score = np.full_like(x, -2.0, dtype=np.float32)
+    second_score = np.full_like(x, -2.0, dtype=np.float32)
+    for anchor in anchors:
+        score = wx * anchor[0] + wy * anchor[1] + wz * anchor[2]
+        better = score > best_score
+        between = (~better) & (score > second_score)
+        second_score = np.where(better, best_score, np.where(between, score, second_score))
+        best_score = np.where(better, score, best_score)
+
+    boundary_margin = best_score - second_score
+    blend_width = 0.045 + blend_smoothness * 0.360 + (1.0 - diversity) * 0.060
+    boundary_mask = 1.0 - smoothstep(0.008, blend_width * 0.58, boundary_margin)
+    boundary_mask *= land.astype(np.float32)
+    return np.clip(boundary_mask * alignment, 0.0, 1.0)
+
+
 def build_continent_color_provinces(
     cfg,
     x,
@@ -1806,12 +2003,28 @@ def build_maps_from_vectors(
     desert_bias = cfg.desert_coverage * (0.45 + (1.0 - moisture) * 0.75)
     forest_bias = cfg.forest_coverage * (0.35 + moisture * 0.85)
 
+    range_scale = max(1.0, cfg.mountain_scale * 0.38)
+    range_spine = 1.0 - np.abs(fbm_3d(x, y, z, range_scale, 5, 0.62, cfg.seed + 4073) * 2.0 - 1.0)
+    range_spine = np.power(np.clip(range_spine, 0.0, 1.0), 0.75 + cfg.mountain_sharpness * 1.45)
     ridge = 1.0 - np.abs(fbm_3d(x, y, z, cfg.mountain_scale, 6, 0.67, cfg.seed + 4111) * 2.0 - 1.0)
-    ridge = np.power(np.clip(ridge, 0.0, 1.0), 1.0 + cfg.mountain_sharpness * 3.0)
-    mountain_gate = fbm_3d(x, y, z, max(1.0, cfg.mountain_scale * 0.32), 4, 0.56, cfg.seed + 4229)
-    mountain_cut = np.clip(1.0 - cfg.mountain_density, 0.05, 0.95)
-    mountain_mask = smoothstep(mountain_cut, min(1.0, mountain_cut + 0.28), ridge)
-    mountain_mask *= smoothstep(0.45, 0.76, mountain_gate)
+    ridge = np.power(np.clip(ridge, 0.0, 1.0), 0.85 + cfg.mountain_sharpness * 2.35)
+    mountain_gate = fbm_3d(x, y, z, max(1.0, cfg.mountain_scale * 0.26), 4, 0.56, cfg.seed + 4229)
+    mountain_cut = np.clip(0.92 - cfg.mountain_density * 0.58, 0.28, 0.88)
+    range_mask = smoothstep(mountain_cut, min(1.0, mountain_cut + 0.20), range_spine)
+    range_mask *= smoothstep(0.34, 0.72, mountain_gate)
+    ridge_mask = smoothstep(max(0.0, mountain_cut - 0.16), min(1.0, mountain_cut + 0.22), ridge)
+    band_mask = build_mountain_range_bands(x, y, z, cfg)
+    band_mask *= 0.70 + mountain_gate * 0.30
+    boundary_mask = build_continent_color_boundary_mask(cfg, x, y, z, land)
+    boundary_range = np.clip(boundary_mask * (0.45 + ridge_mask * 0.55), 0.0, 1.0)
+    range_mask = np.clip(range_mask + band_mask * (0.18 + ridge_mask * 0.42), 0.0, 1.0)
+    range_mask = np.maximum(range_mask, boundary_range)
+    mountain_mask = np.clip(range_mask * (0.48 + ridge_mask * 0.92) + ridge_mask * range_mask * 0.22, 0.0, 1.0)
+    crater_floor = None
+    crater_rim = None
+    crater_ejecta = None
+    if (needs_color or needs_height or needs_roughness) and cfg.crater_density > 0.0:
+        crater_floor, crater_rim, crater_ejecta = build_crater_field(cfg, x, y, z, land)
 
     color = None
     regional_debug = None
@@ -1940,7 +2153,7 @@ def build_maps_from_vectors(
         forest_mix = np.clip(forest_bias + moisture * 0.35 - biome * 0.35, 0.0, 1.0)
         land_color = color_blend(land_color, colors["forest"], forest_mix)
         land_color = color_blend(land_color, colors["dark_forest"], np.clip(forest_mix * moisture - 0.15, 0.0, 0.65))
-        land_color = color_blend(land_color, colors["rock"], mountain_mask * 0.74)
+        land_color = color_blend(land_color, colors["rock"], mountain_mask * 0.88)
         land_color = color_blend(land_color, colors["beach"], shoreline * 0.78)
 
     snow_mask = smoothstep(cfg.snow_threshold, 1.0, mountain_mask * 0.72 + lat_abs * 0.38)
@@ -2078,18 +2291,35 @@ def build_maps_from_vectors(
             shelf_layer_mask = np.clip(shallow_tint_weight * shelf_color_strength, 0.0, 1.0)
             shelf_layer_mask = np.where(~land, shelf_layer_mask, 0.0)
             color = color_blend(color, shelf_layer_color, shelf_layer_mask)
+        if crater_floor is not None and cfg.crater_color_strength > 0.0:
+            crater_color_strength = float(np.clip(cfg.crater_color_strength, 0.0, 1.0))
+            crater_shadow = color * 0.52
+            crater_highlight = color * 0.60 + np.array([205, 190, 160], dtype=np.float32) * 0.40
+            floor_tint = np.clip(crater_floor * crater_color_strength * 0.86, 0.0, 0.78)
+            rim_tint = np.clip((crater_rim * 0.92 + crater_ejecta * 0.34) * crater_color_strength, 0.0, 0.70)
+            color = color_blend(color, crater_shadow, floor_tint)
+            color = color_blend(color, crater_highlight, rim_tint)
 
     if needs_height:
         continent_base_land_height = smoothstep(threshold - cfg.continent_contrast, threshold + cfg.continent_contrast, land_field)
         base_land_height = continent_base_land_height
         height = np.where(land, 0.38 + base_land_height * 0.20, 0.18 - ocean_depth * 0.18)
-        height += np.where(land, mountain_mask * cfg.mountain_height * 0.36, 0.0)
+        height += np.where(land, np.power(mountain_mask, 0.82) * cfg.mountain_height * 0.46, 0.0)
         height += np.where(land, shoreline * 0.025, 0.0)
         height += np.where(
             land,
             polar_ice * (0.018 + ice_solidity * 0.034 + ice_texture * 0.026),
             polar_ice * cfg.polar_ice_shelf_strength * (0.008 + ice_solidity * 0.014),
         )
+        if crater_floor is not None:
+            crater_depth = float(np.clip(cfg.crater_depth, 0.0, 1.0))
+            crater_rim_height = float(np.clip(cfg.crater_rim_height, 0.0, 1.0))
+            crater_floor_level = np.where(land, 0.32 + base_land_height * 0.02, height - ocean_depth * 0.06)
+            crater_flatten = np.clip(crater_floor * (0.58 + crater_depth * 0.40), 0.0, 0.98)
+            height = lerp(height, crater_floor_level, crater_flatten)
+            height -= crater_floor * crater_depth * 0.46
+            height += crater_rim * crater_rim_height * 0.38
+            height += crater_ejecta * crater_rim_height * 0.10
         raw_height = height
         height = normalize01(raw_height, height_range)
 
@@ -2109,8 +2339,10 @@ def build_maps_from_vectors(
 
     if needs_roughness:
         roughness = np.where(land, 0.72, 0.24)
-        roughness = roughness + mountain_mask * 0.12 - shelf * 0.07
+        roughness = roughness + mountain_mask * 0.18 - shelf * 0.07
         roughness = roughness + polar_ice * (0.06 + ice_solidity * 0.12 + ice_texture * 0.16)
+        if crater_floor is not None:
+            roughness = roughness + crater_rim * 0.16 + crater_ejecta * 0.07 - crater_floor * 0.035
         roughness = np.clip(roughness, 0.0, 1.0)
 
     maps = {}

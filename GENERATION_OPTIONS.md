@@ -167,10 +167,27 @@ It also writes cubemap-cross atlases such as `quad_sphere/color_cubemap_cross.pn
 
 | Option | Earthlike Default | Description |
 | --- | ---: | --- |
-| `--mountain-density` | `0.42` | Amount of mountainous terrain. Higher values create more mountains. |
+| `--mountain-density` | `0.52` | Amount of mountainous terrain. Higher values create more connected mountain ranges. |
 | `--mountain-scale` | `16.0` | Scale of mountain ridge patterns. Higher values create smaller, more frequent ridges. |
-| `--mountain-sharpness` | `0.68` | Ridge sharpness. Higher values make tighter, sharper mountain features. |
-| `--mountain-height` | `0.62` | Height contribution from mountains. Higher values make stronger height-map relief. |
+| `--mountain-sharpness` | `0.76` | Ridge sharpness. Higher values make tighter, sharper range crests. |
+| `--mountain-height` | `0.84` | Height contribution from mountains. Higher values make stronger height-map relief. |
+| `--mountain-boundary-alignment` | `0.55` | Biases mountain ranges toward continent color-province borders. Higher values make ranges follow visible continental color transitions. |
+
+## Meteor Impact Craters
+
+These controls bake crater bowls, raised rims, and ejecta into `height.png`, `normal.png`, `roughness.png`, `color.png`, and previews. They do not change land, shoreline, ocean-depth, cloud, or city-light masks. Crater centers are generated on the sphere, so the same seed produces matching equirectangular and quad-sphere crater placement.
+
+| Option | Earthlike Default | Description |
+| --- | ---: | --- |
+| `--crater-density` | `0.24` | Amount of visible impact craters. `0.0` disables crater generation; higher values add more crater centers. |
+| `--crater-min-radius` | `0.010` | Smallest crater angular radius in radians. Lower values create finer pitting. |
+| `--crater-max-radius` | `0.085` | Largest crater angular radius in radians. Higher values allow broader basins. |
+| `--crater-depth` | `0.65` | Strength of crater floor depression in the height map. Higher values make bowls deeper and normal-map shading stronger. |
+| `--crater-rim-height` | `0.55` | Strength of raised rims and ejecta relief. Higher values make ring edges stand out. |
+| `--crater-rim-width` | `0.14` | Width of the raised crater rim band. Lower values make a thin sharp lip; higher values make broader raised rings. |
+| `--crater-erosion` | `0.25` | Wear and softening applied to craters. Lower values create crisp fresh impacts; higher values make older, subdued craters. |
+| `--crater-land-bias` | `0.85` | Bias toward land surfaces. `1.0` restricts crater visibility to land; `0.0` allows all surfaces equally. |
+| `--crater-color-strength` | `0.45` | Amount of crater darkening/highlighting baked into `color.png`. Set to `0.0` for height-only craters. |
 
 ## Cloud Layer
 
@@ -331,10 +348,20 @@ Examples:
 | `biome_complexity` | `6` | `7` | `6` | `7` | `5` |
 | `desert_coverage` | `0.27` | `0.18` | `0.46` | `0.72` | `0.10` |
 | `forest_coverage` | `0.56` | `0.66` | `0.36` | `0.12` | `0.18` |
-| `mountain_density` | `0.42` | `0.34` | `0.55` | `0.62` | `0.38` |
+| `mountain_density` | `0.52` | `0.44` | `0.64` | `0.70` | `0.48` |
 | `mountain_scale` | `16.0` | `20.0` | `11.0` | `18.0` | `13.0` |
-| `mountain_sharpness` | `0.68` | `0.55` | `0.78` | `0.86` | `0.60` |
-| `mountain_height` | `0.62` | `0.42` | `0.78` | `0.86` | `0.38` |
+| `mountain_sharpness` | `0.76` | `0.64` | `0.86` | `0.92` | `0.70` |
+| `mountain_height` | `0.84` | `0.58` | `0.98` | `1.05` | `0.56` |
+| `mountain_boundary_alignment` | `0.55` | `0.45` | `0.68` | `0.60` | `0.50` |
+| `crater_density` | `0.24` | `0.14` | `0.30` | `0.48` | `0.14` |
+| `crater_min_radius` | `0.010` | `0.008` | `0.010` | `0.008` | `0.010` |
+| `crater_max_radius` | `0.085` | `0.060` | `0.095` | `0.095` | `0.070` |
+| `crater_depth` | `0.65` | `0.48` | `0.68` | `0.78` | `0.52` |
+| `crater_rim_height` | `0.55` | `0.40` | `0.58` | `0.68` | `0.44` |
+| `crater_rim_width` | `0.14` | `0.12` | `0.16` | `0.13` | `0.12` |
+| `crater_erosion` | `0.25` | `0.38` | `0.22` | `0.18` | `0.36` |
+| `crater_land_bias` | `0.85` | `0.88` | `0.92` | `0.96` | `0.82` |
+| `crater_color_strength` | `0.45` | `0.32` | `0.50` | `0.66` | `0.32` |
 | `cloud_coverage` | `0.46` | `0.54` | `0.34` | `0.18` | `0.56` |
 | `cloud_scale` | `1.25` | `1.75` | `0.95` | `1.15` | `1.10` |
 | `cloud_detail` | `5` | `5` | `4` | `4` | `5` |
@@ -397,6 +424,6 @@ Examples:
 - Use `--seed` to explore different layouts without changing the planet recipe.
 - Use `--land-coverage` and `--continent-scale` for main continent layout. Use `--island-density`, `--island-threshold`, continent-distance limits, and island area limits for detached island systems.
 - Use `--biome-scale`, `--desert-coverage`, and `--forest-coverage` for climate and surface character.
-- Use `--mountain-density`, `--mountain-scale`, and `--mountain-height` for relief and ruggedness.
+- Use `--mountain-density`, `--mountain-scale`, `--mountain-height`, and `--mountain-boundary-alignment` for connected ranges, relief, ruggedness, and alignment with continent color transitions.
 - Use the color variation options when the shape is good but the texture feels too uniform.
 - The resolved settings for each run are saved in `preset.json`, which is the easiest way to reproduce or compare outputs.
