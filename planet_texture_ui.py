@@ -14,6 +14,7 @@ import base64
 import json
 import os
 import re
+import shutil
 import time
 from dataclasses import asdict
 from http import HTTPStatus
@@ -47,6 +48,8 @@ HOST = "127.0.0.1"
 PORT = int(os.environ.get("PLANET_TEXTURE_UI_PORT", "8765"))
 QUAD_WORKERS = resolve_quad_workers(os.environ.get("PLANET_QUAD_WORKERS", "1"))
 OUTPUT_ROOT = Path("output")
+SAVED_CONFIG_ROOT = OUTPUT_ROOT / "saved_configs"
+UI_STATE_VERSION = 1
 
 
 PARAM_GROUPS = [
@@ -361,18 +364,61 @@ def metadata_for_config(
     projection: str,
     face_size: int | None = None,
     texture_maps: tuple[str, ...] | None = None,
+    ui_state: dict | None = None,
+    output_kind: str = "texture_output",
 ) -> dict:
     metadata = asdict(cfg)
     metadata["output_projection"] = projection
     metadata["output_texture_maps"] = list(texture_maps or TEXTURE_MAP_NAMES)
+    metadata["output_kind"] = output_kind
     if face_size is not None:
         metadata["quad_sphere_face_size"] = face_size
+    if ui_state is not None:
+        metadata["ui_state"] = ui_state
     resolved_palette = resolve_planet_colors(cfg)
     metadata["resolved_palette_rgb"] = {
         name: [int(round(channel)) for channel in color]
         for name, color in resolved_palette.items()
     }
     return metadata
+
+
+def ui_state_from_payload(
+    payload: dict,
+    cfg: PlanetConfig,
+    projection: str,
+    face_size: int | None,
+    texture_maps: tuple[str, ...],
+) -> dict:
+    params = {}
+    source_params = payload.get("params", {})
+    if not isinstance(source_params, dict):
+        source_params = {}
+    defaults = ui_preset_defaults().get(cfg.preset, {})
+    for key in defaults:
+        params[key] = source_params.get(key, getattr(cfg, key, defaults[key]))
+    return {
+        "version": UI_STATE_VERSION,
+        "preset": cfg.preset,
+        "seed": cfg.seed,
+        "width": cfg.width,
+        "height": cfg.height,
+        "preview_width": int(payload.get("preview_width", 512)),
+        "projection": projection,
+        "face_size": int(face_size if face_size is not None else payload.get("face_size", min(cfg.width, cfg.height))),
+        "texture_maps": list(texture_maps),
+        "params": params,
+    }
+
+
+def metadata_from_payload(payload: dict, output_kind: str = "texture_output") -> dict:
+    cfg = config_from_payload(payload, preview=False)
+    projection = str(payload.get("projection", "equirectangular"))
+    texture_maps = texture_maps_from_payload(payload)
+    face_size = int(payload.get("face_size") or min(cfg.width, cfg.height))
+    ui_state = ui_state_from_payload(payload, cfg, projection, face_size, texture_maps)
+    metadata_face_size = face_size if projection == "quad_sphere" else None
+    return metadata_for_config(cfg, projection, metadata_face_size, texture_maps, ui_state, output_kind)
 
 
 def save_planet_output(payload: dict) -> Path:
@@ -394,17 +440,44 @@ def save_planet_output(payload: dict) -> Path:
         quad_dir.mkdir(parents=True, exist_ok=True)
         save_quad_sphere_maps_low_memory(quad_dir, cfg, face_size, texture_maps, quad_workers=QUAD_WORKERS)
         write_quad_sphere_manifest(out_dir, face_size, texture_maps)
-        metadata = metadata_for_config(cfg, "quad_sphere", face_size, texture_maps)
+        ui_state = ui_state_from_payload(payload, cfg, "quad_sphere", face_size, texture_maps)
+        metadata = metadata_for_config(cfg, "quad_sphere", face_size, texture_maps, ui_state)
     else:
         maps = build_maps(cfg, texture_maps)
         save_map_set(out_dir, maps, texture_maps)
         if "color" in texture_maps:
             render_globe_preview(maps["color"], maps["height"], out_dir / "preview.png")
             write_html_preview(out_dir, f"{cfg.preset} planet preview", texture_maps)
-        metadata = metadata_for_config(cfg, "equirectangular", texture_maps=texture_maps)
+        ui_state = ui_state_from_payload(payload, cfg, "equirectangular", int(payload.get("face_size") or min(cfg.width, cfg.height)), texture_maps)
+        metadata = metadata_for_config(cfg, "equirectangular", texture_maps=texture_maps, ui_state=ui_state)
 
     (out_dir / "preset.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
     return out_dir
+
+
+def save_config_only(payload: dict) -> Path:
+    metadata = metadata_from_payload(payload, "config")
+    ui_state = metadata["ui_state"]
+    fallback_name = f"{ui_state['preset']}_{ui_state['seed']}_{time.strftime('%Y%m%d_%H%M%S')}"
+    output_name = sanitized_name(str(payload.get("output_name", "")), fallback_name)
+    SAVED_CONFIG_ROOT.mkdir(parents=True, exist_ok=True)
+    out_dir = unique_config_dir(output_name)
+    out_dir.mkdir(parents=True, exist_ok=False)
+    (out_dir / "preset.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    return out_dir
+
+
+def unique_config_dir(name: str) -> Path:
+    base = SAVED_CONFIG_ROOT / name
+    if not base.exists():
+        return base
+    suffix = time.strftime("%H%M%S")
+    candidate = SAVED_CONFIG_ROOT / f"{name}_{suffix}"
+    counter = 2
+    while candidate.exists():
+        candidate = SAVED_CONFIG_ROOT / f"{name}_{suffix}_{counter}"
+        counter += 1
+    return candidate
 
 
 def output_summary(out_dir: Path) -> dict:
@@ -426,7 +499,65 @@ def output_summary(out_dir: Path) -> dict:
     }
 
 
-def load_preset_json(path_text: str) -> dict:
+def validate_texture_maps(value) -> list[str]:
+    if not isinstance(value, list):
+        return list(TEXTURE_MAP_NAMES)
+    return list(selected_texture_maps(value))
+
+
+def normalize_ui_state(data: dict) -> dict:
+    state = data.get("ui_state")
+    if isinstance(state, dict):
+        preset = str(state.get("preset", data.get("preset", "earthlike")))
+        if preset not in PRESETS:
+            preset = "earthlike"
+        params = dict(ui_preset_defaults()[preset])
+        loaded_params = state.get("params", {})
+        if isinstance(loaded_params, dict):
+            for key in params:
+                if key in loaded_params:
+                    params[key] = loaded_params[key]
+        if params.get("land_palette") not in LAND_PALETTES:
+            params["land_palette"] = ui_preset_defaults()[preset].get("land_palette", "natural_earth")
+        return {
+            "version": int(state.get("version", UI_STATE_VERSION)),
+            "preset": preset,
+            "seed": int(state.get("seed", data.get("seed", 42))),
+            "width": max(64, int(state.get("width", data.get("width", 2048)))),
+            "height": max(32, int(state.get("height", data.get("height", 1024)))),
+            "preview_width": int(state.get("preview_width", 512)),
+            "projection": "quad_sphere" if state.get("projection") == "quad_sphere" else "equirectangular",
+            "face_size": max(32, int(state.get("face_size", data.get("quad_sphere_face_size", min(int(data.get("width", 2048)), int(data.get("height", 1024))))))),
+            "texture_maps": validate_texture_maps(state.get("texture_maps", data.get("output_texture_maps", TEXTURE_MAP_NAMES))),
+            "params": params,
+        }
+
+    preset = str(data.get("preset", "earthlike"))
+    if preset not in PRESETS:
+        preset = "earthlike"
+    params = dict(ui_preset_defaults()[preset])
+    for key in params:
+        if key in data:
+            params[key] = data[key]
+    if params.get("land_palette") not in LAND_PALETTES:
+        params["land_palette"] = ui_preset_defaults()[preset].get("land_palette", "natural_earth")
+    width = max(64, int(data.get("width", 2048)))
+    height = max(32, int(data.get("height", 1024)))
+    return {
+        "version": 0,
+        "preset": preset,
+        "seed": int(data.get("seed", 42)),
+        "width": width,
+        "height": height,
+        "preview_width": 512,
+        "projection": "quad_sphere" if data.get("output_projection") == "quad_sphere" else "equirectangular",
+        "face_size": max(32, int(data.get("quad_sphere_face_size", min(width, height)))),
+        "texture_maps": validate_texture_maps(data.get("output_texture_maps", TEXTURE_MAP_NAMES)),
+        "params": params,
+    }
+
+
+def load_saved_state(path_text: str) -> dict:
     path = Path(path_text)
     if not path.is_absolute():
         path = Path.cwd() / path
@@ -434,19 +565,65 @@ def load_preset_json(path_text: str) -> dict:
         raise ValueError("Choose an existing preset.json file.")
 
     data = json.loads(path.read_text(encoding="utf-8"))
-    preset = str(data.get("preset", "earthlike"))
-    if preset not in PRESETS:
-        preset = "earthlike"
-    params = {key: data[key] for key in PRESETS[preset] if key in data}
+    state = normalize_ui_state(data)
+    state["path"] = str(path.resolve())
+    return state
+
+
+def saved_config_entry(path: Path) -> dict | None:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        state = normalize_ui_state(data)
+    except Exception:
+        return None
+    try:
+        relative_path = str(path.resolve().relative_to(Path.cwd().resolve()))
+    except ValueError:
+        relative_path = str(path.resolve())
     return {
-        "preset": preset,
-        "seed": int(data.get("seed", 42)),
-        "width": int(data.get("width", 2048)),
-        "height": int(data.get("height", 1024)),
-        "projection": data.get("output_projection", "equirectangular"),
-        "face_size": int(data.get("quad_sphere_face_size", min(int(data.get("width", 2048)), int(data.get("height", 1024))))),
-        "params": params,
+        "name": path.parent.name,
+        "path": relative_path,
+        "kind": data.get("output_kind", "texture_output"),
+        "preset": state["preset"],
+        "seed": state["seed"],
+        "projection": state["projection"],
+        "texture_maps": state["texture_maps"],
+        "modified": path.stat().st_mtime,
     }
+
+
+def list_saved_configs() -> dict:
+    OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
+    entries = []
+    for path in OUTPUT_ROOT.rglob("preset.json"):
+        entry = saved_config_entry(path)
+        if entry is not None:
+            entries.append(entry)
+    entries.sort(key=lambda item: item["modified"], reverse=True)
+    return {"items": entries}
+
+
+def deletable_saved_folder(path_text: str) -> Path:
+    path = Path(path_text)
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    path = path.resolve()
+    output_root = OUTPUT_ROOT.resolve()
+    if path.name != "preset.json" or not path.exists():
+        raise ValueError("Choose an existing preset.json file.")
+    if not path.is_relative_to(output_root):
+        raise ValueError("Saved planet must be inside the output folder.")
+    folder = path.parent
+    if folder == output_root or folder == Path.cwd().resolve():
+        raise ValueError("Refusing to delete the output root.")
+    return folder
+
+
+def delete_saved_config(path_text: str) -> dict:
+    folder = deletable_saved_folder(path_text)
+    deleted = str(folder.resolve())
+    shutil.rmtree(folder)
+    return {"deleted": deleted, **list_saved_configs()}
 
 
 def default_payload() -> dict:
@@ -526,6 +703,8 @@ class PlanetUiHandler(BaseHTTPRequestHandler):
             self.write_text(UI_HTML, "text/html")
         elif parsed.path == "/api/defaults":
             self.write_json(default_payload())
+        elif parsed.path == "/api/config/list":
+            self.write_json(list_saved_configs())
         else:
             self.send_error(HTTPStatus.NOT_FOUND)
 
@@ -550,8 +729,13 @@ class PlanetUiHandler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/save":
                 out_dir = save_planet_output(payload)
                 self.write_json(output_summary(out_dir))
+            elif parsed.path == "/api/config/save":
+                out_dir = save_config_only(payload)
+                self.write_json({"output_dir": str(out_dir.resolve()), "preset_path": str((out_dir / "preset.json").resolve())})
+            elif parsed.path == "/api/config/delete":
+                self.write_json(delete_saved_config(str(payload.get("path", ""))))
             elif parsed.path == "/api/load":
-                self.write_json(load_preset_json(str(payload.get("path", ""))))
+                self.write_json(load_saved_state(str(payload.get("path", ""))))
             else:
                 self.send_error(HTTPStatus.NOT_FOUND)
         except Exception as exc:
@@ -856,6 +1040,64 @@ img {
   gap: 8px;
   margin-top: 8px;
 }
+.saved-planets-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 14px;
+}
+.saved-planets-head h3 {
+  margin: 0;
+  font-size: 14px;
+}
+.saved-planets-head button {
+  width: auto;
+  min-height: 28px;
+  padding: 4px 9px;
+  font-size: 12px;
+}
+.saved-planets {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+.saved-planet {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #11151d;
+  padding: 8px;
+}
+.saved-planet-title {
+  color: var(--text);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.saved-planet-meta {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 2px;
+}
+.saved-planet button {
+  min-height: 30px;
+}
+.saved-planet-actions {
+  display: flex;
+  gap: 6px;
+}
+.saved-planet-actions button {
+  width: auto;
+  min-width: 58px;
+  padding: 5px 8px;
+}
+.saved-planet-actions .danger {
+  border-color: rgba(255, 107, 107, 0.5);
+  color: var(--error);
+}
 .hint {
   margin: 4px 0 10px;
   color: var(--muted);
@@ -1006,7 +1248,15 @@ img {
         <button id="resetBtn">Reset Preset</button>
         <button id="randomSeedBtn">Random Seed</button>
         <button id="previewBtn">Render Preview</button>
+        <button id="saveConfigBtn">Save Config</button>
         <button id="saveBtn" class="primary">Save Texture Output</button>
+      </div>
+      <div class="saved-planets-head">
+        <h3>Saved Planets</h3>
+        <button id="refreshSavedBtn" type="button">Refresh</button>
+      </div>
+      <div class="saved-planets" id="savedPlanets">
+        <p class="hint">No saved planets loaded yet.</p>
       </div>
       <div class="load-row">
         <input id="loadPath" type="text" placeholder="output/example/preset.json">
@@ -1075,6 +1325,9 @@ const els = {
   textureMapOptions: document.getElementById("textureMapOptions"),
   selectAllMapsBtn: document.getElementById("selectAllMapsBtn"),
   selectNoMapsBtn: document.getElementById("selectNoMapsBtn"),
+  saveConfigBtn: document.getElementById("saveConfigBtn"),
+  refreshSavedBtn: document.getElementById("refreshSavedBtn"),
+  savedPlanets: document.getElementById("savedPlanets"),
   loadPath: document.getElementById("loadPath"),
 };
 
@@ -1301,8 +1554,9 @@ function getSelectedTextureMaps() {
 }
 
 function setTextureMapSelection(checked) {
+  const selected = Array.isArray(checked) ? new Set(checked) : null;
   for (const input of els.textureMapOptions.querySelectorAll("input[data-texture-map='1']")) {
-    input.checked = checked;
+    input.checked = selected ? selected.has(input.value) : checked;
   }
 }
 
@@ -1347,6 +1601,15 @@ async function postJson(path, payload) {
     headers: {"Content-Type": "application/json"},
     body: JSON.stringify(payload),
   });
+  const data = await response.json();
+  if (!response.ok || data.error) {
+    throw new Error(data.error || `Request failed: ${response.status}`);
+  }
+  return data;
+}
+
+async function getJson(path) {
+  const response = await fetch(path);
   const data = await response.json();
   if (!response.ok || data.error) {
     throw new Error(data.error || `Request failed: ${response.status}`);
@@ -1551,8 +1814,64 @@ async function renderPreview() {
 }
 
 function setButtons(disabled) {
-  for (const id of ["previewBtn", "saveBtn", "resetBtn", "randomSeedBtn", "loadBtn"]) {
+  for (const id of ["previewBtn", "saveBtn", "saveConfigBtn", "resetBtn", "randomSeedBtn", "loadBtn", "refreshSavedBtn"]) {
     document.getElementById(id).disabled = disabled;
+  }
+}
+
+async function refreshSavedPlanets(showStatus = false) {
+  try {
+    const data = await getJson("/api/config/list");
+    renderSavedPlanets(data.items || []);
+    if (showStatus) {
+      setStatus(`Found ${data.items.length} saved planet${data.items.length === 1 ? "" : "s"}.`, "ok");
+    }
+  } catch (error) {
+    setStatus(error.message, "error");
+  }
+}
+
+function renderSavedPlanets(items) {
+  els.savedPlanets.innerHTML = "";
+  if (!items.length) {
+    const empty = document.createElement("p");
+    empty.className = "hint";
+    empty.textContent = "No saved planets found in output/.";
+    els.savedPlanets.appendChild(empty);
+    return;
+  }
+  for (const item of items.slice(0, 24)) {
+    const row = document.createElement("div");
+    row.className = "saved-planet";
+
+    const text = document.createElement("div");
+    const title = document.createElement("div");
+    title.className = "saved-planet-title";
+    title.textContent = item.name;
+    const meta = document.createElement("div");
+    meta.className = "saved-planet-meta";
+    const date = new Date((item.modified || 0) * 1000);
+    const maps = Array.isArray(item.texture_maps) ? item.texture_maps.length : 0;
+    meta.textContent = `${item.kind === "config" ? "Config" : "Output"} - ${item.preset}, seed ${item.seed} - ${item.projection} - ${maps} maps - ${date.toLocaleString()}`;
+    text.append(title, meta);
+
+    const actions = document.createElement("div");
+    actions.className = "saved-planet-actions";
+
+    const loadButton = document.createElement("button");
+    loadButton.type = "button";
+    loadButton.textContent = "Load";
+    loadButton.addEventListener("click", () => loadSavedPlanet(item.path));
+
+    const deleteButton = document.createElement("button");
+    deleteButton.type = "button";
+    deleteButton.className = "danger";
+    deleteButton.textContent = "Delete";
+    deleteButton.addEventListener("click", () => deleteSavedPlanet(item));
+    actions.append(loadButton, deleteButton);
+
+    row.append(text, actions);
+    els.savedPlanets.appendChild(row);
   }
 }
 
@@ -1581,29 +1900,81 @@ async function saveOutput() {
   }
 }
 
+async function saveConfigOnly() {
+  setButtons(true);
+  setStatus("Saving planet configuration...", "busy");
+  try {
+    const data = await postJson("/api/config/save", getPayload());
+    setStatus(`Saved planet configuration: ${data.preset_path}.`, "ok");
+    await refreshSavedPlanets(false);
+  } catch (error) {
+    setStatus(error.message, "error");
+  } finally {
+    setButtons(false);
+  }
+}
+
+async function deleteSavedPlanet(item) {
+  const ok = window.confirm(`Delete "${item.name}" from disk? This removes its saved folder and cannot be undone.`);
+  if (!ok) return;
+  setButtons(true);
+  setStatus(`Deleting ${item.name}...`, "busy");
+  try {
+    const data = await postJson("/api/config/delete", {path: item.path});
+    renderSavedPlanets(data.items || []);
+    setStatus(`Deleted saved planet: ${item.name}.`, "ok");
+  } catch (error) {
+    setStatus(error.message, "error");
+  } finally {
+    setButtons(false);
+  }
+}
+
+function applyLoadedState(data) {
+  els.preset.value = data.preset;
+  els.seed.value = data.seed;
+  els.previewWidth.value = data.preview_width || "512";
+  els.width.value = data.width;
+  els.height.value = data.height;
+  els.projection.value = data.projection === "quad_sphere" ? "quad_sphere" : "equirectangular";
+  els.faceSize.value = data.face_size;
+  els.outputName.value = "";
+  if (data.params.land_palette) {
+    els.landPalette.value = data.params.land_palette;
+  }
+  syncResolutionPreset();
+  syncFaceSizePreset();
+  setTextureMapSelection(data.texture_maps || []);
+  for (const [key, value] of Object.entries(data.params || {})) {
+    const slider = document.getElementById(sliderId(key));
+    if (slider) {
+      slider.value = value;
+      syncValue(key);
+    }
+  }
+}
+
+async function loadSavedPlanet(path) {
+  setButtons(true);
+  setStatus("Loading saved planet...", "busy");
+  try {
+    const data = await postJson("/api/load", {path});
+    applyLoadedState(data);
+    setStatus("Loaded saved planet settings.", "ok");
+    schedulePreview(0);
+  } catch (error) {
+    setStatus(error.message, "error");
+  } finally {
+    setButtons(false);
+  }
+}
+
 async function loadPresetJson() {
   setButtons(true);
   setStatus("Loading preset.json...", "busy");
   try {
     const data = await postJson("/api/load", {path: els.loadPath.value});
-    els.preset.value = data.preset;
-    els.seed.value = data.seed;
-    els.width.value = data.width;
-    els.height.value = data.height;
-    els.projection.value = data.projection === "quad_sphere" ? "quad_sphere" : "equirectangular";
-    els.faceSize.value = data.face_size;
-    if (data.params.land_palette) {
-      els.landPalette.value = data.params.land_palette;
-    }
-    syncResolutionPreset();
-    syncFaceSizePreset();
-    for (const [key, value] of Object.entries(data.params)) {
-      const slider = document.getElementById(sliderId(key));
-      if (slider) {
-        slider.value = value;
-        syncValue(key);
-      }
-    }
+    applyLoadedState(data);
     setStatus("Loaded settings.", "ok");
     schedulePreview(0);
   } catch (error) {
@@ -1635,12 +2006,15 @@ async function boot() {
   els.selectNoMapsBtn.addEventListener("click", () => setTextureMapSelection(false));
   document.getElementById("previewBtn").addEventListener("click", () => schedulePreview(0));
   document.getElementById("saveBtn").addEventListener("click", saveOutput);
+  document.getElementById("saveConfigBtn").addEventListener("click", saveConfigOnly);
   document.getElementById("resetBtn").addEventListener("click", applyPresetDefaults);
   document.getElementById("randomSeedBtn").addEventListener("click", () => {
     els.seed.value = Math.floor(Math.random() * 1000000);
     schedulePreview(0);
   });
+  document.getElementById("refreshSavedBtn").addEventListener("click", () => refreshSavedPlanets(true));
   document.getElementById("loadBtn").addEventListener("click", loadPresetJson);
+  refreshSavedPlanets(false);
 }
 
 boot().catch(error => setStatus(error.message, "error"));
