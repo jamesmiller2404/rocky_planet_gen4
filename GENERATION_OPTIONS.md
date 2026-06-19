@@ -122,7 +122,7 @@ It also writes cubemap-cross atlases such as `quad_sphere/color_cubemap_cross.pn
 
 | Option | Earthlike Default | Description |
 | --- | ---: | --- |
-| `--land-coverage` | `0.46` | Approximate fraction of the planet covered by land. Higher values create more land. |
+| `--land-coverage` | `0.46` | Approximate fraction of the planet covered by land. Higher values create more land. Set to `1.0` for an all-land planet with no oceans, lakes, shelves, shoreline mask, or ocean-depth mask. |
 | `--continent-scale` | `1.55` | Size of major continent forms. Lower values create broader continents; higher values create smaller, busier continents. |
 | `--continent-detail` | `7` | Number of noise octaves used for continent shape. Higher values add finer detail. |
 | `--continent-roughness` | `0.58` | How strongly continent detail persists across octaves. Higher values make more rugged coastlines. |
@@ -155,7 +155,7 @@ It also writes cubemap-cross atlases such as `quad_sphere/color_cubemap_cross.pn
 | `--biome-complexity` | `6` | Noise octaves for biome variation. |
 | `--desert-coverage` | `0.27` | Desert/dry terrain bias. Higher values increase tan and ochre regions. |
 | `--forest-coverage` | `0.56` | Forest/wet terrain bias. Higher values increase green and dark wet regions. |
-| `--polar-ice-size` | `0.16` | Overall reach of polar ice formations. Higher values allow ice farther from the poles. |
+| `--polar-ice-size` | `0.16` | Overall reach of polar ice formations. Higher values allow ice farther from the poles. Set to `0.0` to completely disable polar caps, polar shelf ice, and snowcap tinting. |
 | `--polar-ice-scale` | `2.15` | Scale of the broad continent-like ice sheet forms. Lower values create larger sheets; higher values create smaller fields. |
 | `--polar-ice-complexity` | `0.62` | Amount of shoreline-style breakup along polar ice edges. |
 | `--polar-ice-fragmentation` | `0.42` | Amount of detached island/floe formation around the outer ice edge. |
@@ -179,7 +179,7 @@ These controls bake crater bowls, raised rims, and ejecta into `height.png`, `no
 
 | Option | Earthlike Default | Description |
 | --- | ---: | --- |
-| `--crater-density` | `0.24` | Amount of visible impact craters. `0.0` disables crater generation; higher values add more crater centers. |
+| `--crater-density` | `0.0` | Amount of visible impact craters. `0.0` disables crater generation; higher values add more crater centers. |
 | `--crater-min-radius` | `0.010` | Smallest crater angular radius in radians. Lower values create finer pitting. |
 | `--crater-max-radius` | `0.085` | Largest crater angular radius in radians. Higher values allow broader basins. |
 | `--crater-depth` | `0.65` | Strength of crater floor depression in the height map. Higher values make bowls deeper and normal-map shading stronger. |
@@ -308,6 +308,12 @@ Examples:
 # Flat open ocean with an independently colored shelf band
 .\.venv\Scripts\python.exe rocky_planet_gen.py --preset earthlike --seed 42 --ocean-base-color "#17242d" --ocean-flat-color-strength 1 --shelf-width 0.16 --ocean-shelf-color "#65d6c8" --ocean-shelf-color-strength 1 --out output/flat_ocean_colored_shelf
 
+# All land, no ocean, lakes, shelves, or water masks
+.\.venv\Scripts\python.exe rocky_planet_gen.py --preset dry_rocky --seed 42 --land-coverage 1 --out output/no_water_rocky
+
+# All land with no water and no polar ice caps
+.\.venv\Scripts\python.exe rocky_planet_gen.py --preset dry_rocky --seed 42 --land-coverage 1 --polar-ice-size 0 --out output/no_water_no_ice
+
 # Dimmer shelf cyan without darkening the whole ocean layer
 .\.venv\Scripts\python.exe rocky_planet_gen.py --preset earthlike --seed 42 --ocean-shelf-brightness -0.12 --ocean-shelf-contrast 0.85 --out output/shelf_cyan_balanced
 
@@ -353,7 +359,7 @@ Examples:
 | `mountain_sharpness` | `0.76` | `0.64` | `0.86` | `0.92` | `0.70` |
 | `mountain_height` | `0.84` | `0.58` | `0.98` | `1.05` | `0.56` |
 | `mountain_boundary_alignment` | `0.55` | `0.45` | `0.68` | `0.60` | `0.50` |
-| `crater_density` | `0.24` | `0.14` | `0.30` | `0.48` | `0.14` |
+| `crater_density` | `0.0` | `0.0` | `0.0` | `0.0` | `0.0` |
 | `crater_min_radius` | `0.010` | `0.008` | `0.010` | `0.008` | `0.010` |
 | `crater_max_radius` | `0.085` | `0.060` | `0.095` | `0.095` | `0.070` |
 | `crater_depth` | `0.65` | `0.48` | `0.68` | `0.78` | `0.52` |

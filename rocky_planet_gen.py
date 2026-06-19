@@ -82,7 +82,7 @@ PRESETS = {
         "mountain_sharpness": 0.76,
         "mountain_height": 0.84,
         "mountain_boundary_alignment": 0.55,
-        "crater_density": 0.24,
+        "crater_density": 0.0,
         "crater_min_radius": 0.010,
         "crater_max_radius": 0.085,
         "crater_depth": 0.65,
@@ -176,7 +176,7 @@ PRESETS = {
         "mountain_sharpness": 0.64,
         "mountain_height": 0.58,
         "mountain_boundary_alignment": 0.45,
-        "crater_density": 0.14,
+        "crater_density": 0.0,
         "crater_min_radius": 0.008,
         "crater_max_radius": 0.060,
         "crater_depth": 0.48,
@@ -270,7 +270,7 @@ PRESETS = {
         "mountain_sharpness": 0.86,
         "mountain_height": 0.98,
         "mountain_boundary_alignment": 0.68,
-        "crater_density": 0.30,
+        "crater_density": 0.0,
         "crater_min_radius": 0.010,
         "crater_max_radius": 0.095,
         "crater_depth": 0.68,
@@ -364,7 +364,7 @@ PRESETS = {
         "mountain_sharpness": 0.92,
         "mountain_height": 1.05,
         "mountain_boundary_alignment": 0.60,
-        "crater_density": 0.48,
+        "crater_density": 0.0,
         "crater_min_radius": 0.008,
         "crater_max_radius": 0.095,
         "crater_depth": 0.78,
@@ -458,7 +458,7 @@ PRESETS = {
         "mountain_sharpness": 0.70,
         "mountain_height": 0.56,
         "mountain_boundary_alignment": 0.50,
-        "crater_density": 0.14,
+        "crater_density": 0.0,
         "crater_min_radius": 0.010,
         "crater_max_radius": 0.070,
         "crater_depth": 0.52,
@@ -1359,6 +1359,16 @@ def filter_land_components(mask, min_area_fraction, max_area_fraction):
     return keep[labels]
 
 
+def all_land_mode(cfg) -> bool:
+    return float(cfg.land_coverage) >= 1.0
+
+
+def land_threshold_quantile(cfg) -> float:
+    if all_land_mode(cfg):
+        return 0.05
+    return 1.0 - float(np.clip(cfg.land_coverage, 0.0, 1.0))
+
+
 def hash_noise(ix, iy, iz, seed):
     x = ix.astype(np.uint32, copy=False)
     y = iy.astype(np.uint32, copy=False)
@@ -1957,12 +1967,13 @@ def build_maps_from_vectors(
     coast_detail = (coast_detail - 0.5) * cfg.shoreline_complexity * 0.38
     land_field = continent + coast_detail - cfg.shoreline_erosion * 0.12
 
+    no_surface_water = all_land_mode(cfg)
     threshold = (
-        float(np.quantile(land_field, 1.0 - cfg.land_coverage))
+        float(np.quantile(land_field, land_threshold_quantile(cfg)))
         if land_threshold is None
         else float(land_threshold)
     )
-    continent_land = land_field >= threshold
+    continent_land = np.ones_like(land_field, dtype=bool) if no_surface_water else land_field >= threshold
 
     map_height, map_width = x.shape
     island_land = np.zeros_like(continent_land, dtype=bool)
@@ -1982,13 +1993,18 @@ def build_maps_from_vectors(
             )
         cloud_mask = cloud_mask_from_field(cfg, cloud_field, float(cloud_threshold))
 
-    continent_shoreline_distance = np.abs(land_field - threshold)
-    continent_shoreline = 1.0 - smoothstep(0.0, max(cfg.beach_width, 0.005), continent_shoreline_distance)
-    shoreline = np.where(land, continent_shoreline, continent_shoreline * 0.55)
+    if no_surface_water:
+        shoreline = np.zeros_like(land_field, dtype=np.float32)
+        shelf = np.zeros_like(land_field, dtype=np.float32)
+        ocean_depth = np.zeros_like(land_field, dtype=np.float32)
+    else:
+        continent_shoreline_distance = np.abs(land_field - threshold)
+        continent_shoreline = 1.0 - smoothstep(0.0, max(cfg.beach_width, 0.005), continent_shoreline_distance)
+        shoreline = np.where(land, continent_shoreline, continent_shoreline * 0.55)
 
-    continent_shelf = 1.0 - smoothstep(0.0, max(cfg.shelf_width, 0.005), np.clip(threshold - land_field, 0.0, 10.0))
-    shelf = np.where(~land, continent_shelf, 0.0)
-    ocean_depth = np.where(land, 0.0, 1.0 - shelf * 0.75)
+        continent_shelf = 1.0 - smoothstep(0.0, max(cfg.shelf_width, 0.005), np.clip(threshold - land_field, 0.0, 10.0))
+        shelf = np.where(~land, continent_shelf, 0.0)
+        ocean_depth = np.where(land, 0.0, 1.0 - shelf * 0.75)
 
     biome = fbm_3d(x, y, z, cfg.biome_scale, cfg.biome_complexity, 0.57, cfg.seed + 2333)
     moisture_input = (
@@ -2156,7 +2172,10 @@ def build_maps_from_vectors(
         land_color = color_blend(land_color, colors["rock"], mountain_mask * 0.88)
         land_color = color_blend(land_color, colors["beach"], shoreline * 0.78)
 
-    snow_mask = smoothstep(cfg.snow_threshold, 1.0, mountain_mask * 0.72 + lat_abs * 0.38)
+    if cfg.polar_ice_size <= 0.0:
+        snow_mask = np.zeros_like(land_field, dtype=np.float32)
+    else:
+        snow_mask = smoothstep(cfg.snow_threshold, 1.0, mountain_mask * 0.72 + lat_abs * 0.38)
     polar_ice, ice_texture = build_polar_ice_formation(cfg, x, y, z, lat, lon)
     ice_mask = np.maximum(snow_mask, polar_ice)
 
@@ -2533,7 +2552,7 @@ def compute_quad_sphere_global_stats(cfg, face_size, selected_maps, quad_workers
         stat_fields=("land",),
     ):
         update_histogram(land_hist, maps["_land_field"])
-    land_threshold = histogram_quantile(land_hist, 1.0 - cfg.land_coverage)
+    land_threshold = histogram_quantile(land_hist, land_threshold_quantile(cfg))
 
     stat_fields = []
     if selected_set & {"color", "city_lights"}:
@@ -2827,7 +2846,7 @@ def compute_quad_sphere_color_stats_tiled(cfg, face_size, tile_rows=None):
             )
             update_histogram(land_hist, maps["_land_field"])
             del maps, x, y, z, lat, lon
-    land_threshold = histogram_quantile(land_hist, 1.0 - cfg.land_coverage)
+    land_threshold = histogram_quantile(land_hist, land_threshold_quantile(cfg))
 
     moisture_min = math.inf
     moisture_max = -math.inf

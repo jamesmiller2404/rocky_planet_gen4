@@ -54,7 +54,7 @@ PARAM_GROUPS = [
     {
         "name": "Land And Ocean Shape",
         "params": [
-            ("land_coverage", 0.05, 0.90, 0.01),
+            ("land_coverage", 0.05, 1.00, 0.01),
             ("continent_scale", 0.25, 5.00, 0.05),
             ("continent_detail", 1, 10, 1),
             ("continent_roughness", 0.20, 0.90, 0.01),
