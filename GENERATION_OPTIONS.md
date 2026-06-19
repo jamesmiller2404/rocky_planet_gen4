@@ -242,6 +242,17 @@ These controls affect `color.png` only. They do not change land shape, height, n
 | --- | ---: | --- |
 | `--ocean-current-strength` | `0.18` | Existing broad ocean color variation between deep and mid ocean colors. |
 | `--land-palette` | `natural_earth` | Source color set for land biomes, continent color provinces, and contextual geologic tints. |
+| `--land-color-count` | `9` | Number of base land color roles allowed into `color.png`. Lower values remap disabled biome colors to the nearest active colors for a simpler texture. |
+| `--region-tint-count` | `6` | Number of broad continent/province tint colors layered over land. Use `0` to disable those broad regional tint colors. |
+| `--land-lowland-color` | `#469b26` | Direct hex color for the lowland/grass base land role. |
+| `--land-vegetation-color` | `#127d22` | Direct hex color for the normal vegetation role. |
+| `--land-forest-color` | `#063612` | Direct hex color for the dark forest/wet vegetation role. |
+| `--land-dry-color` | `#5e4c2a` | Direct hex color for dry plains. |
+| `--land-desert-color` | `#80562d` | Direct hex color for desert terrain. |
+| `--land-rock-color` | `#58544c` | Direct hex color for exposed rock and mountain terrain. |
+| `--land-beach-color` | `#c4b277` | Direct hex color for the beach/shoreline land band. |
+| `--land-snow-color` | `#ebf2ee` | Direct hex color for snow. |
+| `--land-ice-color` | `#c2e4f0` | Direct hex color for ice. |
 | `--land-color-variation` | `0.22` | Overall strength of contextual land tints such as ochre soil, tundra, and pale highlands. |
 | `--continent-color-variation` | `0.48` | Broad seeded color variation between continents and large parts of continents, constrained by climate, elevation, and geology. |
 | `--continent-color-scale` | `2.60` | Size of continent color provinces. Lower values create broader continental identities; higher values create smaller regional patches. |
@@ -274,6 +285,8 @@ These controls affect `color.png` only. They do not change land shape, height, n
 | `--salt-flat-tint-strength` | `0.05` | Pale evaporite/salt tint in dry lowland basins. |
 | `--clay-tint-strength` | `0.10` | Warm clay/sediment tint in low wet or formerly wet basins. |
 
+Advanced tint color overrides are also available for the contextual land tint layers: `--land-ochre-tint-color`, `--land-rust-tint-color`, `--land-wet-tint-color`, `--land-tundra-tint-color`, `--land-highland-tint-color`, `--land-iron-oxide-tint-color`, `--land-basalt-tint-color`, `--land-salt-flat-tint-color`, `--land-clay-tint-color`, and `--land-solid-ice-tint-color`.
+
 Useful color variation ranges:
 
 | Value | Effect |
@@ -292,6 +305,9 @@ Examples:
 
 # Brighter high-contrast continents without changing oceans
 .\.venv\Scripts\python.exe rocky_planet_gen.py --preset earthlike --seed 42 --land-brightness 0.10 --land-contrast 1.30 --out output/land_bright_contrast
+
+# Direct custom land colors with fewer color layers
+.\.venv\Scripts\python.exe rocky_planet_gen.py --preset earthlike --seed 42 --land-color-count 4 --region-tint-count 2 --land-lowland-color "#4bbf4f" --land-desert-color "#b15d32" --land-rock-color "#242424" --land-beach-color "#ead18a" --out output/custom_palette_simple
 
 # Lush island world with stronger shallow-water, productivity, and wetland color
 .\.venv\Scripts\python.exe rocky_planet_gen.py --preset archipelago --seed 88 --land-color-variation 0.30 --ocean-shallow-tint-strength 0.72 --ocean-productivity-strength 0.58 --ocean-sediment-strength 0.46 --wetland-tint-strength 0.28 --out output/lush_archipelago

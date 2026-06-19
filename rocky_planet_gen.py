@@ -559,6 +559,11 @@ def ocean_colors_from_base(value: str) -> dict[str, np.ndarray]:
     }
 
 
+def hex_from_rgb(value) -> str:
+    rgb = np.clip(np.array(value, dtype=np.float32), 0.0, 255.0).astype(np.uint8)
+    return f"#{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}"
+
+
 LAND_PALETTE_LABELS = {
     "natural_earth": "Natural Earth",
     "lush_green": "Lush Green",
@@ -857,6 +862,74 @@ LAND_PALETTES = {
 
 COLORS = {**OCEAN_COLORS, **LAND_PALETTES["natural_earth"]["colors"]}
 
+CUSTOM_LAND_COLOR_FIELDS = {
+    "grass": "land_lowland_color",
+    "forest": "land_vegetation_color",
+    "dark_forest": "land_forest_color",
+    "dry_plain": "land_dry_color",
+    "desert": "land_desert_color",
+    "rock": "land_rock_color",
+    "beach": "land_beach_color",
+    "snow": "land_snow_color",
+    "ice": "land_ice_color",
+}
+
+CUSTOM_TINT_COLOR_FIELDS = {
+    "ochre": "land_ochre_tint_color",
+    "rust": "land_rust_tint_color",
+    "dark_wet": "land_wet_tint_color",
+    "cool_tundra": "land_tundra_tint_color",
+    "pale_highland": "land_highland_tint_color",
+    "iron_oxide": "land_iron_oxide_tint_color",
+    "basalt": "land_basalt_tint_color",
+    "salt_flat": "land_salt_flat_tint_color",
+    "clay": "land_clay_tint_color",
+    "solid_ice": "land_solid_ice_tint_color",
+}
+
+LAND_COLOR_ACTIVE_BY_COUNT = {
+    2: ("grass", "rock"),
+    3: ("grass", "desert", "rock"),
+    4: ("grass", "forest", "desert", "rock"),
+    5: ("grass", "forest", "dry_plain", "desert", "rock"),
+    6: ("grass", "forest", "dry_plain", "desert", "rock", "beach"),
+    7: ("grass", "forest", "dark_forest", "dry_plain", "desert", "rock", "beach"),
+    8: ("grass", "forest", "dark_forest", "dry_plain", "desert", "rock", "beach", "snow"),
+    9: ("grass", "forest", "dark_forest", "dry_plain", "desert", "rock", "beach", "snow", "ice"),
+}
+
+LAND_COLOR_FALLBACKS = {
+    "grass": ("forest", "dry_plain", "desert", "rock"),
+    "forest": ("grass", "dark_forest", "dry_plain", "rock"),
+    "dark_forest": ("forest", "grass", "rock"),
+    "dry_plain": ("desert", "grass", "rock"),
+    "desert": ("dry_plain", "rock", "grass"),
+    "rock": ("desert", "dry_plain", "grass"),
+    "beach": ("dry_plain", "desert", "rock", "grass"),
+    "snow": ("ice", "rock", "beach", "grass"),
+    "ice": ("snow", "rock", "beach", "grass"),
+}
+
+DEFAULT_REGION_TINT_COUNT = 6
+MAX_REGION_TINT_COUNT = 8
+
+
+def seed_custom_palette_defaults() -> None:
+    for values in PRESETS.values():
+        values.setdefault("land_color_count", 9)
+        values.setdefault("region_tint_count", DEFAULT_REGION_TINT_COUNT)
+        apply_palette_defaults_to_config_values(values, values.get("land_palette", "natural_earth"), only_missing=True)
+
+
+def apply_palette_defaults_to_config_values(values: dict, land_palette: str, only_missing: bool = False) -> None:
+    palette = LAND_PALETTES[normalize_land_palette(land_palette)]
+    for source_key, config_key in CUSTOM_LAND_COLOR_FIELDS.items():
+        if not only_missing or config_key not in values:
+            values[config_key] = hex_from_rgb(palette["colors"][source_key])
+    for source_key, config_key in CUSTOM_TINT_COLOR_FIELDS.items():
+        if not only_missing or config_key not in values:
+            values[config_key] = hex_from_rgb(palette["tints"][source_key])
+
 
 def normalize_land_palette(name):
     key = str(name or "natural_earth")
@@ -937,6 +1010,68 @@ def vary_palette(seed, preset, land_palette="natural_earth"):
     return palette
 
 
+def apply_custom_land_colors(colors: dict[str, np.ndarray], cfg) -> dict[str, np.ndarray]:
+    custom = dict(colors)
+    for source_key, config_key in CUSTOM_LAND_COLOR_FIELDS.items():
+        custom[source_key] = rgb_from_hex(getattr(cfg, config_key))
+    return custom
+
+
+def reduce_land_color_count(colors: dict[str, np.ndarray], cfg) -> dict[str, np.ndarray]:
+    count = int(np.clip(int(getattr(cfg, "land_color_count", 9)), 2, 9))
+    active = set(LAND_COLOR_ACTIVE_BY_COUNT[count])
+    reduced = dict(colors)
+    for source_key in CUSTOM_LAND_COLOR_FIELDS:
+        if source_key in active:
+            continue
+        for fallback_key in LAND_COLOR_FALLBACKS[source_key]:
+            if fallback_key in active:
+                reduced[source_key] = reduced[fallback_key]
+                break
+    return reduced
+
+
+def resolve_planet_colors(cfg) -> dict[str, np.ndarray]:
+    colors = vary_palette(cfg.seed, cfg.preset, cfg.land_palette)
+    colors.update(ocean_colors_from_base(cfg.ocean_base_color))
+    colors = apply_custom_land_colors(colors, cfg)
+    return reduce_land_color_count(colors, cfg)
+
+
+def resolve_land_tints(cfg) -> dict[str, np.ndarray]:
+    tints = {
+        key: value.copy()
+        for key, value in land_palette_values(cfg.land_palette)["tints"].items()
+    }
+    for source_key, config_key in CUSTOM_TINT_COLOR_FIELDS.items():
+        tints[source_key] = rgb_from_hex(getattr(cfg, config_key))
+    return tints
+
+
+def resolve_region_tints(cfg) -> np.ndarray:
+    base_tints = land_palette_values(cfg.land_palette)["region_tints"]
+    custom_sources = [
+        "land_lowland_color",
+        "land_dry_color",
+        "land_desert_color",
+        "land_rock_color",
+        "land_vegetation_color",
+        "land_beach_color",
+        "land_forest_color",
+        "land_highland_tint_color",
+    ]
+    custom_tints = np.array([rgb_from_hex(getattr(cfg, key)) for key in custom_sources], dtype=np.float32)
+    count = int(np.clip(int(getattr(cfg, "region_tint_count", DEFAULT_REGION_TINT_COUNT)), 0, MAX_REGION_TINT_COUNT))
+    if count <= 0:
+        return np.empty((0, 3), dtype=np.float32)
+    if count <= len(custom_tints):
+        return custom_tints[:count]
+    return base_tints[: min(count, len(base_tints))]
+
+
+seed_custom_palette_defaults()
+
+
 @dataclass
 class PlanetConfig:
     preset: str
@@ -989,6 +1124,27 @@ class PlanetConfig:
     snow_threshold: float
     ocean_current_strength: float
     land_palette: str
+    land_color_count: int
+    region_tint_count: int
+    land_lowland_color: str
+    land_vegetation_color: str
+    land_forest_color: str
+    land_dry_color: str
+    land_desert_color: str
+    land_rock_color: str
+    land_beach_color: str
+    land_snow_color: str
+    land_ice_color: str
+    land_ochre_tint_color: str
+    land_rust_tint_color: str
+    land_wet_tint_color: str
+    land_tundra_tint_color: str
+    land_highland_tint_color: str
+    land_iron_oxide_tint_color: str
+    land_basalt_tint_color: str
+    land_salt_flat_tint_color: str
+    land_clay_tint_color: str
+    land_solid_ice_tint_color: str
     land_color_variation: float
     continent_color_variation: float
     continent_color_scale: float
@@ -1728,7 +1884,9 @@ def build_continent_color_provinces(
     scale = max(0.25, float(cfg.continent_color_scale))
     diversity = float(np.clip(cfg.continent_color_diversity, 0.0, 1.0))
     blend_smoothness = float(np.clip(cfg.continent_color_blend_smoothness, 0.0, 1.0))
-    region_tints = land_palette_values(cfg.land_palette)["region_tints"]
+    region_tints = resolve_region_tints(cfg)
+    if len(region_tints) == 0:
+        return blank_color, blank_weight, blank_weight
     province_count = int(np.clip(round(7.0 + scale * 4.2), 6, 38))
     rng = np.random.default_rng(int(cfg.seed) * 1709 + 9176)
 
@@ -1777,7 +1935,7 @@ def build_continent_color_provinces(
     color_sum = np.zeros((map_height, map_width, 3), dtype=np.float32)
     gate_sum = np.zeros_like(x, dtype=np.float32)
     bias_sum = np.zeros_like(x, dtype=np.float32)
-    style_gates = (warm_gate, red_gate, dark_gate, humid_gate, pale_gate, cool_gate)
+    style_gates = (warm_gate, red_gate, dark_gate, humid_gate, pale_gate, cool_gate, humid_gate, pale_gate)
     for index, anchor in enumerate(anchors):
         score = wx * anchor[0] + wy * anchor[1] + wz * anchor[2]
         influence = np.exp(np.clip((score - best_score) / soft_temperature, -18.0, 0.0)).astype(np.float32)
@@ -1785,7 +1943,7 @@ def build_continent_color_provinces(
         style_index = int(styles[index])
         weight_sum += influence
         color_sum += influence[..., None] * region_tints[style_index]
-        gate_sum += influence * style_gates[style_index]
+        gate_sum += influence * style_gates[style_index % len(style_gates)]
         bias_sum += influence * province_bias[index]
     weight_sum = np.maximum(weight_sum, 1e-6)
     blended_color = color_sum / weight_sum[..., None]
@@ -1794,7 +1952,7 @@ def build_continent_color_provinces(
     best_style_map = styles[province_id]
     best_color = region_tints[best_style_map]
     best_style_gate = np.zeros_like(x, dtype=np.float32)
-    for style_index, gate in enumerate(style_gates):
+    for style_index, gate in enumerate(style_gates[: len(region_tints)]):
         best_style_gate = np.where(best_style_map == style_index, gate, best_style_gate)
     best_bias = province_bias[province_id]
     province_core = boundary_soft * (0.62 + diversity * 0.30) * (1.0 - blend_smoothness * 0.04)
@@ -2048,8 +2206,7 @@ def build_maps_from_vectors(
     height = None
     roughness = None
     if needs_color:
-        colors = vary_palette(cfg.seed, cfg.preset, cfg.land_palette)
-        colors.update(ocean_colors_from_base(cfg.ocean_base_color))
+        colors = resolve_planet_colors(cfg)
         color = np.zeros((map_height, map_width, 3), dtype=np.float32)
     else:
         colors = None
@@ -2198,7 +2355,7 @@ def build_maps_from_vectors(
         1.0,
     )
     if needs_color:
-        land_tints = land_palette_values(cfg.land_palette)["tints"]
+        land_tints = resolve_land_tints(cfg)
         ochre_tint = land_tints["ochre"]
         rust_tint = land_tints["rust"]
         dark_wet_tint = land_tints["dark_wet"]
@@ -3087,7 +3244,12 @@ function draw() {{
 
 def config_from_args(args):
     data = dict(PRESETS[args.preset])
+    if getattr(args, "land_palette", None) is not None:
+        data["land_palette"] = args.land_palette
+        apply_palette_defaults_to_config_values(data, args.land_palette)
     for key in list(data):
+        if key == "land_palette":
+            continue
         value = getattr(args, key, None)
         if value is not None:
             data[key] = value
@@ -3158,8 +3320,7 @@ def generate_planet_output(cfg, out_dir, quad_sphere=False, face_size=None, text
     metadata["output_texture_maps"] = list(selected_maps)
     if quad_sphere:
         metadata["quad_sphere_face_size"] = face_size
-    resolved_palette = vary_palette(cfg.seed, cfg.preset, cfg.land_palette)
-    resolved_palette.update(ocean_colors_from_base(cfg.ocean_base_color))
+    resolved_palette = resolve_planet_colors(cfg)
     metadata["resolved_palette_rgb"] = {
         name: [int(round(channel)) for channel in color]
         for name, color in resolved_palette.items()

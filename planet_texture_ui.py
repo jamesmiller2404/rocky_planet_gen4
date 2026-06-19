@@ -32,13 +32,12 @@ from rocky_planet_gen import (
     PlanetConfig,
     TEXTURE_MAP_NAMES,
     build_maps,
-    ocean_colors_from_base,
     render_globe_preview,
+    resolve_planet_colors,
     resolve_quad_workers,
     selected_texture_maps,
     save_map_set,
     save_quad_sphere_maps_low_memory,
-    vary_palette,
     write_html_preview,
     write_quad_sphere_manifest,
 )
@@ -146,6 +145,26 @@ PARAM_GROUPS = [
         ],
     },
     {
+        "name": "Palette Colors",
+        "params": [
+            ("land_color_count", 2, 9, 1),
+            ("region_tint_count", 0, 8, 1),
+            ("land_lowland_color", "#000000", "#ffffff", "color"),
+            ("land_vegetation_color", "#000000", "#ffffff", "color"),
+            ("land_forest_color", "#000000", "#ffffff", "color"),
+            ("land_dry_color", "#000000", "#ffffff", "color"),
+            ("land_desert_color", "#000000", "#ffffff", "color"),
+            ("land_rock_color", "#000000", "#ffffff", "color"),
+            ("land_beach_color", "#000000", "#ffffff", "color"),
+            ("land_snow_color", "#000000", "#ffffff", "color"),
+            ("land_ice_color", "#000000", "#ffffff", "color"),
+            ("ocean_base_color", "#000000", "#ffffff", "color"),
+            ("ocean_flat_color_strength", 0.00, 1.00, 0.01),
+            ("ocean_shelf_color", "#000000", "#ffffff", "color"),
+            ("ocean_shelf_color_strength", 0.00, 1.00, 0.01),
+        ],
+    },
+    {
         "name": "Color Variation",
         "params": [
             ("ocean_current_strength", 0.00, 0.60, 0.01),
@@ -154,10 +173,6 @@ PARAM_GROUPS = [
             ("continent_color_scale", 0.50, 8.00, 0.05),
             ("continent_color_diversity", 0.00, 1.00, 0.01),
             ("continent_color_blend_smoothness", 0.00, 1.00, 0.01),
-            ("ocean_base_color", "#000000", "#ffffff", "color"),
-            ("ocean_flat_color_strength", 0.00, 1.00, 0.01),
-            ("ocean_shelf_color", "#000000", "#ffffff", "color"),
-            ("ocean_shelf_color_strength", 0.00, 1.00, 0.01),
             ("land_brightness", -0.50, 0.50, 0.01),
             ("land_contrast", 0.50, 2.00, 0.01),
             ("ocean_color_variation", 0.00, 0.70, 0.01),
@@ -180,6 +195,21 @@ PARAM_GROUPS = [
             ("basalt_tint_strength", 0.00, 0.80, 0.01),
             ("salt_flat_tint_strength", 0.00, 0.80, 0.01),
             ("clay_tint_strength", 0.00, 0.80, 0.01),
+        ],
+    },
+    {
+        "name": "Advanced Land Tints",
+        "params": [
+            ("land_ochre_tint_color", "#000000", "#ffffff", "color"),
+            ("land_rust_tint_color", "#000000", "#ffffff", "color"),
+            ("land_wet_tint_color", "#000000", "#ffffff", "color"),
+            ("land_tundra_tint_color", "#000000", "#ffffff", "color"),
+            ("land_highland_tint_color", "#000000", "#ffffff", "color"),
+            ("land_iron_oxide_tint_color", "#000000", "#ffffff", "color"),
+            ("land_basalt_tint_color", "#000000", "#ffffff", "color"),
+            ("land_salt_flat_tint_color", "#000000", "#ffffff", "color"),
+            ("land_clay_tint_color", "#000000", "#ffffff", "color"),
+            ("land_solid_ice_tint_color", "#000000", "#ffffff", "color"),
         ],
     },
 ]
@@ -337,8 +367,7 @@ def metadata_for_config(
     metadata["output_texture_maps"] = list(texture_maps or TEXTURE_MAP_NAMES)
     if face_size is not None:
         metadata["quad_sphere_face_size"] = face_size
-    resolved_palette = vary_palette(cfg.seed, cfg.preset, cfg.land_palette)
-    resolved_palette.update(ocean_colors_from_base(cfg.ocean_base_color))
+    resolved_palette = resolve_planet_colors(cfg)
     metadata["resolved_palette_rgb"] = {
         name: [int(round(channel)) for channel in color]
         for name, color in resolved_palette.items()
@@ -421,6 +450,40 @@ def load_preset_json(path_text: str) -> dict:
 
 
 def default_payload() -> dict:
+    land_palette_colors = {
+        key: {
+            **{
+                f"land_{name}_color": f"#{int(color[0]):02x}{int(color[1]):02x}{int(color[2]):02x}"
+                for name, color in {
+                    "lowland": palette["colors"]["grass"],
+                    "vegetation": palette["colors"]["forest"],
+                    "forest": palette["colors"]["dark_forest"],
+                    "dry": palette["colors"]["dry_plain"],
+                    "desert": palette["colors"]["desert"],
+                    "rock": palette["colors"]["rock"],
+                    "beach": palette["colors"]["beach"],
+                    "snow": palette["colors"]["snow"],
+                    "ice": palette["colors"]["ice"],
+                }.items()
+            },
+            **{
+                f"land_{name}_tint_color": f"#{int(color[0]):02x}{int(color[1]):02x}{int(color[2]):02x}"
+                for name, color in {
+                    "ochre": palette["tints"]["ochre"],
+                    "rust": palette["tints"]["rust"],
+                    "wet": palette["tints"]["dark_wet"],
+                    "tundra": palette["tints"]["cool_tundra"],
+                    "highland": palette["tints"]["pale_highland"],
+                    "iron_oxide": palette["tints"]["iron_oxide"],
+                    "basalt": palette["tints"]["basalt"],
+                    "salt_flat": palette["tints"]["salt_flat"],
+                    "clay": palette["tints"]["clay"],
+                    "solid_ice": palette["tints"]["solid_ice"],
+                }.items()
+            },
+        }
+        for key, palette in LAND_PALETTES.items()
+    }
     return {
         "presets": sorted(PRESETS),
         "defaults": ui_preset_defaults(),
@@ -450,6 +513,7 @@ def default_payload() -> dict:
             {"key": key, "label": LAND_PALETTE_LABELS.get(key, key.replace("_", " ").title())}
             for key in LAND_PALETTES
         ],
+        "land_palette_colors": land_palette_colors,
     }
 
 
@@ -574,6 +638,29 @@ h2 {
   font-size: 13px;
   font-weight: 650;
   color: var(--muted);
+}
+.control-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  margin: 12px 0 10px;
+}
+.tab-button {
+  min-height: 34px;
+  padding: 6px 4px;
+  font-size: 13px;
+}
+.tab-button.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #071210;
+  font-weight: 700;
+}
+.tab-panel {
+  display: none;
+}
+.tab-panel.active {
+  display: block;
 }
 .row {
   display: grid;
@@ -848,7 +935,17 @@ img {
         </select>
       </div>
     </section>
-    <div id="paramGroups"></div>
+    <nav class="control-tabs" aria-label="Control sections">
+      <button class="tab-button active" type="button" data-tab="terrainTab">Terrain</button>
+      <button class="tab-button" type="button" data-tab="colorTab">Color</button>
+      <button class="tab-button" type="button" data-tab="effectsTab">Effects</button>
+      <button class="tab-button" type="button" data-tab="saveTab">Save</button>
+    </nav>
+    <div class="tab-panels">
+      <div id="terrainTab" class="tab-panel active"></div>
+      <div id="colorTab" class="tab-panel"></div>
+      <div id="effectsTab" class="tab-panel"></div>
+      <div id="saveTab" class="tab-panel">
     <details open>
       <summary>Save Output</summary>
       <div class="row">
@@ -916,6 +1013,8 @@ img {
         <button id="loadBtn">Load</button>
       </div>
     </details>
+      </div>
+    </div>
   </aside>
   <section class="preview">
     <div class="status" id="status">Loading controls...</div>
@@ -969,7 +1068,10 @@ const els = {
   globePlayPause: document.getElementById("globePlayPause"),
   globeSpeed: document.getElementById("globeSpeed"),
   globeSpeedValue: document.getElementById("globeSpeedValue"),
-  paramGroups: document.getElementById("paramGroups"),
+  terrainTab: document.getElementById("terrainTab"),
+  colorTab: document.getElementById("colorTab"),
+  effectsTab: document.getElementById("effectsTab"),
+  tabButtons: Array.from(document.querySelectorAll(".tab-button")),
   textureMapOptions: document.getElementById("textureMapOptions"),
   selectAllMapsBtn: document.getElementById("selectAllMapsBtn"),
   selectNoMapsBtn: document.getElementById("selectNoMapsBtn"),
@@ -1034,6 +1136,16 @@ function getDefaults() {
   return schema.defaults[els.preset.value];
 }
 
+function tabForGroup(name) {
+  if (["Palette Colors", "Color Variation", "Advanced Land Tints"].includes(name)) {
+    return els.colorTab;
+  }
+  if (["Cloud Layer", "City Lights"].includes(name)) {
+    return els.effectsTab;
+  }
+  return els.terrainTab;
+}
+
 function renderControls() {
   els.preset.innerHTML = "";
   for (const preset of schema.presets) {
@@ -1052,7 +1164,9 @@ function renderControls() {
     els.landPalette.appendChild(option);
   }
 
-  els.paramGroups.innerHTML = "";
+  els.terrainTab.innerHTML = "";
+  els.colorTab.innerHTML = "";
+  els.effectsTab.innerHTML = "";
   for (const group of schema.param_groups) {
     const details = document.createElement("details");
     const summary = document.createElement("summary");
@@ -1100,7 +1214,7 @@ function renderControls() {
 
       details.append(head, slider);
     }
-    els.paramGroups.appendChild(details);
+    tabForGroup(group.name).appendChild(details);
   }
   applyPresetDefaults();
 }
@@ -1152,6 +1266,18 @@ function applyPresetDefaults() {
   }
   els.landPalette.value = defaults.land_palette || "natural_earth";
   els.outputName.value = "";
+  schedulePreview(0);
+}
+
+function applyLandPaletteColors() {
+  const colors = schema.land_palette_colors[els.landPalette.value] || {};
+  for (const [key, value] of Object.entries(colors)) {
+    const slider = document.getElementById(sliderId(key));
+    if (slider) {
+      slider.value = value;
+      syncValue(key);
+    }
+  }
   schedulePreview(0);
 }
 
@@ -1251,6 +1377,23 @@ function syncGlobeSpeed() {
 function setGlobePlaying(playing) {
   globe.playing = playing;
   els.globePlayPause.textContent = playing ? "Pause" : "Play";
+}
+
+function activateTab(tabId) {
+  for (const button of els.tabButtons) {
+    const active = button.dataset.tab === tabId;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", active ? "true" : "false");
+  }
+  for (const panel of document.querySelectorAll(".tab-panel")) {
+    panel.classList.toggle("active", panel.id === tabId);
+  }
+}
+
+function bindTabs() {
+  for (const button of els.tabButtons) {
+    button.addEventListener("click", () => activateTab(button.dataset.tab));
+  }
 }
 
 function sizeGlobeCanvas() {
@@ -1476,9 +1619,10 @@ async function boot() {
   renderControls();
   renderTextureMapOptions();
   bindGlobeControls();
+  bindTabs();
 
   els.preset.addEventListener("change", applyPresetDefaults);
-  els.landPalette.addEventListener("change", () => schedulePreview(0));
+  els.landPalette.addEventListener("change", applyLandPaletteColors);
   els.seed.addEventListener("change", () => schedulePreview(0));
   els.previewWidth.addEventListener("change", () => schedulePreview(0));
   els.previewMapSelect.addEventListener("change", () => setTexturePreviewMap(els.previewMapSelect.value));
