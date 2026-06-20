@@ -138,6 +138,13 @@ PRESETS = {
         "cloud_softness": 0.22,
         "cloud_land_correlation": 0.55,
         "cloud_opacity": 0.78,
+        "cloud_latitude_bias": 0.18,
+        "cloud_band_strength": 0.24,
+        "cloud_wind_stretch": 0.38,
+        "cloud_breakup": 0.34,
+        "storm_density": 0.24,
+        "spiral_storm_strength": 0.18,
+        "polar_cloud_strength": 0.10,
         "city_lights_strength": 0.72,
         "city_density": 0.46,
         "megacity_count": 14,
@@ -232,6 +239,13 @@ PRESETS = {
         "cloud_softness": 0.24,
         "cloud_land_correlation": 0.48,
         "cloud_opacity": 0.82,
+        "cloud_latitude_bias": 0.26,
+        "cloud_band_strength": 0.30,
+        "cloud_wind_stretch": 0.44,
+        "cloud_breakup": 0.28,
+        "storm_density": 0.34,
+        "spiral_storm_strength": 0.20,
+        "polar_cloud_strength": 0.06,
         "city_lights_strength": 0.66,
         "city_density": 0.42,
         "megacity_count": 10,
@@ -326,6 +340,13 @@ PRESETS = {
         "cloud_softness": 0.20,
         "cloud_land_correlation": 0.66,
         "cloud_opacity": 0.72,
+        "cloud_latitude_bias": 0.08,
+        "cloud_band_strength": 0.18,
+        "cloud_wind_stretch": 0.28,
+        "cloud_breakup": 0.42,
+        "storm_density": 0.16,
+        "spiral_storm_strength": 0.10,
+        "polar_cloud_strength": 0.08,
         "city_lights_strength": 0.70,
         "city_density": 0.40,
         "megacity_count": 12,
@@ -420,6 +441,13 @@ PRESETS = {
         "cloud_softness": 0.16,
         "cloud_land_correlation": 0.42,
         "cloud_opacity": 0.62,
+        "cloud_latitude_bias": -0.10,
+        "cloud_band_strength": 0.12,
+        "cloud_wind_stretch": 0.22,
+        "cloud_breakup": 0.58,
+        "storm_density": 0.08,
+        "spiral_storm_strength": 0.04,
+        "polar_cloud_strength": 0.02,
         "city_lights_strength": 0.34,
         "city_density": 0.18,
         "megacity_count": 5,
@@ -514,6 +542,13 @@ PRESETS = {
         "cloud_softness": 0.28,
         "cloud_land_correlation": 0.60,
         "cloud_opacity": 0.82,
+        "cloud_latitude_bias": -0.32,
+        "cloud_band_strength": 0.16,
+        "cloud_wind_stretch": 0.30,
+        "cloud_breakup": 0.20,
+        "storm_density": 0.18,
+        "spiral_storm_strength": 0.08,
+        "polar_cloud_strength": 0.62,
         "city_lights_strength": 0.30,
         "city_density": 0.16,
         "megacity_count": 4,
@@ -1183,6 +1218,13 @@ class PlanetConfig:
     cloud_softness: float
     cloud_land_correlation: float
     cloud_opacity: float
+    cloud_latitude_bias: float
+    cloud_band_strength: float
+    cloud_wind_stretch: float
+    cloud_breakup: float
+    storm_density: float
+    spiral_storm_strength: float
+    polar_cloud_strength: float
     city_lights_strength: float
     city_density: float
     megacity_count: int
@@ -1262,18 +1304,96 @@ def build_cloud_field(cfg, x, y, z, lat, land_field, land_threshold):
     scale = max(0.20, float(cfg.cloud_scale))
     detail = max(1, int(cfg.cloud_detail))
     roughness = float(np.clip(cfg.cloud_roughness, 0.10, 0.95))
+    latitude_bias = float(np.clip(cfg.cloud_latitude_bias, -1.0, 1.0))
+    band_strength = float(np.clip(cfg.cloud_band_strength, 0.0, 1.0))
+    wind_stretch = float(np.clip(cfg.cloud_wind_stretch, 0.0, 1.0))
+    breakup_strength = float(np.clip(cfg.cloud_breakup, 0.0, 1.0))
+    storm_density = float(np.clip(cfg.storm_density, 0.0, 1.0))
+    spiral_strength = float(np.clip(cfg.spiral_storm_strength, 0.0, 1.0))
+    polar_strength = float(np.clip(cfg.polar_cloud_strength, 0.0, 1.0))
 
     broad = fbm_3d(x, y, z, scale, detail, roughness, cfg.seed + 9011)
     weather = fbm_3d(x, y, z, scale * 3.4 + 1.0, max(2, min(6, detail + 1)), 0.56, cfg.seed + 9029)
     wisps = fbm_3d(x, y, z, scale * 8.5 + 3.0, 3, 0.58, cfg.seed + 9043)
+    lon = np.arctan2(x, z)
+    wind_x = x * (1.0 + wind_stretch * 3.8)
+    wind_z = z * (1.0 - wind_stretch * 0.46)
+    wind_flow = fbm_3d(
+        wind_x,
+        y * (0.78 + wind_stretch * 0.22),
+        wind_z,
+        scale * (2.0 + wind_stretch * 2.4) + 0.8,
+        max(2, min(6, detail)),
+        0.54,
+        cfg.seed + 9061,
+    )
 
     land_width = max(float(cfg.continent_contrast) * 3.5, 0.12)
     soft_land_form = smoothstep(land_threshold - land_width, land_threshold + land_width, land_field)
-    lat_band = 1.0 - np.abs(np.sin(lat)) * 0.30
+    sin_lat = np.sin(lat)
+    abs_sin_lat = np.abs(sin_lat)
+    tropical_band = 1.0 - smoothstep(0.18, 0.86, abs_sin_lat)
+    midlatitude_band = smoothstep(0.18, 0.48, abs_sin_lat) * (1.0 - smoothstep(0.62, 0.92, abs_sin_lat))
+    polar_band = smoothstep(0.68, 0.98, abs_sin_lat)
+    if latitude_bias >= 0.0:
+        lat_band = lerp(midlatitude_band, tropical_band, latitude_bias)
+    else:
+        lat_band = lerp(midlatitude_band, polar_band, -latitude_bias)
+    lat_band = normalize01(lat_band)
+    wave_phase = lon * (3.0 + scale * 0.65) + np.sin(lat * 4.0 + cfg.seed * 0.013) * (1.2 + wind_stretch * 1.8)
+    band_wave = np.sin(wave_phase) * 0.5 + 0.5
+    banding = lerp(1.0, 0.72 + 0.56 * (lat_band * 0.66 + band_wave * 0.34), band_strength)
+    breakup = smoothstep(
+        0.18,
+        0.86,
+        fbm_3d(x * 1.08 + 0.21, y * 0.92 - 0.17, z * 1.13 + 0.09, scale * 11.0 + 6.0, 3, 0.58, cfg.seed + 9079),
+    )
 
-    field = broad * 0.58 + weather * 0.28 + wisps * 0.14
+    field = broad * 0.48 + weather * 0.22 + wind_flow * 0.18 + wisps * 0.12
     field = lerp(field, field * 0.55 + soft_land_form * 0.45, land_correlation)
-    field = field * (0.86 + lat_band * 0.14)
+    field = field * banding
+    field = field * lerp(1.0, 0.58 + breakup * 0.58, breakup_strength)
+    field = field + lat_band * (0.08 + band_strength * 0.10)
+    if polar_strength > 0.0:
+        polar_texture = 0.64 + 0.36 * fbm_3d(x, y, z, scale * 5.0 + 2.0, 3, 0.52, cfg.seed + 9109)
+        field = field + polar_band * polar_texture * polar_strength * 0.36
+    if storm_density > 0.0 or spiral_strength > 0.0:
+        rng = np.random.default_rng(int(cfg.seed) + 9127)
+        storm_count = int(round(2 + storm_density * 18 + spiral_strength * 8))
+        storm_field = np.zeros_like(field, dtype=np.float32)
+        for _ in range(storm_count):
+            center_lat = float(rng.uniform(-1.05, 1.05))
+            center_lon = float(rng.uniform(-math.pi, math.pi))
+            center = np.array(
+                [
+                    math.cos(center_lat) * math.sin(center_lon),
+                    math.sin(center_lat),
+                    math.cos(center_lat) * math.cos(center_lon),
+                ],
+                dtype=np.float32,
+            )
+            east = np.array([math.cos(center_lon), 0.0, -math.sin(center_lon)], dtype=np.float32)
+            north = np.cross(center, east).astype(np.float32)
+            north /= max(1e-6, float(np.linalg.norm(north)))
+            dx = x * east[0] + y * east[1] + z * east[2]
+            dy = x * north[0] + y * north[1] + z * north[2]
+            dot = np.clip(x * center[0] + y * center[1] + z * center[2], -1.0, 1.0)
+            distance = np.arccos(dot)
+            radius = float(rng.uniform(0.050, 0.145)) * (0.85 + storm_density * 0.55)
+            core = 1.0 - smoothstep(radius * 0.18, radius, distance)
+            angle = np.arctan2(dy, dx)
+            swirl = np.sin(angle * float(rng.uniform(2.1, 3.6)) - distance / max(radius, 1e-6) * float(rng.uniform(2.8, 5.6)))
+            broken = smoothstep(
+                0.28,
+                0.88,
+                fbm_3d(x + center[0] * 0.31, y + center[1] * 0.31, z + center[2] * 0.31, scale * 13.0 + 8.0, 2, 0.50, cfg.seed + 9300 + _),
+            )
+            spiral = 0.72 + 0.28 * swirl * spiral_strength
+            storm_field = np.maximum(
+                storm_field,
+                core * broken * spiral * float(rng.uniform(0.35, 0.72)),
+            )
+        field = field + storm_field * (0.18 + storm_density * 0.34 + spiral_strength * 0.22)
     return field.astype(np.float32)
 
 

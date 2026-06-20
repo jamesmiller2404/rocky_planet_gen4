@@ -202,6 +202,13 @@ These controls write `cloud_mask.png` only. They do not bake clouds into `color.
 | `--cloud-softness` | `0.22` | Width of the soft threshold around cloud edges. Higher values make broader, hazier transitions. |
 | `--cloud-land-correlation` | `0.55` | How strongly clouds echo the softened continent/land-form field. `0.0` is independent weather noise; `1.0` follows broad land forms more closely. |
 | `--cloud-opacity` | `0.78` | Maximum grayscale opacity written into `cloud_mask.png`. |
+| `--cloud-latitude-bias` | `0.18` | Shifts cloud preference by latitude. Negative values favor polar cloudiness; positive values favor tropical cloud belts. |
+| `--cloud-band-strength` | `0.24` | Adds subtle east-west atmospheric banding so clouds read as planet-scale weather instead of only random noise. |
+| `--cloud-wind-stretch` | `0.38` | Elongates cloud systems along prevailing flow. Higher values make formations more wind-sheared and less blob-like. |
+| `--cloud-breakup` | `0.34` | Cuts holes and ragged gaps into cloud fields. Higher values create more broken, cellular cover. |
+| `--storm-density` | `0.24` | Amount of embedded compact storm structure blended into the cloud field. |
+| `--spiral-storm-strength` | `0.18` | Strength of diffuse cyclonic curvature inside storm systems. Keep moderate for realistic, non-stamped storms. |
+| `--polar-cloud-strength` | `0.10` | Adds polar haze/cloud concentration independent of surface ice. |
 
 ## City Lights
 
@@ -391,6 +398,13 @@ Examples:
 | `cloud_softness` | `0.22` | `0.24` | `0.20` | `0.16` | `0.28` |
 | `cloud_land_correlation` | `0.55` | `0.48` | `0.66` | `0.42` | `0.60` |
 | `cloud_opacity` | `0.78` | `0.82` | `0.72` | `0.62` | `0.82` |
+| `cloud_latitude_bias` | `0.18` | `0.26` | `0.08` | `-0.10` | `-0.32` |
+| `cloud_band_strength` | `0.24` | `0.30` | `0.18` | `0.12` | `0.16` |
+| `cloud_wind_stretch` | `0.38` | `0.44` | `0.28` | `0.22` | `0.30` |
+| `cloud_breakup` | `0.34` | `0.28` | `0.42` | `0.58` | `0.20` |
+| `storm_density` | `0.24` | `0.34` | `0.16` | `0.08` | `0.18` |
+| `spiral_storm_strength` | `0.18` | `0.20` | `0.10` | `0.04` | `0.08` |
+| `polar_cloud_strength` | `0.10` | `0.06` | `0.08` | `0.02` | `0.62` |
 | `city_lights_strength` | `0.72` | `0.66` | `0.70` | `0.34` | `0.30` |
 | `city_density` | `0.46` | `0.42` | `0.40` | `0.18` | `0.16` |
 | `megacity_count` | `14` | `10` | `12` | `5` | `4` |

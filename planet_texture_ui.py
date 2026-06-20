@@ -123,7 +123,7 @@ PARAM_GROUPS = [
         ],
     },
     {
-        "name": "Cloud Layer",
+        "name": "Cloud Creation",
         "params": [
             ("cloud_coverage", 0.00, 1.00, 0.01),
             ("cloud_scale", 0.20, 6.00, 0.05),
@@ -132,6 +132,13 @@ PARAM_GROUPS = [
             ("cloud_softness", 0.005, 0.60, 0.005),
             ("cloud_land_correlation", 0.00, 1.00, 0.01),
             ("cloud_opacity", 0.00, 1.00, 0.01),
+            ("cloud_latitude_bias", -1.00, 1.00, 0.01),
+            ("cloud_band_strength", 0.00, 1.00, 0.01),
+            ("cloud_wind_stretch", 0.00, 1.00, 0.01),
+            ("cloud_breakup", 0.00, 1.00, 0.01),
+            ("storm_density", 0.00, 1.00, 0.01),
+            ("spiral_storm_strength", 0.00, 1.00, 0.01),
+            ("polar_cloud_strength", 0.00, 1.00, 0.01),
         ],
     },
     {
@@ -245,6 +252,95 @@ UI_DEFAULT_OVERRIDES = {
 }
 UI_DEFAULT_OVERRIDES["shelf_width"] = 0.08
 
+CLOUD_RECIPES = {
+    "none": {
+        "label": "No clouds",
+        "values": {
+            "cloud_coverage": 0.0,
+            "cloud_opacity": 0.0,
+            "storm_density": 0.0,
+            "spiral_storm_strength": 0.0,
+            "polar_cloud_strength": 0.0,
+        },
+    },
+    "earthlike": {
+        "label": "Earthlike",
+        "values": {
+            "cloud_coverage": 0.46,
+            "cloud_scale": 1.25,
+            "cloud_detail": 5,
+            "cloud_roughness": 0.48,
+            "cloud_softness": 0.22,
+            "cloud_land_correlation": 0.55,
+            "cloud_opacity": 0.78,
+            "cloud_latitude_bias": 0.18,
+            "cloud_band_strength": 0.24,
+            "cloud_wind_stretch": 0.38,
+            "cloud_breakup": 0.34,
+            "storm_density": 0.24,
+            "spiral_storm_strength": 0.18,
+            "polar_cloud_strength": 0.10,
+        },
+    },
+    "stormy": {
+        "label": "Stormy",
+        "values": {
+            "cloud_coverage": 0.64,
+            "cloud_scale": 1.10,
+            "cloud_detail": 6,
+            "cloud_roughness": 0.56,
+            "cloud_softness": 0.20,
+            "cloud_land_correlation": 0.38,
+            "cloud_opacity": 0.88,
+            "cloud_latitude_bias": 0.10,
+            "cloud_band_strength": 0.36,
+            "cloud_wind_stretch": 0.54,
+            "cloud_breakup": 0.30,
+            "storm_density": 0.72,
+            "spiral_storm_strength": 0.46,
+            "polar_cloud_strength": 0.14,
+        },
+    },
+    "thin_haze": {
+        "label": "Thin haze",
+        "values": {
+            "cloud_coverage": 0.34,
+            "cloud_scale": 0.85,
+            "cloud_detail": 4,
+            "cloud_roughness": 0.38,
+            "cloud_softness": 0.42,
+            "cloud_land_correlation": 0.48,
+            "cloud_opacity": 0.38,
+            "cloud_latitude_bias": 0.04,
+            "cloud_band_strength": 0.12,
+            "cloud_wind_stretch": 0.22,
+            "cloud_breakup": 0.18,
+            "storm_density": 0.04,
+            "spiral_storm_strength": 0.0,
+            "polar_cloud_strength": 0.18,
+        },
+    },
+    "broken_marine": {
+        "label": "Broken marine",
+        "values": {
+            "cloud_coverage": 0.40,
+            "cloud_scale": 2.25,
+            "cloud_detail": 5,
+            "cloud_roughness": 0.54,
+            "cloud_softness": 0.16,
+            "cloud_land_correlation": 0.20,
+            "cloud_opacity": 0.74,
+            "cloud_latitude_bias": 0.22,
+            "cloud_band_strength": 0.28,
+            "cloud_wind_stretch": 0.62,
+            "cloud_breakup": 0.64,
+            "storm_density": 0.18,
+            "spiral_storm_strength": 0.08,
+            "polar_cloud_strength": 0.04,
+        },
+    },
+}
+
 
 def ui_preset_defaults() -> dict:
     return {
@@ -349,6 +445,23 @@ TEXTURE_MAP_LABELS = {
     "ocean_depth": "Ocean depth",
     "cloud_mask": "Cloud mask",
     "city_lights": "City lights",
+}
+
+PARAM_LABELS = {
+    "cloud_coverage": "Cloud coverage",
+    "cloud_scale": "System size",
+    "cloud_detail": "Cloud detail",
+    "cloud_roughness": "Raggedness",
+    "cloud_softness": "Edge softness",
+    "cloud_land_correlation": "Land-form correlation",
+    "cloud_opacity": "Cloud opacity",
+    "cloud_latitude_bias": "Latitude bias",
+    "cloud_band_strength": "Atmospheric bands",
+    "cloud_wind_stretch": "Wind stretch",
+    "cloud_breakup": "Cloud breakup",
+    "storm_density": "Storm density",
+    "spiral_storm_strength": "Spiral storm strength",
+    "polar_cloud_strength": "Polar cloud strength",
 }
 
 
@@ -670,7 +783,7 @@ def default_payload() -> dict:
                 "params": [
                     {
                         "key": key,
-                        "label": key.replace("_", " ").title(),
+                        "label": PARAM_LABELS.get(key, key.replace("_", " ").title()),
                         "type": "color" if key in COLOR_PARAMS else "range",
                         "min": minimum,
                         "max": maximum,
@@ -686,6 +799,7 @@ def default_payload() -> dict:
             {"key": key, "label": TEXTURE_MAP_LABELS.get(key, key.replace("_", " ").title())}
             for key in TEXTURE_MAP_NAMES
         ],
+        "cloud_recipes": CLOUD_RECIPES,
         "land_palettes": [
             {"key": key, "label": LAND_PALETTE_LABELS.get(key, key.replace("_", " ").title())}
             for key in LAND_PALETTES
@@ -988,7 +1102,7 @@ img {
 }
 .globe-toolbar {
   display: grid;
-  grid-template-columns: 74px auto minmax(110px, 1fr) 48px;
+  grid-template-columns: 74px minmax(120px, 1fr) auto minmax(110px, 1fr) 48px;
   gap: 8px;
   align-items: center;
   padding: 8px;
@@ -1002,6 +1116,17 @@ img {
 }
 .globe-toolbar button {
   min-height: 30px;
+}
+.cloud-recipes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  margin: 10px 0 4px;
+}
+.cloud-recipes button {
+  min-height: 30px;
+  padding: 4px 6px;
+  font-size: 12px;
 }
 .globe-canvas-wrap {
   display: grid;
@@ -1280,6 +1405,11 @@ img {
       <figure class="globe-figure">
         <div class="globe-toolbar">
           <button id="globePlayPause" type="button">Pause</button>
+          <select id="globeViewMode" aria-label="Globe preview mode">
+            <option value="surface_clouds" selected>Surface + clouds</option>
+            <option value="surface">Surface only</option>
+            <option value="cloud_mask">Cloud mask</option>
+          </select>
           <label for="globeSpeed">Speed</label>
           <input id="globeSpeed" type="range" min="0.05" max="2" step="0.05" value="0.35">
           <span id="globeSpeedValue">0.35x</span>
@@ -1316,6 +1446,7 @@ const els = {
   texturePreviewCaption: document.getElementById("texturePreviewCaption"),
   globeCanvas: document.getElementById("globeCanvas"),
   globePlayPause: document.getElementById("globePlayPause"),
+  globeViewMode: document.getElementById("globeViewMode"),
   globeSpeed: document.getElementById("globeSpeed"),
   globeSpeedValue: document.getElementById("globeSpeedValue"),
   terrainTab: document.getElementById("terrainTab"),
@@ -1334,9 +1465,13 @@ const els = {
 const globe = {
   ctx: els.globeCanvas.getContext("2d", {willReadFrequently: true}),
   textureCanvas: document.createElement("canvas"),
+  cloudCanvas: document.createElement("canvas"),
   textureData: null,
+  cloudData: null,
   textureWidth: 0,
   textureHeight: 0,
+  cloudWidth: 0,
+  cloudHeight: 0,
   yaw: 0,
   pitch: 0,
   playing: true,
@@ -1347,6 +1482,7 @@ const globe = {
   speed: parseFloat(els.globeSpeed.value),
 };
 globe.textureCtx = globe.textureCanvas.getContext("2d", {willReadFrequently: true});
+globe.cloudCtx = globe.cloudCanvas.getContext("2d", {willReadFrequently: true});
 
 function syncResolutionPreset() {
   const value = `${parseInt(els.width.value, 10)}x${parseInt(els.height.value, 10)}`;
@@ -1393,10 +1529,23 @@ function tabForGroup(name) {
   if (["Palette Colors", "Color Variation", "Advanced Land Tints"].includes(name)) {
     return els.colorTab;
   }
-  if (["Cloud Layer", "City Lights"].includes(name)) {
+  if (["Cloud Creation", "Cloud Layer", "City Lights"].includes(name)) {
     return els.effectsTab;
   }
   return els.terrainTab;
+}
+
+function applyCloudRecipe(recipeKey) {
+  const recipe = schema.cloud_recipes[recipeKey];
+  if (!recipe) return;
+  for (const [key, value] of Object.entries(recipe.values || {})) {
+    const slider = document.getElementById(sliderId(key));
+    if (slider) {
+      slider.value = value;
+      syncValue(key);
+    }
+  }
+  schedulePreview(0);
 }
 
 function renderControls() {
@@ -1425,6 +1574,19 @@ function renderControls() {
     const summary = document.createElement("summary");
     summary.textContent = group.name;
     details.appendChild(summary);
+
+    if (group.name === "Cloud Creation" && schema.cloud_recipes) {
+      const recipes = document.createElement("div");
+      recipes.className = "cloud-recipes";
+      for (const [key, recipe] of Object.entries(schema.cloud_recipes)) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.textContent = recipe.label;
+        button.addEventListener("click", () => applyCloudRecipe(key));
+        recipes.appendChild(button);
+      }
+      details.appendChild(recipes);
+    }
 
     for (const param of group.params) {
       if (param.type === "color") {
@@ -1617,7 +1779,12 @@ async function getJson(path) {
   return data;
 }
 
-function setGlobeTexture(src) {
+function setGlobeTextures(surfaceSrc, cloudSrc) {
+  let remaining = cloudSrc ? 2 : 1;
+  const finish = () => {
+    remaining -= 1;
+    if (remaining <= 0) drawGlobe();
+  };
   const image = new Image();
   image.onload = () => {
     globe.textureWidth = image.naturalWidth;
@@ -1627,9 +1794,29 @@ function setGlobeTexture(src) {
     globe.textureCtx.clearRect(0, 0, globe.textureWidth, globe.textureHeight);
     globe.textureCtx.drawImage(image, 0, 0);
     globe.textureData = globe.textureCtx.getImageData(0, 0, globe.textureWidth, globe.textureHeight).data;
-    drawGlobe();
+    finish();
   };
-  image.src = src;
+  image.src = surfaceSrc;
+
+  if (!cloudSrc) {
+    globe.cloudData = null;
+    globe.cloudWidth = 0;
+    globe.cloudHeight = 0;
+    return;
+  }
+
+  const cloudImage = new Image();
+  cloudImage.onload = () => {
+    globe.cloudWidth = cloudImage.naturalWidth;
+    globe.cloudHeight = cloudImage.naturalHeight;
+    globe.cloudCanvas.width = globe.cloudWidth;
+    globe.cloudCanvas.height = globe.cloudHeight;
+    globe.cloudCtx.clearRect(0, 0, globe.cloudWidth, globe.cloudHeight);
+    globe.cloudCtx.drawImage(cloudImage, 0, 0);
+    globe.cloudData = globe.cloudCtx.getImageData(0, 0, globe.cloudWidth, globe.cloudHeight).data;
+    finish();
+  };
+  cloudImage.src = cloudSrc;
 }
 
 function syncGlobeSpeed() {
@@ -1726,15 +1913,33 @@ function drawGlobe() {
       if (u < 0) u += globe.textureWidth;
       const v = Math.max(0, Math.min(globe.textureHeight - 1, Math.floor(((Math.PI / 2 - lat) / Math.PI) * globe.textureHeight)));
       const ti = (v * globe.textureWidth + u) * 4;
+      let cloudValue = 0;
+      if (globe.cloudData) {
+        const cu = Math.max(0, Math.min(globe.cloudWidth - 1, Math.floor((u / globe.textureWidth) * globe.cloudWidth)));
+        const cv = Math.max(0, Math.min(globe.cloudHeight - 1, Math.floor((v / globe.textureHeight) * globe.cloudHeight)));
+        cloudValue = globe.cloudData[(cv * globe.cloudWidth + cu) * 4] / 255;
+      }
 
       const shade = 0.18 + Math.max(0, sx * light[0] + sy * light[1] + sz * light[2]) * 0.95;
       const rim = Math.max(0, Math.min(1, (1 - sz) * 1.4));
       const atmosphere = [72, 122, 176];
       const edgeAlpha = 1 - Math.max(0, Math.min(1, (r2 - 0.88) / 0.12));
       const blend = rim * 0.18;
-      data[i] = Math.min(255, ((globe.textureData[ti] * (1 - blend)) + atmosphere[0] * blend) * shade);
-      data[i + 1] = Math.min(255, ((globe.textureData[ti + 1] * (1 - blend)) + atmosphere[1] * blend) * shade);
-      data[i + 2] = Math.min(255, ((globe.textureData[ti + 2] * (1 - blend)) + atmosphere[2] * blend) * shade);
+      let red = (globe.textureData[ti] * (1 - blend)) + atmosphere[0] * blend;
+      let green = (globe.textureData[ti + 1] * (1 - blend)) + atmosphere[1] * blend;
+      let blue = (globe.textureData[ti + 2] * (1 - blend)) + atmosphere[2] * blend;
+      if (els.globeViewMode.value === "cloud_mask") {
+        red = green = blue = 28 + cloudValue * 227;
+      } else if (els.globeViewMode.value === "surface_clouds" && cloudValue > 0) {
+        const cloudAlpha = Math.min(0.92, cloudValue);
+        const cloudShade = 0.70 + Math.max(0, sx * light[0] + sy * light[1] + sz * light[2]) * 0.38;
+        red = red * (1 - cloudAlpha) + 248 * cloudShade * cloudAlpha;
+        green = green * (1 - cloudAlpha) + 250 * cloudShade * cloudAlpha;
+        blue = blue * (1 - cloudAlpha) + 246 * cloudShade * cloudAlpha;
+      }
+      data[i] = Math.min(255, red * shade);
+      data[i + 1] = Math.min(255, green * shade);
+      data[i + 2] = Math.min(255, blue * shade);
       data[i + 3] = Math.round(255 * edgeAlpha);
     }
   }
@@ -1754,6 +1959,7 @@ function animateGlobe(timestamp) {
 function bindGlobeControls() {
   syncGlobeSpeed();
   els.globePlayPause.addEventListener("click", () => setGlobePlaying(!globe.playing));
+  els.globeViewMode.addEventListener("change", drawGlobe);
   els.globeSpeed.addEventListener("input", syncGlobeSpeed);
   els.globeCanvas.addEventListener("pointerdown", (event) => {
     setGlobePlaying(false);
@@ -1803,7 +2009,9 @@ async function renderPreview() {
   try {
     const data = await postJson("/api/preview", getPayload());
     setPreviewMaps(data.maps || {color: {label: "Color", image: data.color}});
-    setGlobeTexture((data.maps && data.maps.color ? data.maps.color.image : data.color));
+    const surfaceImage = data.maps && data.maps.color ? data.maps.color.image : data.color;
+    const cloudImage = data.maps && data.maps.cloud_mask ? data.maps.cloud_mask.image : null;
+    setGlobeTextures(surfaceImage, cloudImage);
     setStatus(`Preview ready: ${data.summary.preset}, seed ${data.summary.seed}, ${data.summary.preview_size}`, "ok");
   } catch (error) {
     setStatus(error.message, "error");
