@@ -1079,7 +1079,7 @@ img {
 }
 .texture-toolbar {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(150px, 220px);
+  grid-template-columns: minmax(0, 1fr) minmax(150px, 220px) auto;
   gap: 10px;
   align-items: center;
   padding: 8px;
@@ -1092,6 +1092,20 @@ img {
 .texture-toolbar select {
   min-height: 30px;
 }
+.cloud-layer-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.cloud-layer-toggle input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+}
 .texture-figure img {
   min-height: 180px;
   object-fit: contain;
@@ -1102,7 +1116,7 @@ img {
 }
 .globe-toolbar {
   display: grid;
-  grid-template-columns: 74px minmax(120px, 1fr) auto minmax(110px, 1fr) 48px;
+  grid-template-columns: 74px minmax(120px, 1fr) auto auto minmax(110px, 1fr) 48px;
   gap: 8px;
   align-items: center;
   padding: 8px;
@@ -1398,6 +1412,10 @@ img {
         <div class="texture-toolbar">
           <label for="previewMapSelect">Preview map</label>
           <select id="previewMapSelect"></select>
+          <label class="cloud-layer-toggle" for="textureCloudLayerToggle">
+            <input id="textureCloudLayerToggle" type="checkbox" checked>
+            Cloud layer
+          </label>
         </div>
         <img id="colorPreview" alt="Texture map preview">
         <figcaption id="texturePreviewCaption">texture map preview</figcaption>
@@ -1410,6 +1428,10 @@ img {
             <option value="surface">Surface only</option>
             <option value="cloud_mask">Cloud mask</option>
           </select>
+          <label class="cloud-layer-toggle" for="globeCloudLayerToggle">
+            <input id="globeCloudLayerToggle" type="checkbox" checked>
+            Cloud layer
+          </label>
           <label for="globeSpeed">Speed</label>
           <input id="globeSpeed" type="range" min="0.05" max="2" step="0.05" value="0.35">
           <span id="globeSpeedValue">0.35x</span>
@@ -1427,6 +1449,7 @@ let schema = null;
 let debounceTimer = null;
 let inFlight = false;
 let previewMaps = {};
+let texturePreviewToken = 0;
 
 const els = {
   preset: document.getElementById("preset"),
@@ -1444,9 +1467,11 @@ const els = {
   colorPreview: document.getElementById("colorPreview"),
   previewMapSelect: document.getElementById("previewMapSelect"),
   texturePreviewCaption: document.getElementById("texturePreviewCaption"),
+  textureCloudLayerToggle: document.getElementById("textureCloudLayerToggle"),
   globeCanvas: document.getElementById("globeCanvas"),
   globePlayPause: document.getElementById("globePlayPause"),
   globeViewMode: document.getElementById("globeViewMode"),
+  globeCloudLayerToggle: document.getElementById("globeCloudLayerToggle"),
   globeSpeed: document.getElementById("globeSpeed"),
   globeSpeedValue: document.getElementById("globeSpeedValue"),
   terrainTab: document.getElementById("terrainTab"),
@@ -1722,16 +1747,85 @@ function setTextureMapSelection(checked) {
   }
 }
 
-function setTexturePreviewMap(key) {
+function cloudOverlayEnabled() {
+  return Boolean(els.textureCloudLayerToggle && els.textureCloudLayerToggle.checked);
+}
+
+function syncCloudLayerToggles(checked) {
+  els.textureCloudLayerToggle.checked = checked;
+  els.globeCloudLayerToggle.checked = checked;
+  setTexturePreviewMap(els.previewMapSelect.value);
+  drawGlobe();
+}
+
+function loadPreviewImage(src) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("Unable to load preview image."));
+    image.src = src;
+  });
+}
+
+async function cloudOverlayDataUrl(surfaceSrc, cloudSrc) {
+  const [surfaceImage, cloudImage] = await Promise.all([
+    loadPreviewImage(surfaceSrc),
+    loadPreviewImage(cloudSrc),
+  ]);
+  const canvas = document.createElement("canvas");
+  canvas.width = surfaceImage.naturalWidth;
+  canvas.height = surfaceImage.naturalHeight;
+  const ctx = canvas.getContext("2d", {willReadFrequently: true});
+  ctx.drawImage(surfaceImage, 0, 0);
+  const surface = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const cloudCanvas = document.createElement("canvas");
+  cloudCanvas.width = canvas.width;
+  cloudCanvas.height = canvas.height;
+  const cloudCtx = cloudCanvas.getContext("2d", {willReadFrequently: true});
+  cloudCtx.drawImage(cloudImage, 0, 0, canvas.width, canvas.height);
+  const cloud = cloudCtx.getImageData(0, 0, canvas.width, canvas.height);
+
+  for (let i = 0; i < surface.data.length; i += 4) {
+    const alpha = Math.min(0.92, cloud.data[i] / 255);
+    if (alpha <= 0) continue;
+    surface.data[i] = surface.data[i] * (1 - alpha) + 248 * alpha;
+    surface.data[i + 1] = surface.data[i + 1] * (1 - alpha) + 250 * alpha;
+    surface.data[i + 2] = surface.data[i + 2] * (1 - alpha) + 246 * alpha;
+  }
+
+  ctx.putImageData(surface, 0, 0);
+  return canvas.toDataURL("image/png");
+}
+
+async function setTexturePreviewMap(key) {
+  const token = ++texturePreviewToken;
   const map = previewMaps[key];
   if (!map) {
     els.colorPreview.removeAttribute("src");
     els.texturePreviewCaption.textContent = "render a preview to inspect texture maps";
     return;
   }
+  const shouldCompositeClouds = key === "color" && cloudOverlayEnabled() && previewMaps.cloud_mask;
+  if (shouldCompositeClouds) {
+    els.texturePreviewCaption.textContent = "color texture map preview with cloud layer";
+    try {
+      const image = await cloudOverlayDataUrl(map.image, previewMaps.cloud_mask.image);
+      if (token !== texturePreviewToken) return;
+      els.colorPreview.src = image;
+      els.colorPreview.alt = "Color texture map preview with cloud layer";
+    } catch (_error) {
+      if (token !== texturePreviewToken) return;
+      els.colorPreview.src = map.image;
+      els.colorPreview.alt = `${map.label} texture map preview`;
+      els.texturePreviewCaption.textContent = "color texture map preview; cloud layer unavailable";
+    }
+    return;
+  }
   els.colorPreview.src = map.image;
   els.colorPreview.alt = `${map.label} texture map preview`;
-  els.texturePreviewCaption.textContent = `${map.label.toLowerCase()} texture map preview`;
+  els.texturePreviewCaption.textContent = key === "color" && previewMaps.cloud_mask
+    ? `${map.label.toLowerCase()} texture map preview; cloud layer off`
+    : `${map.label.toLowerCase()} texture map preview`;
 }
 
 function setPreviewMaps(maps) {
@@ -1930,7 +2024,7 @@ function drawGlobe() {
       let blue = (globe.textureData[ti + 2] * (1 - blend)) + atmosphere[2] * blend;
       if (els.globeViewMode.value === "cloud_mask") {
         red = green = blue = 28 + cloudValue * 227;
-      } else if (els.globeViewMode.value === "surface_clouds" && cloudValue > 0) {
+      } else if (els.globeViewMode.value === "surface_clouds" && cloudOverlayEnabled() && cloudValue > 0) {
         const cloudAlpha = Math.min(0.92, cloudValue);
         const cloudShade = 0.70 + Math.max(0, sx * light[0] + sy * light[1] + sz * light[2]) * 0.38;
         red = red * (1 - cloudAlpha) + 248 * cloudShade * cloudAlpha;
@@ -1960,6 +2054,8 @@ function bindGlobeControls() {
   syncGlobeSpeed();
   els.globePlayPause.addEventListener("click", () => setGlobePlaying(!globe.playing));
   els.globeViewMode.addEventListener("change", drawGlobe);
+  els.textureCloudLayerToggle.addEventListener("change", () => syncCloudLayerToggles(els.textureCloudLayerToggle.checked));
+  els.globeCloudLayerToggle.addEventListener("change", () => syncCloudLayerToggles(els.globeCloudLayerToggle.checked));
   els.globeSpeed.addEventListener("input", syncGlobeSpeed);
   els.globeCanvas.addEventListener("pointerdown", (event) => {
     setGlobePlaying(false);
