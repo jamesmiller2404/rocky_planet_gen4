@@ -89,8 +89,8 @@ For normal equirectangular output:
 | `land_mask.png` | White land, black ocean. |
 | `shoreline_mask.png` | Shoreline/beach influence mask. |
 | `ocean_depth.png` | Ocean depth mask. |
-| `cloud_mask.png` | Separate grayscale cloud opacity mask based on softened land-form-style weather math. |
-| `cloud_shadow.png` | Separate grayscale surface-darkening mask derived from the cloud layer for Blender cloud shadows. |
+| `cloud_mask.png` | Separate 16-bit grayscale cloud opacity mask based on softened land-form-style weather math. |
+| `cloud_shadow.png` | Separate 16-bit grayscale surface-darkening mask derived from the cloud layer for Blender cloud shadows. |
 | `city_lights.png` | Separate RGB emission texture for night-side artificial lights. |
 | `preview.png` | Rendered globe preview. |
 | `preview.html` | Interactive rotating globe preview using `color.png`. |
@@ -107,7 +107,7 @@ quad_sphere/pz
 quad_sphere/nz
 ```
 
-It also writes cubemap-cross atlases such as `quad_sphere/color_cubemap_cross.png`. Large stitched atlases are streamed from the saved face PNGs instead of assembled as one giant in-memory array. Color-only quad-sphere saves are tiled internally to reduce peak memory. Set `PLANET_QUAD_TILE_ROWS` to a smaller value such as `64` if the computer still runs out of memory. Set `PLANET_WRITE_STITCHED_CROSSES=0` before running the CLI or web UI only if you want to skip stitched atlas output.
+It also writes cubemap-cross atlases such as `quad_sphere/color_cubemap_cross.png`. Large stitched atlases are streamed from the saved face PNGs instead of assembled as one giant in-memory array. Cloud cubemap-cross atlases include copied edge bleed in otherwise empty cells so filtered sampling does not blend face borders into transparent black. Color-only quad-sphere saves are tiled internally to reduce peak memory. Set `PLANET_QUAD_TILE_ROWS` to a smaller value such as `64` if the computer still runs out of memory. Set `PLANET_WRITE_STITCHED_CROSSES=0` before running the CLI or web UI only if you want to skip stitched atlas output.
 
 ## Presets
 
@@ -192,7 +192,7 @@ These controls bake crater bowls, raised rims, and ejecta into `height.png`, `no
 
 ## Cloud Layer
 
-These controls write `cloud_mask.png` and `cloud_shadow.png`. They do not bake clouds into `color.png`, height, normal, roughness, land, shoreline, or ocean-depth maps.
+These controls write 16-bit grayscale `cloud_mask.png` and `cloud_shadow.png` to reduce banding in soft cloud gradients. They do not bake clouds into `color.png`, height, normal, roughness, land, shoreline, or ocean-depth maps.
 
 | Option | Earthlike Default | Description |
 | --- | ---: | --- |
@@ -207,11 +207,14 @@ These controls write `cloud_mask.png` and `cloud_shadow.png`. They do not bake c
 | `--cloud-shadow-softness` | `0.34` | Blur applied to the shadow map. Higher values make broader, softer cloud shadows. |
 | `--cloud-latitude-bias` | `0.18` | Shifts cloud preference by latitude. Negative values favor polar cloudiness; positive values favor tropical cloud belts. |
 | `--cloud-band-strength` | `0.24` | Adds subtle east-west atmospheric banding so clouds read as planet-scale weather instead of only random noise. |
+| `--cloud-latitude-warp` | `1.00` | Warps the cloud noise coordinates and latitude bands with seeded 3D noise. `0.0` keeps the weather field cleaner; higher values visibly bend and offset cloud systems. |
+| `--cloud-hemisphere-imbalance` | `1.00` | Adds north/south cloud imbalance before mask thresholding so clouds do not mirror across the equator. `0.0` disables the imbalance. |
 | `--cloud-wind-stretch` | `0.38` | Elongates cloud systems along prevailing flow. Higher values make formations more wind-sheared and less blob-like. |
 | `--cloud-breakup` | `0.34` | Cuts holes and ragged gaps into cloud fields. Higher values create more broken, cellular cover. |
 | `--storm-density` | `0.24` | Amount of embedded compact storm structure blended into the cloud field. |
 | `--spiral-storm-strength` | `0.18` | Strength of diffuse cyclonic curvature inside storm systems. Keep moderate for realistic, non-stamped storms. |
 | `--polar-cloud-strength` | `0.10` | Adds polar haze/cloud concentration independent of surface ice. |
+| `--polar-cloud-asymmetry` | `1.00` | Modulates polar cloud shape and texture with seeded warp and hemispheric offset. `0.0` keeps polar haze more even. |
 
 Blender usage:
 
@@ -421,11 +424,14 @@ Examples:
 | `cloud_shadow_softness` | `0.34` | `0.30` | `0.38` | `0.44` | `0.52` |
 | `cloud_latitude_bias` | `0.18` | `0.26` | `0.08` | `-0.10` | `-0.32` |
 | `cloud_band_strength` | `0.24` | `0.30` | `0.18` | `0.12` | `0.16` |
+| `cloud_latitude_warp` | `1.00` | `1.00` | `1.00` | `1.00` | `1.00` |
+| `cloud_hemisphere_imbalance` | `1.00` | `1.00` | `1.00` | `1.00` | `1.00` |
 | `cloud_wind_stretch` | `0.38` | `0.44` | `0.28` | `0.22` | `0.30` |
 | `cloud_breakup` | `0.34` | `0.28` | `0.42` | `0.58` | `0.20` |
 | `storm_density` | `0.24` | `0.34` | `0.16` | `0.08` | `0.18` |
 | `spiral_storm_strength` | `0.18` | `0.20` | `0.10` | `0.04` | `0.08` |
 | `polar_cloud_strength` | `0.10` | `0.06` | `0.08` | `0.02` | `0.62` |
+| `polar_cloud_asymmetry` | `1.00` | `1.00` | `1.00` | `1.00` | `1.00` |
 | `city_lights_strength` | `0.72` | `0.66` | `0.70` | `0.34` | `0.30` |
 | `city_density` | `0.46` | `0.42` | `0.40` | `0.18` | `0.16` |
 | `megacity_count` | `14` | `10` | `12` | `5` | `4` |

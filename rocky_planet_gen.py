@@ -142,11 +142,14 @@ PRESETS = {
         "cloud_shadow_softness": 0.34,
         "cloud_latitude_bias": 0.18,
         "cloud_band_strength": 0.24,
+        "cloud_latitude_warp": 1.00,
+        "cloud_hemisphere_imbalance": 1.00,
         "cloud_wind_stretch": 0.38,
         "cloud_breakup": 0.34,
         "storm_density": 0.24,
         "spiral_storm_strength": 0.18,
         "polar_cloud_strength": 0.10,
+        "polar_cloud_asymmetry": 1.00,
         "city_lights_strength": 0.72,
         "city_density": 0.46,
         "megacity_count": 14,
@@ -245,11 +248,14 @@ PRESETS = {
         "cloud_shadow_softness": 0.30,
         "cloud_latitude_bias": 0.26,
         "cloud_band_strength": 0.30,
+        "cloud_latitude_warp": 1.00,
+        "cloud_hemisphere_imbalance": 1.00,
         "cloud_wind_stretch": 0.44,
         "cloud_breakup": 0.28,
         "storm_density": 0.34,
         "spiral_storm_strength": 0.20,
         "polar_cloud_strength": 0.06,
+        "polar_cloud_asymmetry": 1.00,
         "city_lights_strength": 0.66,
         "city_density": 0.42,
         "megacity_count": 10,
@@ -348,11 +354,14 @@ PRESETS = {
         "cloud_shadow_softness": 0.38,
         "cloud_latitude_bias": 0.08,
         "cloud_band_strength": 0.18,
+        "cloud_latitude_warp": 1.00,
+        "cloud_hemisphere_imbalance": 1.00,
         "cloud_wind_stretch": 0.28,
         "cloud_breakup": 0.42,
         "storm_density": 0.16,
         "spiral_storm_strength": 0.10,
         "polar_cloud_strength": 0.08,
+        "polar_cloud_asymmetry": 1.00,
         "city_lights_strength": 0.70,
         "city_density": 0.40,
         "megacity_count": 12,
@@ -451,11 +460,14 @@ PRESETS = {
         "cloud_shadow_softness": 0.44,
         "cloud_latitude_bias": -0.10,
         "cloud_band_strength": 0.12,
+        "cloud_latitude_warp": 1.00,
+        "cloud_hemisphere_imbalance": 1.00,
         "cloud_wind_stretch": 0.22,
         "cloud_breakup": 0.58,
         "storm_density": 0.08,
         "spiral_storm_strength": 0.04,
         "polar_cloud_strength": 0.02,
+        "polar_cloud_asymmetry": 1.00,
         "city_lights_strength": 0.34,
         "city_density": 0.18,
         "megacity_count": 5,
@@ -554,11 +566,14 @@ PRESETS = {
         "cloud_shadow_softness": 0.52,
         "cloud_latitude_bias": -0.32,
         "cloud_band_strength": 0.16,
+        "cloud_latitude_warp": 1.00,
+        "cloud_hemisphere_imbalance": 1.00,
         "cloud_wind_stretch": 0.30,
         "cloud_breakup": 0.20,
         "storm_density": 0.18,
         "spiral_storm_strength": 0.08,
         "polar_cloud_strength": 0.62,
+        "polar_cloud_asymmetry": 1.00,
         "city_lights_strength": 0.30,
         "city_density": 0.16,
         "megacity_count": 4,
@@ -1232,11 +1247,14 @@ class PlanetConfig:
     cloud_shadow_softness: float
     cloud_latitude_bias: float
     cloud_band_strength: float
+    cloud_latitude_warp: float
+    cloud_hemisphere_imbalance: float
     cloud_wind_stretch: float
     cloud_breakup: float
     storm_density: float
     spiral_storm_strength: float
     polar_cloud_strength: float
+    polar_cloud_asymmetry: float
     city_lights_strength: float
     city_density: float
     megacity_count: int
@@ -1318,15 +1336,52 @@ def build_cloud_field(cfg, x, y, z, lat, land_field, land_threshold):
     roughness = float(np.clip(cfg.cloud_roughness, 0.10, 0.95))
     latitude_bias = float(np.clip(cfg.cloud_latitude_bias, -1.0, 1.0))
     band_strength = float(np.clip(cfg.cloud_band_strength, 0.0, 1.0))
+    latitude_warp_strength = float(np.clip(cfg.cloud_latitude_warp, 0.0, 2.0))
+    hemisphere_imbalance = float(np.clip(cfg.cloud_hemisphere_imbalance, 0.0, 2.0))
     wind_stretch = float(np.clip(cfg.cloud_wind_stretch, 0.0, 1.0))
     breakup_strength = float(np.clip(cfg.cloud_breakup, 0.0, 1.0))
     storm_density = float(np.clip(cfg.storm_density, 0.0, 1.0))
     spiral_strength = float(np.clip(cfg.spiral_storm_strength, 0.0, 1.0))
     polar_strength = float(np.clip(cfg.polar_cloud_strength, 0.0, 1.0))
+    polar_asymmetry = float(np.clip(cfg.polar_cloud_asymmetry, 0.0, 2.0))
 
-    broad = fbm_3d(x, y, z, scale, detail, roughness, cfg.seed + 9011)
-    weather = fbm_3d(x, y, z, scale * 3.4 + 1.0, max(2, min(6, detail + 1)), 0.56, cfg.seed + 9029)
-    wisps = fbm_3d(x, y, z, scale * 8.5 + 3.0, 3, 0.58, cfg.seed + 9043)
+    sin_lat = np.sin(lat)
+    abs_sin_lat = np.abs(sin_lat)
+    latitude_warp = fbm_3d(
+        x * 0.83 + 0.37,
+        y * 1.18 - 0.24,
+        z * 0.91 + 0.43,
+        scale * 1.65 + 0.75,
+        3,
+        0.54,
+        cfg.seed + 9087,
+    )
+    longitude_warp = fbm_3d(
+        x * 1.27 - 0.31,
+        y * 0.76 + 0.48,
+        z * 1.11 - 0.22,
+        scale * 2.45 + 1.35,
+        3,
+        0.56,
+        cfg.seed + 9097,
+    )
+    vertical_warp = fbm_3d(
+        x * 0.94 + 0.18,
+        y * 1.34 + 0.29,
+        z * 1.21 - 0.41,
+        scale * 3.05 + 1.85,
+        3,
+        0.52,
+        cfg.seed + 9103,
+    )
+    coordinate_warp = latitude_warp_strength * (0.22 + band_strength * 0.18 + wind_stretch * 0.10)
+    cloud_x = x + (latitude_warp - 0.5) * coordinate_warp
+    cloud_y = y + (vertical_warp - 0.5) * coordinate_warp * 0.82 + sin_lat * hemisphere_imbalance * 0.045
+    cloud_z = z + (longitude_warp - 0.5) * coordinate_warp
+
+    broad = fbm_3d(cloud_x, cloud_y, cloud_z, scale, detail, roughness, cfg.seed + 9011)
+    weather = fbm_3d(cloud_x, cloud_y, cloud_z, scale * 3.4 + 1.0, max(2, min(6, detail + 1)), 0.56, cfg.seed + 9029)
+    wisps = fbm_3d(cloud_x, cloud_y, cloud_z, scale * 8.5 + 3.0, 3, 0.58, cfg.seed + 9043)
     lon = np.arctan2(x, z)
     wind_x = x * (1.0 + wind_stretch * 3.8)
     wind_z = z * (1.0 - wind_stretch * 0.46)
@@ -1342,17 +1397,26 @@ def build_cloud_field(cfg, x, y, z, lat, land_field, land_threshold):
 
     land_width = max(float(cfg.continent_contrast) * 3.5, 0.12)
     soft_land_form = smoothstep(land_threshold - land_width, land_threshold + land_width, land_field)
-    sin_lat = np.sin(lat)
-    abs_sin_lat = np.abs(sin_lat)
-    tropical_band = 1.0 - smoothstep(0.18, 0.86, abs_sin_lat)
-    midlatitude_band = smoothstep(0.18, 0.48, abs_sin_lat) * (1.0 - smoothstep(0.62, 0.92, abs_sin_lat))
-    polar_band = smoothstep(0.68, 0.98, abs_sin_lat)
+    warped_abs_sin_lat = np.clip(
+        abs_sin_lat
+        + (latitude_warp - 0.5) * (0.24 + band_strength * 0.20) * latitude_warp_strength
+        + sin_lat * (0.080 + band_strength * 0.070) * hemisphere_imbalance,
+        0.0,
+        1.0,
+    )
+    tropical_band = 1.0 - smoothstep(0.18, 0.86, warped_abs_sin_lat)
+    midlatitude_band = smoothstep(0.18, 0.48, warped_abs_sin_lat) * (1.0 - smoothstep(0.62, 0.92, warped_abs_sin_lat))
+    polar_band = smoothstep(0.68, 0.98, warped_abs_sin_lat)
     if latitude_bias >= 0.0:
         lat_band = lerp(midlatitude_band, tropical_band, latitude_bias)
     else:
         lat_band = lerp(midlatitude_band, polar_band, -latitude_bias)
     lat_band = normalize01(lat_band)
-    wave_phase = lon * (3.0 + scale * 0.65) + np.sin(lat * 4.0 + cfg.seed * 0.013) * (1.2 + wind_stretch * 1.8)
+    wave_phase = (
+        lon * (3.0 + scale * 0.65)
+        + np.sin(lat * 4.0 + cfg.seed * 0.013) * (1.2 + wind_stretch * 1.8)
+        + (longitude_warp - 0.5) * (2.4 + wind_stretch * 2.8) * latitude_warp_strength
+    )
     band_wave = np.sin(wave_phase) * 0.5 + 0.5
     banding = lerp(1.0, 0.72 + 0.56 * (lat_band * 0.66 + band_wave * 0.34), band_strength)
     breakup = smoothstep(
@@ -1366,9 +1430,26 @@ def build_cloud_field(cfg, x, y, z, lat, land_field, land_threshold):
     field = field * banding
     field = field * lerp(1.0, 0.58 + breakup * 0.58, breakup_strength)
     field = field + lat_band * (0.08 + band_strength * 0.10)
+    field = field * (
+        1.0
+        + ((latitude_warp - 0.5) * 0.46 - 0.06) * latitude_warp_strength
+        + sin_lat * (0.070 + band_strength * 0.080) * hemisphere_imbalance
+    )
+    field = field + sin_lat * (0.060 + band_strength * 0.085) * hemisphere_imbalance
     if polar_strength > 0.0:
-        polar_texture = 0.64 + 0.36 * fbm_3d(x, y, z, scale * 5.0 + 2.0, 3, 0.52, cfg.seed + 9109)
-        field = field + polar_band * polar_texture * polar_strength * 0.36
+        polar_texture = 0.64 + 0.36 * fbm_3d(cloud_x, cloud_y, cloud_z, scale * 5.0 + 2.0, 3, 0.52, cfg.seed + 9109)
+        polar_texture *= (
+            1.0
+            + (latitude_warp - 0.5) * 0.70 * polar_asymmetry
+            + sin_lat * 0.26 * polar_asymmetry
+        )
+        polar_shape = np.clip(
+            polar_band
+            * (1.0 + (vertical_warp - 0.5) * 0.65 * polar_asymmetry + sin_lat * 0.18 * polar_asymmetry),
+            0.0,
+            1.0,
+        )
+        field = field + polar_shape * polar_texture * polar_strength * (0.36 + 0.10 * polar_asymmetry)
     if storm_density > 0.0 or spiral_strength > 0.0:
         rng = np.random.default_rng(int(cfg.seed) + 9127)
         storm_count = int(round(2 + storm_density * 18 + spiral_strength * 8))
@@ -2151,6 +2232,11 @@ def save_gray(path, arr):
     Image.fromarray(arr, "L").save(path)
 
 
+def save_gray16(path, arr):
+    arr = np.clip(arr * 65535.0, 0, 65535).astype(np.uint16)
+    Image.fromarray(arr).save(path)
+
+
 def save_rgba(path, arr):
     arr = np.clip(arr, 0, 255).astype(np.uint8)
     Image.fromarray(arr, "RGBA").save(path)
@@ -2159,6 +2245,18 @@ def save_rgba(path, arr):
 def save_luminance_alpha(path, arr):
     arr = np.clip(arr * 255.0, 0, 255).astype(np.uint8)
     Image.fromarray(arr, "LA").save(path)
+
+
+def save_luminance_alpha16(path, arr):
+    arr = np.clip(arr * 65535.0, 0, 65535).astype(np.uint16)
+    write_streamed_png(
+        path,
+        arr.shape[1],
+        arr.shape[0],
+        4,
+        (row.astype(">u2", copy=False).tobytes() for row in arr),
+        bit_depth=16,
+    )
 
 
 def write_png_chunk(handle, chunk_type, data):
@@ -2170,12 +2268,12 @@ def write_png_chunk(handle, chunk_type, data):
     handle.write(struct.pack(">I", checksum))
 
 
-def write_streamed_png(path, width, height, color_type, row_iter):
+def write_streamed_png(path, width, height, color_type, row_iter, bit_depth=8):
     compressor = zlib.compressobj(level=6)
     pending = bytearray()
     with Path(path).open("wb") as handle:
         handle.write(b"\x89PNG\r\n\x1a\n")
-        ihdr = struct.pack(">IIBBBBB", int(width), int(height), 8, int(color_type), 0, 0, 0)
+        ihdr = struct.pack(">IIBBBBB", int(width), int(height), int(bit_depth), int(color_type), 0, 0, 0)
         write_png_chunk(handle, b"IHDR", ihdr)
         for row in row_iter:
             pending.extend(compressor.compress(b"\x00" + row))
@@ -2932,7 +3030,7 @@ def build_quad_sphere_maps(cfg, face_size, map_names=None, quad_workers=1):
         quad_workers=quad_workers,
     )
 
-    return build_quad_sphere_face_pass(
+    faces = build_quad_sphere_face_pass(
         cfg,
         face_size,
         selected_maps,
@@ -2942,6 +3040,7 @@ def build_quad_sphere_maps(cfg, face_size, map_names=None, quad_workers=1):
         moisture_range=moisture_range,
         height_range=height_range,
     )
+    return reconcile_quad_sphere_scalar_seams(faces, selected_maps)
 
 
 TEXTURE_MAP_NAMES = (
@@ -2958,6 +3057,8 @@ TEXTURE_MAP_NAMES = (
 )
 
 QUAD_SPHERE_MAP_NAMES = TEXTURE_MAP_NAMES
+
+CLOUD_16BIT_MAPS = {"cloud_mask", "cloud_shadow"}
 
 
 def selected_texture_maps(map_names=None):
@@ -2998,9 +3099,9 @@ def save_map_set(out_dir, maps, map_names=None):
     if "ocean_depth" in selected:
         save_gray(out_dir / "ocean_depth.png", maps["ocean_depth"])
     if "cloud_mask" in selected:
-        save_gray(out_dir / "cloud_mask.png", maps["cloud_mask"])
+        save_gray16(out_dir / "cloud_mask.png", maps["cloud_mask"])
     if "cloud_shadow" in selected:
-        save_gray(out_dir / "cloud_shadow.png", maps["cloud_shadow"])
+        save_gray16(out_dir / "cloud_shadow.png", maps["cloud_shadow"])
     if "city_lights" in selected:
         save_rgb(out_dir / "city_lights.png", maps["city_lights"])
 
@@ -3013,6 +3114,116 @@ CUBEMAP_CROSS_LAYOUT = {
     "nz": (3, 1),
     "ny": (1, 2),
 }
+
+QUAD_SPHERE_EDGE_PAIRS = (
+    (("py", "top"), ("nz", "top"), True),
+    (("py", "bottom"), ("pz", "top"), False),
+    (("py", "left"), ("nx", "top"), False),
+    (("py", "right"), ("px", "top"), True),
+    (("nx", "bottom"), ("ny", "left"), True),
+    (("nx", "left"), ("nz", "right"), False),
+    (("nx", "right"), ("pz", "left"), False),
+    (("pz", "bottom"), ("ny", "top"), False),
+    (("pz", "right"), ("px", "left"), False),
+    (("px", "bottom"), ("ny", "right"), False),
+    (("px", "right"), ("nz", "left"), False),
+    (("nz", "bottom"), ("ny", "bottom"), True),
+)
+
+QUAD_SPHERE_SCALAR_SEAM_MAPS = {"cloud_mask", "cloud_shadow"}
+CUBEMAP_CROSS_BLEED_PIXELS = 8
+
+
+def quad_sphere_edge_view(arr, edge, offset=0):
+    if edge == "top":
+        return arr[offset, :]
+    if edge == "bottom":
+        return arr[-1 - offset, :]
+    if edge == "left":
+        return arr[:, offset]
+    if edge == "right":
+        return arr[:, -1 - offset]
+    raise ValueError(f"Unknown quad-sphere edge: {edge}")
+
+
+def set_quad_sphere_edge(arr, edge, values, offset=0):
+    if edge == "top":
+        arr[offset, :] = values
+    elif edge == "bottom":
+        arr[-1 - offset, :] = values
+    elif edge == "left":
+        arr[:, offset] = values
+    elif edge == "right":
+        arr[:, -1 - offset] = values
+    else:
+        raise ValueError(f"Unknown quad-sphere edge: {edge}")
+
+
+def reconcile_quad_sphere_scalar_seams_from_files(out_dir, map_names, seam_width=2):
+    selected = set(selected_texture_maps(map_names)) & QUAD_SPHERE_SCALAR_SEAM_MAPS
+    if not selected:
+        return
+
+    for map_name in selected:
+        bit_depth = 16 if map_name in CLOUD_16BIT_MAPS else 8
+        face_arrays = {}
+        for face in QUAD_SPHERE_FACES:
+            path = out_dir / face / f"{map_name}.png"
+            if not path.exists():
+                face_arrays = {}
+                break
+            with Image.open(path) as image:
+                if bit_depth == 16:
+                    face_arrays[face] = np.asarray(image, dtype=np.float32).copy()
+                else:
+                    face_arrays[face] = np.asarray(image.convert("L"), dtype=np.float32).copy()
+        if not face_arrays:
+            continue
+
+        max_width = max(1, min(int(seam_width), min(arr.shape[0] for arr in face_arrays.values()) // 2))
+        for offset in range(max_width):
+            blend = 1.0 if offset == 0 else 0.42 / float(offset + 1)
+            for (face_a, edge_a), (face_b, edge_b), reverse_b in QUAD_SPHERE_EDGE_PAIRS:
+                edge_values_a = quad_sphere_edge_view(face_arrays[face_a], edge_a, offset).copy()
+                edge_values_b = quad_sphere_edge_view(face_arrays[face_b], edge_b, offset).copy()
+                matched_b = edge_values_b[::-1] if reverse_b else edge_values_b
+                averaged = (edge_values_a + matched_b) * 0.5
+                new_a = edge_values_a * (1.0 - blend) + averaged * blend
+                new_b = edge_values_b * (1.0 - blend) + (averaged[::-1] if reverse_b else averaged) * blend
+                set_quad_sphere_edge(face_arrays[face_a], edge_a, new_a, offset)
+                set_quad_sphere_edge(face_arrays[face_b], edge_b, new_b, offset)
+
+        for face, arr in face_arrays.items():
+            if bit_depth == 16:
+                Image.fromarray(np.clip(arr, 0, 65535).astype(np.uint16)).save(out_dir / face / f"{map_name}.png")
+            else:
+                Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8), "L").save(out_dir / face / f"{map_name}.png")
+
+
+def reconcile_quad_sphere_scalar_seams(faces, map_names, seam_width=2):
+    selected = set(selected_texture_maps(map_names)) & QUAD_SPHERE_SCALAR_SEAM_MAPS
+    if not selected:
+        return faces
+
+    for map_name in selected:
+        if any(map_name not in faces.get(face, {}) for face in QUAD_SPHERE_FACES):
+            continue
+        max_width = max(
+            1,
+            min(int(seam_width), min(faces[face][map_name].shape[0] for face in QUAD_SPHERE_FACES) // 2),
+        )
+        for offset in range(max_width):
+            blend = 1.0 if offset == 0 else 0.42 / float(offset + 1)
+            for (face_a, edge_a), (face_b, edge_b), reverse_b in QUAD_SPHERE_EDGE_PAIRS:
+                edge_values_a = quad_sphere_edge_view(faces[face_a][map_name], edge_a, offset).copy()
+                edge_values_b = quad_sphere_edge_view(faces[face_b][map_name], edge_b, offset).copy()
+                matched_b = edge_values_b[::-1] if reverse_b else edge_values_b
+                averaged = (edge_values_a + matched_b) * 0.5
+                new_a = edge_values_a * (1.0 - blend) + averaged * blend
+                new_b = edge_values_b * (1.0 - blend) + (averaged[::-1] if reverse_b else averaged) * blend
+                set_quad_sphere_edge(faces[face_a][map_name], edge_a, new_a, offset)
+                set_quad_sphere_edge(faces[face_b][map_name], edge_b, new_b, offset)
+    return faces
 
 
 def build_cubemap_cross(faces, map_name, face_size):
@@ -3033,7 +3244,55 @@ def build_cubemap_cross(faces, map_name, face_size):
         else:
             cross[y0 : y0 + face_size, x0 : x0 + face_size, 0] = faces[face][map_name]
             cross[y0 : y0 + face_size, x0 : x0 + face_size, 1] = 1.0
+    if map_name in CLOUD_16BIT_MAPS:
+        bleed_cubemap_cross_empty_cells(cross, face_size)
     return np.rot90(cross, k=3)
+
+
+def bleed_cubemap_cross_empty_cells(cross, face_size, bleed_pixels=CUBEMAP_CROSS_BLEED_PIXELS):
+    face_size = int(face_size)
+    bleed_pixels = max(0, min(int(bleed_pixels), face_size // 2))
+    if bleed_pixels <= 0:
+        return cross
+
+    cell_to_face = {cell: face for face, cell in CUBEMAP_CROSS_LAYOUT.items()}
+    for col in range(4):
+        for row in range(3):
+            if (col, row) in cell_to_face:
+                continue
+            y0 = row * face_size
+            x0 = col * face_size
+            cell = cross[y0 : y0 + face_size, x0 : x0 + face_size, :]
+
+            left_face = cell_to_face.get((col - 1, row))
+            if left_face is not None:
+                lx0 = (col - 1) * face_size
+                ly0 = row * face_size
+                source = cross[ly0 : ly0 + face_size, lx0 + face_size - bleed_pixels : lx0 + face_size, :][:, ::-1, :]
+                cell[:, :bleed_pixels, :] = source
+
+            right_face = cell_to_face.get((col + 1, row))
+            if right_face is not None:
+                rx0 = (col + 1) * face_size
+                ry0 = row * face_size
+                source = cross[ry0 : ry0 + face_size, rx0 : rx0 + bleed_pixels, :][:, ::-1, :]
+                cell[:, face_size - bleed_pixels : face_size, :] = source
+
+            top_face = cell_to_face.get((col, row - 1))
+            if top_face is not None:
+                tx0 = col * face_size
+                ty0 = (row - 1) * face_size
+                source = cross[ty0 + face_size - bleed_pixels : ty0 + face_size, tx0 : tx0 + face_size, :][::-1, :, :]
+                cell[:bleed_pixels, :, :] = source
+
+            bottom_face = cell_to_face.get((col, row + 1))
+            if bottom_face is not None:
+                bx0 = col * face_size
+                by0 = (row + 1) * face_size
+                source = cross[by0 : by0 + bleed_pixels, bx0 : bx0 + face_size, :][::-1, :, :]
+                cell[face_size - bleed_pixels : face_size, :, :] = source
+
+    return cross
 
 
 def save_quad_sphere_cubemap_crosses(out_dir, faces, face_size, map_names=None):
@@ -3042,6 +3301,8 @@ def save_quad_sphere_cubemap_crosses(out_dir, faces, face_size, map_names=None):
         path = out_dir / f"{map_name}_cubemap_cross.png"
         if cross.shape[2] == 4:
             save_rgba(path, cross)
+        elif map_name in CLOUD_16BIT_MAPS:
+            save_luminance_alpha16(path, cross)
         else:
             save_luminance_alpha(path, cross)
 
@@ -3050,17 +3311,22 @@ def save_quad_sphere_cubemap_crosses_from_files(out_dir, face_size, map_names=No
     for map_name in selected_texture_maps(map_names):
         face_path = out_dir / "px" / f"{map_name}.png"
         with Image.open(face_path) as sample_image:
-            is_scalar = sample_image.mode == "L"
-        save_quad_sphere_cubemap_cross_streamed(out_dir, map_name, face_size, is_scalar)
+            is_scalar = sample_image.mode in {"L", "I", "I;16", "I;16B", "I;16L"}
+            bit_depth = 16 if map_name in CLOUD_16BIT_MAPS else 8
+        save_quad_sphere_cubemap_cross_streamed(out_dir, map_name, face_size, is_scalar, bit_depth=bit_depth)
 
 
-def save_quad_sphere_cubemap_cross_streamed(out_dir, map_name, face_size, is_scalar):
+def save_quad_sphere_cubemap_cross_streamed(out_dir, map_name, face_size, is_scalar, bit_depth=8):
     face_size = int(face_size)
     cell_to_face = {cell: face for face, cell in CUBEMAP_CROSS_LAYOUT.items()}
     channels = 2 if is_scalar else 4
     color_type = 4 if is_scalar else 6
+    bleed_pixels = min(CUBEMAP_CROSS_BLEED_PIXELS, max(0, face_size // 2)) if map_name in CLOUD_16BIT_MAPS else 0
     if is_scalar:
-        empty = np.zeros((face_size, channels), dtype=np.uint8)
+        dtype = np.uint16 if bit_depth == 16 else np.uint8
+        alpha_value = 65535 if bit_depth == 16 else 255
+        empty = np.zeros((face_size, channels), dtype=dtype)
+        empty[:, 1] = 0
     elif map_name == "normal":
         empty = np.zeros((face_size, channels), dtype=np.uint8)
         empty[:, 0] = 128
@@ -3069,20 +3335,69 @@ def save_quad_sphere_cubemap_cross_streamed(out_dir, map_name, face_size, is_sca
     else:
         empty = np.zeros((face_size, channels), dtype=np.uint8)
 
+    def load_face_array(face):
+        path = out_dir / face / f"{map_name}.png"
+        with Image.open(path) as image:
+            if is_scalar:
+                if bit_depth == 16:
+                    lum = np.asarray(image, dtype=np.uint16)
+                else:
+                    lum = np.asarray(image.convert("L"), dtype=np.uint8)
+                alpha = np.full(lum.shape, alpha_value, dtype=lum.dtype)
+                return np.stack((lum, alpha), axis=-1)
+            return np.asarray(image.convert("RGBA"), dtype=np.uint8)
+
+    def load_bleed_edges():
+        if bleed_pixels <= 0:
+            return {}
+        edges = {}
+        for face in QUAD_SPHERE_FACES:
+            arr = load_face_array(face)
+            edges[face] = {
+                "left_columns": arr[::-1, :bleed_pixels, :],
+                "right_columns": arr[::-1, face_size - bleed_pixels : face_size, :],
+                "top_rows": arr[:bleed_pixels, :, :],
+                "bottom_rows": arr[face_size - bleed_pixels : face_size, :, :],
+            }
+        return edges
+
+    bleed_edges = load_bleed_edges()
+
+    def empty_cell_column(layout_col, layout_row, local_col):
+        if bleed_pixels <= 0:
+            return empty
+        cell = np.array(empty, copy=True)
+
+        left_face = cell_to_face.get((layout_col - 1, layout_row))
+        if left_face is not None and local_col < bleed_pixels:
+            source_col = bleed_edges[left_face]["right_columns"][:, bleed_pixels - 1 - local_col, :]
+            cell[:, :] = source_col
+
+        right_face = cell_to_face.get((layout_col + 1, layout_row))
+        if right_face is not None and local_col >= face_size - bleed_pixels:
+            offset = local_col - (face_size - bleed_pixels)
+            source_col = bleed_edges[right_face]["left_columns"][:, bleed_pixels - 1 - offset, :]
+            cell[:, :] = source_col
+
+        top_face = cell_to_face.get((layout_col, layout_row - 1))
+        if top_face is not None:
+            for offset in range(bleed_pixels):
+                cell[face_size - 1 - offset, :] = bleed_edges[top_face]["bottom_rows"][bleed_pixels - 1 - offset, local_col, :]
+
+        bottom_face = cell_to_face.get((layout_col, layout_row + 1))
+        if bottom_face is not None:
+            for offset in range(bleed_pixels):
+                cell[offset, :] = bleed_edges[bottom_face]["top_rows"][offset, local_col, :]
+
+        return cell
+
     def load_column_faces(layout_col):
         arrays = {}
         for layout_row in range(3):
             face = cell_to_face.get((layout_col, layout_row))
             if face is None:
                 continue
-            path = out_dir / face / f"{map_name}.png"
-            with Image.open(path) as image:
-                if is_scalar:
-                    lum = np.asarray(image.convert("L"), dtype=np.uint8)
-                    alpha = np.full(lum.shape, 255, dtype=np.uint8)
-                    arrays[face] = np.stack((lum, alpha), axis=-1)
-                else:
-                    arrays[face] = np.asarray(image.convert("RGBA"), dtype=np.uint8)
+            arrays[face] = load_face_array(face)
         return arrays
 
     def rows():
@@ -3093,10 +3408,13 @@ def save_quad_sphere_cubemap_cross_streamed(out_dir, map_name, face_size, is_sca
                 for layout_row in (2, 1, 0):
                     face = cell_to_face.get((layout_col, layout_row))
                     if face is None:
-                        chunks.append(empty)
+                        chunks.append(empty_cell_column(layout_col, layout_row, local_col))
                     else:
                         chunks.append(arrays[face][::-1, local_col, :])
-                yield np.concatenate(chunks, axis=0).tobytes()
+                row = np.concatenate(chunks, axis=0)
+                if bit_depth == 16:
+                    row = row.astype(">u2", copy=False)
+                yield row.tobytes()
             del arrays
 
     write_streamed_png(
@@ -3105,6 +3423,7 @@ def save_quad_sphere_cubemap_cross_streamed(out_dir, map_name, face_size, is_sca
         face_size * 4,
         color_type,
         rows(),
+        bit_depth=bit_depth,
     )
 
 
@@ -3259,6 +3578,7 @@ def save_quad_sphere_maps_low_memory(out_dir, cfg, face_size, map_names=None, qu
             face_dir.mkdir(parents=True, exist_ok=True)
             save_map_set(face_dir, maps, group)
             del maps
+    reconcile_quad_sphere_scalar_seams_from_files(out_dir, selected_maps)
     if write_cubemap_crosses is None:
         write_cubemap_crosses = should_write_quad_sphere_crosses(face_size)
     if write_cubemap_crosses:
@@ -3294,7 +3614,9 @@ def write_quad_sphere_manifest(out_dir, face_size, map_names=None, write_cubemap
             if write_cubemap_crosses
             else "Skipped because PLANET_WRITE_STITCHED_CROSSES is disabled.",
             "empty_cells": {
-                "all_maps": "transparent alpha 0",
+                "default": "transparent alpha 0",
+                "cloud_mask": f"{CUBEMAP_CROSS_BLEED_PIXELS}px copied edge bleed around face borders; remaining empty-cell interior stays alpha 0",
+                "cloud_shadow": f"{CUBEMAP_CROSS_BLEED_PIXELS}px copied edge bleed around face borders; remaining empty-cell interior stays alpha 0",
             },
         },
         "face_vectors": {
