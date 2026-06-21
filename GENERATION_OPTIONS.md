@@ -29,7 +29,7 @@ Example:
 | `--quad-sphere` | off | Writes six cube/quad-sphere face folders instead of only equirectangular maps. |
 | `--face-size` | `min(width, height)` | Quad-sphere face size in pixels. Minimum `32` when `--quad-sphere` is used. |
 | `--quad-workers` | `PLANET_QUAD_WORKERS` or `1` | Worker processes for quad-sphere face generation. Use `1` for serial generation; use up to `6` to process faces in parallel. |
-| `--texture-maps` | all maps | One or more texture maps to save: `color`, `height`, `normal`, `roughness`, `land_mask`, `shoreline_mask`, `ocean_depth`, `cloud_mask`, `city_lights`. |
+| `--texture-maps` | all maps | One or more texture maps to save: `color`, `height`, `normal`, `roughness`, `land_mask`, `shoreline_mask`, `ocean_depth`, `cloud_mask`, `cloud_shadow`, `city_lights`. |
 | `--profile` | off | Prints `cProfile` timing for generation, saving, preview, and metadata writes. |
 | `--profile-limit` | `40` | Number of timing rows to print when `--profile` is enabled. |
 | `--profile-out` | unset | Optional raw `.prof` output path for external profile viewers. |
@@ -43,10 +43,10 @@ Save only the color map:
 Save a specific Blender-oriented set:
 
 ```powershell
-.\.venv\Scripts\python.exe rocky_planet_gen.py --preset earthlike --seed 42 --width 2048 --height 1024 --out output/blender_maps --texture-maps color height normal roughness
+.\.venv\Scripts\python.exe rocky_planet_gen.py --preset earthlike --seed 42 --width 2048 --height 1024 --out output/blender_maps --texture-maps color height normal roughness cloud_mask cloud_shadow
 ```
 
-The selected texture maps also reduce avoidable computation where possible. For example, omitting `city_lights`, `cloud_mask`, `normal`, or `roughness` skips those final build steps instead of only skipping the saved PNG files.
+The selected texture maps also reduce avoidable computation where possible. For example, omitting `city_lights`, `cloud_mask`, `cloud_shadow`, `normal`, or `roughness` skips those final build steps instead of only skipping the saved PNG files.
 
 Parallel quad-sphere generation:
 
@@ -90,6 +90,7 @@ For normal equirectangular output:
 | `shoreline_mask.png` | Shoreline/beach influence mask. |
 | `ocean_depth.png` | Ocean depth mask. |
 | `cloud_mask.png` | Separate grayscale cloud opacity mask based on softened land-form-style weather math. |
+| `cloud_shadow.png` | Separate grayscale surface-darkening mask derived from the cloud layer for Blender cloud shadows. |
 | `city_lights.png` | Separate RGB emission texture for night-side artificial lights. |
 | `preview.png` | Rendered globe preview. |
 | `preview.html` | Interactive rotating globe preview using `color.png`. |
@@ -191,7 +192,7 @@ These controls bake crater bowls, raised rims, and ejecta into `height.png`, `no
 
 ## Cloud Layer
 
-These controls write `cloud_mask.png` only. They do not bake clouds into `color.png`, height, normal, roughness, land, shoreline, or ocean-depth maps.
+These controls write `cloud_mask.png` and `cloud_shadow.png`. They do not bake clouds into `color.png`, height, normal, roughness, land, shoreline, or ocean-depth maps.
 
 | Option | Earthlike Default | Description |
 | --- | ---: | --- |
@@ -202,6 +203,8 @@ These controls write `cloud_mask.png` only. They do not bake clouds into `color.
 | `--cloud-softness` | `0.22` | Width of the soft threshold around cloud edges. Higher values make broader, hazier transitions. |
 | `--cloud-land-correlation` | `0.55` | How strongly clouds echo the softened continent/land-form field. `0.0` is independent weather noise; `1.0` follows broad land forms more closely. |
 | `--cloud-opacity` | `0.78` | Maximum grayscale opacity written into `cloud_mask.png`. |
+| `--cloud-shadow-strength` | `0.36` | Maximum grayscale darkening influence written into `cloud_shadow.png`. Use `0.0` to disable the fake shadow map. |
+| `--cloud-shadow-softness` | `0.34` | Blur applied to the shadow map. Higher values make broader, softer cloud shadows. |
 | `--cloud-latitude-bias` | `0.18` | Shifts cloud preference by latitude. Negative values favor polar cloudiness; positive values favor tropical cloud belts. |
 | `--cloud-band-strength` | `0.24` | Adds subtle east-west atmospheric banding so clouds read as planet-scale weather instead of only random noise. |
 | `--cloud-wind-stretch` | `0.38` | Elongates cloud systems along prevailing flow. Higher values make formations more wind-sheared and less blob-like. |
@@ -209,6 +212,22 @@ These controls write `cloud_mask.png` only. They do not bake clouds into `color.
 | `--storm-density` | `0.24` | Amount of embedded compact storm structure blended into the cloud field. |
 | `--spiral-storm-strength` | `0.18` | Strength of diffuse cyclonic curvature inside storm systems. Keep moderate for realistic, non-stamped storms. |
 | `--polar-cloud-strength` | `0.10` | Adds polar haze/cloud concentration independent of surface ice. |
+
+Blender usage:
+
+1. Put `cloud_mask.png` on a slightly larger cloud sphere above the planet surface.
+2. Load `cloud_mask.png` as `Non-Color` data and use it as the alpha/opacity factor for a white or slightly warm cloud material.
+3. Load `cloud_shadow.png` as `Non-Color` data in the planet surface material, not the cloud material.
+4. Use `cloud_shadow.png` as the factor for a Mix Color or Multiply step that blends `color.png` toward a darker version of itself before the Principled BSDF Base Color.
+5. If the transparent cloud sphere does not cast useful shadows in Blender, keep its shadow casting disabled and use `cloud_shadow.png` for consistent surface darkening.
+
+Practical shadow node intent:
+
+```text
+color.png -> Mix/Multiply with darker color.png
+cloud_shadow.png -> ColorRamp/Map Range -> Mix Factor
+mixed result -> Principled BSDF Base Color
+```
 
 ## City Lights
 
@@ -398,6 +417,8 @@ Examples:
 | `cloud_softness` | `0.22` | `0.24` | `0.20` | `0.16` | `0.28` |
 | `cloud_land_correlation` | `0.55` | `0.48` | `0.66` | `0.42` | `0.60` |
 | `cloud_opacity` | `0.78` | `0.82` | `0.72` | `0.62` | `0.82` |
+| `cloud_shadow_strength` | `0.36` | `0.40` | `0.30` | `0.22` | `0.34` |
+| `cloud_shadow_softness` | `0.34` | `0.30` | `0.38` | `0.44` | `0.52` |
 | `cloud_latitude_bias` | `0.18` | `0.26` | `0.08` | `-0.10` | `-0.32` |
 | `cloud_band_strength` | `0.24` | `0.30` | `0.18` | `0.12` | `0.16` |
 | `cloud_wind_stretch` | `0.38` | `0.44` | `0.28` | `0.22` | `0.30` |

@@ -132,6 +132,8 @@ PARAM_GROUPS = [
             ("cloud_softness", 0.005, 0.60, 0.005),
             ("cloud_land_correlation", 0.00, 1.00, 0.01),
             ("cloud_opacity", 0.00, 1.00, 0.01),
+            ("cloud_shadow_strength", 0.00, 1.00, 0.01),
+            ("cloud_shadow_softness", 0.00, 1.00, 0.01),
             ("cloud_latitude_bias", -1.00, 1.00, 0.01),
             ("cloud_band_strength", 0.00, 1.00, 0.01),
             ("cloud_wind_stretch", 0.00, 1.00, 0.01),
@@ -258,6 +260,7 @@ CLOUD_RECIPES = {
         "values": {
             "cloud_coverage": 0.0,
             "cloud_opacity": 0.0,
+            "cloud_shadow_strength": 0.0,
             "storm_density": 0.0,
             "spiral_storm_strength": 0.0,
             "polar_cloud_strength": 0.0,
@@ -273,6 +276,8 @@ CLOUD_RECIPES = {
             "cloud_softness": 0.22,
             "cloud_land_correlation": 0.55,
             "cloud_opacity": 0.78,
+            "cloud_shadow_strength": 0.36,
+            "cloud_shadow_softness": 0.34,
             "cloud_latitude_bias": 0.18,
             "cloud_band_strength": 0.24,
             "cloud_wind_stretch": 0.38,
@@ -292,6 +297,8 @@ CLOUD_RECIPES = {
             "cloud_softness": 0.20,
             "cloud_land_correlation": 0.38,
             "cloud_opacity": 0.88,
+            "cloud_shadow_strength": 0.46,
+            "cloud_shadow_softness": 0.28,
             "cloud_latitude_bias": 0.10,
             "cloud_band_strength": 0.36,
             "cloud_wind_stretch": 0.54,
@@ -311,6 +318,8 @@ CLOUD_RECIPES = {
             "cloud_softness": 0.42,
             "cloud_land_correlation": 0.48,
             "cloud_opacity": 0.38,
+            "cloud_shadow_strength": 0.14,
+            "cloud_shadow_softness": 0.58,
             "cloud_latitude_bias": 0.04,
             "cloud_band_strength": 0.12,
             "cloud_wind_stretch": 0.22,
@@ -330,6 +339,8 @@ CLOUD_RECIPES = {
             "cloud_softness": 0.16,
             "cloud_land_correlation": 0.20,
             "cloud_opacity": 0.74,
+            "cloud_shadow_strength": 0.32,
+            "cloud_shadow_softness": 0.26,
             "cloud_latitude_bias": 0.22,
             "cloud_band_strength": 0.28,
             "cloud_wind_stretch": 0.62,
@@ -444,6 +455,7 @@ TEXTURE_MAP_LABELS = {
     "shoreline_mask": "Shoreline mask",
     "ocean_depth": "Ocean depth",
     "cloud_mask": "Cloud mask",
+    "cloud_shadow": "Cloud shadow",
     "city_lights": "City lights",
 }
 
@@ -455,6 +467,8 @@ PARAM_LABELS = {
     "cloud_softness": "Edge softness",
     "cloud_land_correlation": "Land-form correlation",
     "cloud_opacity": "Cloud opacity",
+    "cloud_shadow_strength": "Shadow strength",
+    "cloud_shadow_softness": "Shadow softness",
     "cloud_latitude_bias": "Latitude bias",
     "cloud_band_strength": "Atmospheric bands",
     "cloud_wind_stretch": "Wind stretch",
@@ -679,7 +693,14 @@ def load_saved_state(path_text: str) -> dict:
 
     data = json.loads(path.read_text(encoding="utf-8"))
     state = normalize_ui_state(data)
-    state["path"] = str(path.resolve())
+    resolved_path = path.resolve()
+    try:
+        list_path = str(resolved_path.relative_to(Path.cwd().resolve()))
+    except ValueError:
+        list_path = str(resolved_path)
+    state["path"] = str(resolved_path)
+    state["list_path"] = list_path
+    state["folder_name"] = resolved_path.parent.name
     return state
 
 
@@ -1211,6 +1232,11 @@ img {
   background: #11151d;
   padding: 8px;
 }
+.saved-planet.loaded {
+  border-color: var(--accent);
+  background: #12201b;
+  box-shadow: 0 0 0 1px rgba(61, 220, 151, 0.35);
+}
 .saved-planet-title {
   color: var(--text);
   font-size: 13px;
@@ -1450,6 +1476,7 @@ let debounceTimer = null;
 let inFlight = false;
 let previewMaps = {};
 let texturePreviewToken = 0;
+let loadedPlanet = null;
 
 const els = {
   preset: document.getElementById("preset"),
@@ -1536,6 +1563,39 @@ function applyFaceSizePreset() {
 function setStatus(text, kind = "") {
   els.status.className = `status ${kind}`;
   els.status.textContent = text;
+}
+
+function normalizeSavedPath(path) {
+  return String(path || "").replace(/\\/g, "/").replace(/^\.\//, "").toLowerCase();
+}
+
+function pathsMatch(left, right) {
+  const normalizedLeft = normalizeSavedPath(left);
+  const normalizedRight = normalizeSavedPath(right);
+  return Boolean(normalizedLeft && normalizedRight && normalizedLeft === normalizedRight);
+}
+
+function isLoadedSavedPlanet(item) {
+  if (!loadedPlanet) return false;
+  return pathsMatch(item.path, loadedPlanet.listPath) || pathsMatch(item.path, loadedPlanet.path);
+}
+
+function updateSavedPlanetHighlight() {
+  for (const row of els.savedPlanets.querySelectorAll(".saved-planet")) {
+    const isLoaded = Boolean(loadedPlanet) && (
+      pathsMatch(row.dataset.path, loadedPlanet.listPath) || pathsMatch(row.dataset.path, loadedPlanet.path)
+    );
+    row.classList.toggle("loaded", isLoaded);
+    const loadButton = row.querySelector("button[data-load-button='1']");
+    if (loadButton) {
+      loadButton.textContent = isLoaded ? "Loaded" : "Load";
+    }
+    if (isLoaded) {
+      row.setAttribute("aria-current", "true");
+    } else {
+      row.removeAttribute("aria-current");
+    }
+  }
 }
 
 function sliderId(key) {
@@ -2108,7 +2168,8 @@ async function renderPreview() {
     const surfaceImage = data.maps && data.maps.color ? data.maps.color.image : data.color;
     const cloudImage = data.maps && data.maps.cloud_mask ? data.maps.cloud_mask.image : null;
     setGlobeTextures(surfaceImage, cloudImage);
-    setStatus(`Preview ready: ${data.summary.preset}, seed ${data.summary.seed}, ${data.summary.preview_size}`, "ok");
+    const loadedText = loadedPlanet ? `${loadedPlanet.name} - ` : "";
+    setStatus(`Preview ready: ${loadedText}${data.summary.preset}, seed ${data.summary.seed}, ${data.summary.preview_size}`, "ok");
   } catch (error) {
     setStatus(error.message, "error");
   } finally {
@@ -2147,6 +2208,11 @@ function renderSavedPlanets(items) {
   for (const item of items.slice(0, 24)) {
     const row = document.createElement("div");
     row.className = "saved-planet";
+    row.dataset.path = item.path;
+    if (isLoadedSavedPlanet(item)) {
+      row.classList.add("loaded");
+      row.setAttribute("aria-current", "true");
+    }
 
     const text = document.createElement("div");
     const title = document.createElement("div");
@@ -2156,7 +2222,8 @@ function renderSavedPlanets(items) {
     meta.className = "saved-planet-meta";
     const date = new Date((item.modified || 0) * 1000);
     const maps = Array.isArray(item.texture_maps) ? item.texture_maps.length : 0;
-    meta.textContent = `${item.kind === "config" ? "Config" : "Output"} - ${item.preset}, seed ${item.seed} - ${item.projection} - ${maps} maps - ${date.toLocaleString()}`;
+    const loadedText = isLoadedSavedPlanet(item) ? "Currently loaded - " : "";
+    meta.textContent = `${loadedText}${item.kind === "config" ? "Config" : "Output"} - ${item.preset}, seed ${item.seed} - ${item.projection} - ${maps} maps - ${date.toLocaleString()}`;
     text.append(title, meta);
 
     const actions = document.createElement("div");
@@ -2164,7 +2231,8 @@ function renderSavedPlanets(items) {
 
     const loadButton = document.createElement("button");
     loadButton.type = "button";
-    loadButton.textContent = "Load";
+    loadButton.dataset.loadButton = "1";
+    loadButton.textContent = isLoadedSavedPlanet(item) ? "Loaded" : "Load";
     loadButton.addEventListener("click", () => loadSavedPlanet(item.path));
 
     const deleteButton = document.createElement("button");
@@ -2176,6 +2244,30 @@ function renderSavedPlanets(items) {
 
     row.append(text, actions);
     els.savedPlanets.appendChild(row);
+  }
+}
+
+function setLoadedPlanetFromData(data) {
+  if (!data || !data.path) {
+    loadedPlanet = null;
+    updateSavedPlanetHighlight();
+    return;
+  }
+  const sourcePath = data.list_path || data.path;
+  const parts = String(sourcePath || "").replace(/\\/g, "/").split("/");
+  loadedPlanet = {
+    path: data.path,
+    listPath: data.list_path || data.path,
+    name: data.folder_name || parts[Math.max(0, parts.length - 2)] || "loaded planet",
+  };
+  updateSavedPlanetHighlight();
+}
+
+function clearLoadedPlanetIfPath(path) {
+  if (!loadedPlanet) return;
+  if (pathsMatch(path, loadedPlanet.listPath) || pathsMatch(path, loadedPlanet.path)) {
+    loadedPlanet = null;
+    updateSavedPlanetHighlight();
   }
 }
 
@@ -2225,6 +2317,7 @@ async function deleteSavedPlanet(item) {
   setStatus(`Deleting ${item.name}...`, "busy");
   try {
     const data = await postJson("/api/config/delete", {path: item.path});
+    clearLoadedPlanetIfPath(item.path);
     renderSavedPlanets(data.items || []);
     setStatus(`Deleted saved planet: ${item.name}.`, "ok");
   } catch (error) {
@@ -2264,6 +2357,7 @@ async function loadSavedPlanet(path) {
   try {
     const data = await postJson("/api/load", {path});
     applyLoadedState(data);
+    setLoadedPlanetFromData(data);
     setStatus("Loaded saved planet settings.", "ok");
     schedulePreview(0);
   } catch (error) {
@@ -2279,6 +2373,7 @@ async function loadPresetJson() {
   try {
     const data = await postJson("/api/load", {path: els.loadPath.value});
     applyLoadedState(data);
+    setLoadedPlanetFromData(data);
     setStatus("Loaded settings.", "ok");
     schedulePreview(0);
   } catch (error) {

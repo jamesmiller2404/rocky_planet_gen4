@@ -138,6 +138,8 @@ PRESETS = {
         "cloud_softness": 0.22,
         "cloud_land_correlation": 0.55,
         "cloud_opacity": 0.78,
+        "cloud_shadow_strength": 0.36,
+        "cloud_shadow_softness": 0.34,
         "cloud_latitude_bias": 0.18,
         "cloud_band_strength": 0.24,
         "cloud_wind_stretch": 0.38,
@@ -239,6 +241,8 @@ PRESETS = {
         "cloud_softness": 0.24,
         "cloud_land_correlation": 0.48,
         "cloud_opacity": 0.82,
+        "cloud_shadow_strength": 0.40,
+        "cloud_shadow_softness": 0.30,
         "cloud_latitude_bias": 0.26,
         "cloud_band_strength": 0.30,
         "cloud_wind_stretch": 0.44,
@@ -340,6 +344,8 @@ PRESETS = {
         "cloud_softness": 0.20,
         "cloud_land_correlation": 0.66,
         "cloud_opacity": 0.72,
+        "cloud_shadow_strength": 0.30,
+        "cloud_shadow_softness": 0.38,
         "cloud_latitude_bias": 0.08,
         "cloud_band_strength": 0.18,
         "cloud_wind_stretch": 0.28,
@@ -441,6 +447,8 @@ PRESETS = {
         "cloud_softness": 0.16,
         "cloud_land_correlation": 0.42,
         "cloud_opacity": 0.62,
+        "cloud_shadow_strength": 0.22,
+        "cloud_shadow_softness": 0.44,
         "cloud_latitude_bias": -0.10,
         "cloud_band_strength": 0.12,
         "cloud_wind_stretch": 0.22,
@@ -542,6 +550,8 @@ PRESETS = {
         "cloud_softness": 0.28,
         "cloud_land_correlation": 0.60,
         "cloud_opacity": 0.82,
+        "cloud_shadow_strength": 0.34,
+        "cloud_shadow_softness": 0.52,
         "cloud_latitude_bias": -0.32,
         "cloud_band_strength": 0.16,
         "cloud_wind_stretch": 0.30,
@@ -1218,6 +1228,8 @@ class PlanetConfig:
     cloud_softness: float
     cloud_land_correlation: float
     cloud_opacity: float
+    cloud_shadow_strength: float
+    cloud_shadow_softness: float
     cloud_latitude_bias: float
     cloud_band_strength: float
     cloud_wind_stretch: float
@@ -1375,25 +1387,47 @@ def build_cloud_field(cfg, x, y, z, lat, land_field, land_threshold):
             east = np.array([math.cos(center_lon), 0.0, -math.sin(center_lon)], dtype=np.float32)
             north = np.cross(center, east).astype(np.float32)
             north /= max(1e-6, float(np.linalg.norm(north)))
-            dx = x * east[0] + y * east[1] + z * east[2]
-            dy = x * north[0] + y * north[1] + z * north[2]
+            turn = float(rng.uniform(-0.75, 0.75))
+            along = east * math.cos(turn) + north * math.sin(turn)
+            across = -east * math.sin(turn) + north * math.cos(turn)
+            dx = x * along[0] + y * along[1] + z * along[2]
+            dy = x * across[0] + y * across[1] + z * across[2]
             dot = np.clip(x * center[0] + y * center[1] + z * center[2], -1.0, 1.0)
             distance = np.arccos(dot)
             radius = float(rng.uniform(0.050, 0.145)) * (0.85 + storm_density * 0.55)
-            core = 1.0 - smoothstep(radius * 0.18, radius, distance)
+            aspect = float(rng.uniform(1.15, 2.45))
+            ellipse_distance = np.sqrt((dx / aspect) ** 2 + (dy * aspect * 0.82) ** 2)
+            broad_core = 1.0 - smoothstep(radius * 0.24, radius * 1.22, ellipse_distance)
+            soft_core = 1.0 - smoothstep(radius * 0.05, radius * 0.62, distance)
             angle = np.arctan2(dy, dx)
-            swirl = np.sin(angle * float(rng.uniform(2.1, 3.6)) - distance / max(radius, 1e-6) * float(rng.uniform(2.8, 5.6)))
-            broken = smoothstep(
-                0.28,
-                0.88,
-                fbm_3d(x + center[0] * 0.31, y + center[1] * 0.31, z + center[2] * 0.31, scale * 13.0 + 8.0, 2, 0.50, cfg.seed + 9300 + _),
+            phase = float(rng.uniform(-math.pi, math.pi))
+            twist = float(rng.uniform(1.7, 3.4)) * (1.0 if center_lat >= 0.0 else -1.0)
+            arc_angle = np.arctan2(
+                np.sin(angle - distance / max(radius, 1e-6) * twist - phase),
+                np.cos(angle - distance / max(radius, 1e-6) * twist - phase),
             )
-            spiral = 0.72 + 0.28 * swirl * spiral_strength
+            arc = 1.0 - smoothstep(0.16 + spiral_strength * 0.10, 1.24, np.abs(arc_angle))
+            arc *= smoothstep(radius * 0.18, radius * 0.92, distance)
+            broken = smoothstep(
+                0.24,
+                0.92,
+                fbm_3d(
+                    x + center[0] * 0.31 + along[0] * 0.17,
+                    y + center[1] * 0.31 + along[1] * 0.17,
+                    z + center[2] * 0.31 + along[2] * 0.17,
+                    scale * 13.0 + 8.0,
+                    3,
+                    0.54,
+                    cfg.seed + 9300 + _,
+                ),
+            )
+            lopsided = 0.82 + 0.18 * np.clip((dx / max(radius, 1e-6)) * float(rng.uniform(-1.0, 1.0)), -1.0, 1.0)
+            embedded_storm = (broad_core * 0.64 + soft_core * 0.18 + arc * spiral_strength * 0.18)
             storm_field = np.maximum(
                 storm_field,
-                core * broken * spiral * float(rng.uniform(0.35, 0.72)),
+                embedded_storm * broken * lopsided * float(rng.uniform(0.30, 0.62)),
             )
-        field = field + storm_field * (0.18 + storm_density * 0.34 + spiral_strength * 0.22)
+        field = field + storm_field * (0.14 + storm_density * 0.26 + spiral_strength * 0.12)
     return field.astype(np.float32)
 
 
@@ -1409,6 +1443,17 @@ def cloud_mask_from_field(cfg, cloud_field, cloud_threshold):
     mask = smoothstep(cloud_threshold - softness, cloud_threshold + softness, cloud_field)
     texture = 0.72 + normalize01(cloud_field) * 0.28
     return np.clip(mask * texture * opacity, 0.0, 1.0).astype(np.float32)
+
+
+def build_cloud_shadow_map(cfg, cloud_mask):
+    strength = float(np.clip(cfg.cloud_shadow_strength, 0.0, 1.0))
+    if strength <= 0.0 or cloud_mask is None:
+        return np.zeros_like(cloud_mask, dtype=np.float32)
+    softness = float(np.clip(cfg.cloud_shadow_softness, 0.0, 1.0))
+    base = np.clip(cloud_mask, 0.0, 1.0)
+    sigma = max(0.15, min(base.shape) * (0.0015 + softness * 0.012))
+    softened = ndimage.gaussian_filter(base, sigma=(sigma, sigma), mode=("nearest", "wrap"))
+    return np.clip(softened * strength, 0.0, 1.0).astype(np.float32)
 
 
 def build_city_lights_map(
@@ -2213,7 +2258,7 @@ def build_maps_from_vectors(
     stats = set(stat_fields or ())
     stats_only = return_raw_stats and bool(stats)
     requested_outputs = set() if stats_only else set(selected_maps)
-    needs_cloud = "cloud_mask" in requested_outputs or "cloud" in stats
+    needs_cloud = bool({"cloud_mask", "cloud_shadow"} & requested_outputs) or "cloud" in stats
     needs_moisture = bool({"color", "city_lights"} & requested_outputs) or "moisture" in stats
     needs_height = bool({"height", "normal"} & requested_outputs) or "height" in stats
     needs_preview_height = "color" in requested_outputs and normal_wrap_x
@@ -2658,6 +2703,8 @@ def build_maps_from_vectors(
         maps["ocean_depth"] = ocean_depth
     if "cloud_mask" in selected_maps:
         maps["cloud_mask"] = cloud_mask
+    if "cloud_shadow" in selected_maps:
+        maps["cloud_shadow"] = build_cloud_shadow_map(cfg, cloud_mask)
     if needs_city_lights:
         maps["city_lights"] = build_city_lights_map(
             cfg,
@@ -2836,7 +2883,7 @@ def compute_quad_sphere_global_stats(cfg, face_size, selected_maps, quad_workers
         stat_fields.append("moisture")
     if selected_set & {"height", "normal"}:
         stat_fields.append("height")
-    if "cloud_mask" in selected_set:
+    if selected_set & {"cloud_mask", "cloud_shadow"}:
         stat_fields.append("cloud")
 
     moisture_min = math.inf
@@ -2906,6 +2953,7 @@ TEXTURE_MAP_NAMES = (
     "shoreline_mask",
     "ocean_depth",
     "cloud_mask",
+    "cloud_shadow",
     "city_lights",
 )
 
@@ -2951,6 +2999,8 @@ def save_map_set(out_dir, maps, map_names=None):
         save_gray(out_dir / "ocean_depth.png", maps["ocean_depth"])
     if "cloud_mask" in selected:
         save_gray(out_dir / "cloud_mask.png", maps["cloud_mask"])
+    if "cloud_shadow" in selected:
+        save_gray(out_dir / "cloud_shadow.png", maps["cloud_shadow"])
     if "city_lights" in selected:
         save_rgb(out_dir / "city_lights.png", maps["city_lights"])
 
@@ -3068,7 +3118,7 @@ def quad_sphere_low_memory_map_groups(selected_maps):
         ("land_mask",),
         ("shoreline_mask",),
         ("ocean_depth",),
-        ("cloud_mask",),
+        ("cloud_mask", "cloud_shadow"),
         ("city_lights",),
     ):
         present = tuple(name for name in group if name in selected)
