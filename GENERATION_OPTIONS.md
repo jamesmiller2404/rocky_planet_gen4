@@ -29,7 +29,7 @@ Example:
 | `--quad-sphere` | off | Writes six cube/quad-sphere face folders instead of only equirectangular maps. |
 | `--face-size` | `min(width, height)` | Quad-sphere face size in pixels. Minimum `32` when `--quad-sphere` is used. |
 | `--quad-workers` | `PLANET_QUAD_WORKERS` or `1` | Worker processes for quad-sphere face generation. Use `1` for serial generation; use up to `6` to process faces in parallel. |
-| `--texture-maps` | all maps | One or more texture maps to save: `color`, `height`, `normal`, `roughness`, `land_mask`, `shoreline_mask`, `ocean_depth`, `cloud_mask`, `cloud_shadow`, `city_lights`. |
+| `--texture-maps` | all maps | One or more texture maps to save: `color`, `height`, `normal`, `roughness`, `land_mask`, `shoreline_mask`, `ocean_depth`, `cloud_mask`, `cloud_shadow`, `nebula_color`, `nebula_alpha`, `nebula_stars`, `city_lights`. |
 | `--profile` | off | Prints `cProfile` timing for generation, saving, preview, and metadata writes. |
 | `--profile-limit` | `40` | Number of timing rows to print when `--profile` is enabled. |
 | `--profile-out` | unset | Optional raw `.prof` output path for external profile viewers. |
@@ -47,6 +47,12 @@ Save a specific Blender-oriented set:
 ```
 
 The selected texture maps also reduce avoidable computation where possible. For example, omitting `city_lights`, `cloud_mask`, `cloud_shadow`, `normal`, or `roughness` skips those final build steps instead of only skipping the saved PNG files.
+
+Save only Photoshop-oriented nebula compositing layers:
+
+```powershell
+.\.venv\Scripts\python.exe rocky_planet_gen.py --preset earthlike --seed 42 --width 2048 --height 1024 --out output/nebula_layers --texture-maps nebula_color nebula_alpha nebula_stars
+```
 
 Parallel quad-sphere generation:
 
@@ -91,6 +97,9 @@ For normal equirectangular output:
 | `ocean_depth.png` | Ocean depth mask. |
 | `cloud_mask.png` | Separate 16-bit grayscale cloud opacity mask based on softened land-form-style weather math. |
 | `cloud_shadow.png` | Separate 16-bit grayscale surface-darkening mask derived from the cloud layer for Blender cloud shadows. |
+| `nebula_color.png` | Separate RGB emission-color layer for nebula compositing. |
+| `nebula_alpha.png` | Separate 16-bit grayscale nebula density/opacity mask for soft Photoshop compositing. |
+| `nebula_stars.png` | Separate 16-bit grayscale star/speckle layer. |
 | `city_lights.png` | Separate RGB emission texture for night-side artificial lights. |
 | `preview.png` | Rendered globe preview. |
 | `preview.html` | Interactive rotating globe preview using `color.png`. |
@@ -231,6 +240,33 @@ color.png -> Mix/Multiply with darker color.png
 cloud_shadow.png -> ColorRamp/Map Range -> Mix Factor
 mixed result -> Principled BSDF Base Color
 ```
+
+## Nebula Compositing Layers
+
+These controls write Photoshop-friendly standalone flat vista layers. They do not bake into `color.png`, height, normal, roughness, cloud, land, shoreline, ocean-depth, or city-light maps, and they are not treated as equirectangular planet textures.
+
+| Option | Earthlike Default | Description |
+| --- | ---: | --- |
+| `--nebula-intensity` | `0.90` | Overall brightness and maximum opacity of the nebula density layer. `0.0` disables the colored gas layer. |
+| `--nebula-coverage` | `0.54` | How much of the map is filled by gas. Lower values isolate smaller clouds; higher values make broad haze. |
+| `--nebula-scale` | `1.10` | Size of the largest gas structures. Lower values create larger formations; higher values create smaller structures. |
+| `--nebula-detail` | `6` | Number of fBM octaves used for the main gas field. |
+| `--nebula-roughness` | `0.56` | Persistence of detail across octaves. Higher values make the gas more ragged. |
+| `--nebula-warp` | `1.00` | Seeded flat-field domain warp strength for turbulent bends and organic drift. |
+| `--nebula-filament-strength` | `0.62` | Strength of warped filament/tendril structures inside the broader gas. |
+| `--nebula-star-density` | `0.34` | Density of the separate star/speckle layer. `0.0` disables stars. |
+| `--nebula-color-mix` | `0.46` | Shifts the RGB nebula color balance between warmer dust/red emission and cooler cyan/violet emission. |
+| `--nebula-color-softness` | `0.55` | Width of the blend boundaries between selected nebula colors. Lower values make sharper color regions; higher values make gradual transitions. |
+| `--nebula-base-color` | `#5e44be` | Main diffuse gas/haze color. |
+| `--nebula-core-color` | `#ff5e48` | Bright core/emission color used in denser gas. |
+| `--nebula-accent-color` | `#44b4cd` | Secondary ionized/accent gas color. |
+
+Photoshop usage:
+
+1. Put `nebula_color.png` above the planet render and set the blend mode to Screen, Linear Dodge, or Color Dodge.
+2. Use `nebula_alpha.png` as a layer mask on `nebula_color.png`; it is 16-bit grayscale to keep soft gradients smooth.
+3. Place `nebula_stars.png` on top as Screen/Linear Dodge, or use it as a mask for a white or tinted star layer.
+4. Blur or levels-adjust duplicate nebula layers for glow without changing the generated base maps.
 
 ## City Lights
 
@@ -432,6 +468,19 @@ Examples:
 | `spiral_storm_strength` | `0.18` | `0.20` | `0.10` | `0.04` | `0.08` |
 | `polar_cloud_strength` | `0.10` | `0.06` | `0.08` | `0.02` | `0.62` |
 | `polar_cloud_asymmetry` | `1.00` | `1.00` | `1.00` | `1.00` | `1.00` |
+| `nebula_intensity` | `0.90` | `0.90` | `0.90` | `0.90` | `0.90` |
+| `nebula_coverage` | `0.54` | `0.54` | `0.54` | `0.54` | `0.54` |
+| `nebula_scale` | `1.10` | `1.10` | `1.10` | `1.10` | `1.10` |
+| `nebula_detail` | `6` | `6` | `6` | `6` | `6` |
+| `nebula_roughness` | `0.56` | `0.56` | `0.56` | `0.56` | `0.56` |
+| `nebula_warp` | `1.00` | `1.00` | `1.00` | `1.00` | `1.00` |
+| `nebula_filament_strength` | `0.62` | `0.62` | `0.62` | `0.62` | `0.62` |
+| `nebula_star_density` | `0.34` | `0.34` | `0.34` | `0.34` | `0.34` |
+| `nebula_color_mix` | `0.46` | `0.46` | `0.46` | `0.46` | `0.46` |
+| `nebula_color_softness` | `0.55` | `0.55` | `0.55` | `0.55` | `0.55` |
+| `nebula_base_color` | `#5e44be` | `#5e44be` | `#5e44be` | `#5e44be` | `#5e44be` |
+| `nebula_core_color` | `#ff5e48` | `#ff5e48` | `#ff5e48` | `#ff5e48` | `#ff5e48` |
+| `nebula_accent_color` | `#44b4cd` | `#44b4cd` | `#44b4cd` | `#44b4cd` | `#44b4cd` |
 | `city_lights_strength` | `0.72` | `0.66` | `0.70` | `0.34` | `0.30` |
 | `city_density` | `0.46` | `0.42` | `0.40` | `0.18` | `0.16` |
 | `megacity_count` | `14` | `10` | `12` | `5` | `4` |

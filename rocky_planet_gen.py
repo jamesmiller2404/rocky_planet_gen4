@@ -973,11 +973,29 @@ LAND_COLOR_FALLBACKS = {
 DEFAULT_REGION_TINT_COUNT = 6
 MAX_REGION_TINT_COUNT = 8
 
+NEBULA_DEFAULTS = {
+    "nebula_intensity": 0.90,
+    "nebula_coverage": 0.54,
+    "nebula_scale": 1.10,
+    "nebula_detail": 6,
+    "nebula_roughness": 0.56,
+    "nebula_warp": 1.00,
+    "nebula_filament_strength": 0.62,
+    "nebula_star_density": 0.34,
+    "nebula_color_mix": 0.46,
+    "nebula_color_softness": 0.55,
+    "nebula_base_color": "#5e44be",
+    "nebula_core_color": "#ff5e48",
+    "nebula_accent_color": "#44b4cd",
+}
+
 
 def seed_custom_palette_defaults() -> None:
     for values in PRESETS.values():
         values.setdefault("land_color_count", 9)
         values.setdefault("region_tint_count", DEFAULT_REGION_TINT_COUNT)
+        for key, value in NEBULA_DEFAULTS.items():
+            values.setdefault(key, value)
         apply_palette_defaults_to_config_values(values, values.get("land_palette", "natural_earth"), only_missing=True)
 
 
@@ -1255,6 +1273,19 @@ class PlanetConfig:
     spiral_storm_strength: float
     polar_cloud_strength: float
     polar_cloud_asymmetry: float
+    nebula_intensity: float
+    nebula_coverage: float
+    nebula_scale: float
+    nebula_detail: int
+    nebula_roughness: float
+    nebula_warp: float
+    nebula_filament_strength: float
+    nebula_star_density: float
+    nebula_color_mix: float
+    nebula_color_softness: float
+    nebula_base_color: str
+    nebula_core_color: str
+    nebula_accent_color: str
     city_lights_strength: float
     city_density: float
     megacity_count: int
@@ -1535,6 +1566,130 @@ def build_cloud_shadow_map(cfg, cloud_mask):
     sigma = max(0.15, min(base.shape) * (0.0015 + softness * 0.012))
     softened = ndimage.gaussian_filter(base, sigma=(sigma, sigma), mode=("nearest", "wrap"))
     return np.clip(softened * strength, 0.0, 1.0).astype(np.float32)
+
+
+def build_nebula_maps(cfg, x, y, z):
+    intensity = float(np.clip(cfg.nebula_intensity, 0.0, 2.0))
+    coverage = float(np.clip(cfg.nebula_coverage, 0.0, 1.0))
+    star_density = float(np.clip(cfg.nebula_star_density, 0.0, 1.0))
+    if intensity <= 0.0 and star_density <= 0.0:
+        empty = np.zeros_like(x, dtype=np.float32)
+        return {
+            "nebula_color": np.zeros((*x.shape, 3), dtype=np.float32),
+            "nebula_alpha": empty,
+            "nebula_stars": empty,
+        }
+
+    scale = max(0.15, float(cfg.nebula_scale))
+    detail = max(1, int(cfg.nebula_detail))
+    roughness = float(np.clip(cfg.nebula_roughness, 0.10, 0.95))
+    warp_strength = float(np.clip(cfg.nebula_warp, 0.0, 2.0))
+    filament_strength = float(np.clip(cfg.nebula_filament_strength, 0.0, 1.0))
+    color_mix = float(np.clip(cfg.nebula_color_mix, 0.0, 1.0))
+    color_softness = float(np.clip(cfg.nebula_color_softness, 0.0, 1.0))
+
+    height, width = x.shape
+    yy, xx = np.indices(x.shape, dtype=np.float32)
+    aspect = width / max(float(height), 1.0)
+    u = ((xx + 0.5) / max(float(width), 1.0) - 0.5) * aspect * 2.0
+    v = ((yy + 0.5) / max(float(height), 1.0) - 0.5) * 2.0
+    zero = np.zeros_like(u, dtype=np.float32)
+
+    warp_scale = scale * 0.72 + 0.45
+    warp_x = fbm_3d(u * 0.72 + 2.31, v * 0.88 - 1.67, zero + 0.19, warp_scale, 5, 0.55, cfg.seed + 28011) - 0.5
+    warp_y = fbm_3d(u * 0.91 - 0.83, v * 0.69 + 2.04, zero + 0.43, warp_scale * 1.17, 5, 0.56, cfg.seed + 28037) - 0.5
+    wx = u + warp_x * (0.82 * warp_strength)
+    wy = v + warp_y * (0.62 * warp_strength)
+
+    broad = fbm_3d(wx, wy, zero + 0.11, scale * 0.72 + 0.28, detail, roughness, cfg.seed + 28103)
+    medium = fbm_3d(wx * 1.48 - 0.37, wy * 1.22 + 0.54, zero + 0.29, scale * 2.4 + 0.8, max(2, min(7, detail + 1)), 0.58, cfg.seed + 28129)
+    fine = fbm_3d(wx * 3.4 + 1.2, wy * 2.9 - 0.8, zero + 0.61, scale * 7.5 + 3.0, 4, 0.57, cfg.seed + 28151)
+
+    rng = np.random.default_rng(int(cfg.seed) + 28301)
+    cloud_envelope = np.zeros_like(u, dtype=np.float32)
+    heat = np.zeros_like(u, dtype=np.float32)
+    complex_count = 4 + int(round(coverage * 4.0))
+    for idx in range(complex_count):
+        cx = rng.uniform(-0.92 * aspect, 0.92 * aspect)
+        cy = rng.uniform(-0.72, 0.72)
+        angle = rng.uniform(-math.pi, math.pi)
+        ca = math.cos(angle)
+        sa = math.sin(angle)
+        major = rng.uniform(0.34, 0.95) * (1.10 - scale * 0.045)
+        minor = major * rng.uniform(0.20, 0.46)
+        dx = wx - cx
+        dy = wy - cy
+        along = dx * ca + dy * sa
+        across = -dx * sa + dy * ca
+        core = np.exp(-((along / max(major, 0.05)) ** 2 + (across / max(minor, 0.04)) ** 2))
+        halo = np.exp(-((along / max(major * 1.9, 0.05)) ** 2 + (across / max(minor * 2.7, 0.04)) ** 2))
+        power = rng.uniform(0.45, 1.05)
+        cloud_envelope = np.maximum(cloud_envelope, halo * power)
+        heat = np.maximum(heat, core * rng.uniform(0.55, 1.18))
+
+    filament = np.zeros_like(u, dtype=np.float32)
+    filament_count = 5 + int(round(filament_strength * 8.0))
+    for idx in range(filament_count):
+        angle = rng.uniform(-math.pi, math.pi)
+        ca = math.cos(angle)
+        sa = math.sin(angle)
+        offset = rng.uniform(-1.4, 1.4)
+        width_line = rng.uniform(0.018, 0.055)
+        bend = fbm_3d(u * rng.uniform(0.8, 1.8), v * rng.uniform(0.8, 1.8), zero + idx * 0.17, scale * 1.8 + 1.4, 3, 0.58, cfg.seed + 28409 + idx * 37) - 0.5
+        d = np.abs((-sa * wx + ca * wy) - offset + bend * (0.28 + warp_strength * 0.24))
+        line = np.exp(-((d / width_line) ** 2))
+        broken = smoothstep(0.30, 0.82, fbm_3d(wx * 1.8 + idx, wy * 2.1 - idx * 0.31, zero + 0.73, scale * 3.8 + 2.0, 4, 0.60, cfg.seed + 28511 + idx * 41))
+        filament = np.maximum(filament, line * broken)
+
+    gas = np.clip(cloud_envelope * (0.42 + broad * 0.38 + medium * 0.20) + heat * 0.36, 0.0, 1.0)
+    threshold = 0.28 + (1.0 - coverage) * 0.42
+    alpha = smoothstep(threshold - 0.22, threshold + 0.24, gas)
+    alpha = np.clip(alpha + filament * filament_strength * (0.10 + heat * 0.22), 0.0, 1.0)
+    alpha = ndimage.gaussian_filter(alpha, sigma=max(0.35, min(height, width) * 0.0014), mode="nearest")
+    alpha = np.power(np.clip(alpha, 0.0, 1.0), 1.08)
+    alpha = np.clip(alpha * intensity, 0.0, 1.0).astype(np.float32)
+
+    base_color = rgb_from_hex(cfg.nebula_base_color)
+    core_color = rgb_from_hex(cfg.nebula_core_color)
+    accent_color = rgb_from_hex(cfg.nebula_accent_color)
+    dust_color = base_color * 0.45 + core_color * 0.55
+    boundary_width = 0.08 + color_softness * 0.52
+    hot_signal = heat * 0.72 + fine * 0.28
+    cool_signal = medium * 0.70 + warp_y * 0.30 + 0.15
+    dust_signal = broad
+    hot_mix = smoothstep(0.56 - boundary_width, 0.56 + boundary_width, hot_signal)
+    cool_mix = smoothstep(0.55 - boundary_width, 0.55 + boundary_width, cool_signal)
+    dust_mix = smoothstep(0.52 - boundary_width, 0.52 + boundary_width, dust_signal) * (1.0 - hot_mix * 0.35)
+    color = color_blend(base_color, core_color, hot_mix * (0.65 + color_mix * 0.25))
+    color = color_blend(color, accent_color, cool_mix * color_mix * 0.55)
+    color = color_blend(color, dust_color, dust_mix * (1.0 - color_mix) * 0.50)
+    color = color * (0.10 + alpha[:, :, None] * (0.82 + fine[:, :, None] * 0.22))
+    color = np.clip(color, 0.0, 255.0).astype(np.float32)
+
+    star_scale = 700.0 + star_density * 1300.0
+    star_noise = hash_noise(
+        np.floor((u + aspect) * star_scale).astype(np.int32),
+        np.floor((v + 1.0) * star_scale).astype(np.int32),
+        np.full_like(u, int(cfg.seed) & 0xFFFF, dtype=np.int32),
+        cfg.seed + 28219,
+    )
+    star_cut = 0.99935 - star_density * 0.0048
+    stars = smoothstep(star_cut, 1.0, star_noise)
+    star_brightness = hash_noise(
+        np.floor((u + aspect) * star_scale + 177.0).astype(np.int32),
+        np.floor((v + 1.0) * star_scale - 91.0).astype(np.int32),
+        np.full_like(u, (int(cfg.seed) + 37) & 0xFFFF, dtype=np.int32),
+        cfg.seed + 28243,
+    )
+    stars *= 0.28 + star_brightness * 0.72
+    stars *= 0.55 + smoothstep(0.32, 0.94, 1.0 - alpha) * 0.45
+    stars = np.clip(stars * star_density, 0.0, 1.0).astype(np.float32)
+
+    return {
+        "nebula_color": color,
+        "nebula_alpha": alpha,
+        "nebula_stars": stars,
+    }
 
 
 def build_city_lights_map(
@@ -2364,6 +2519,7 @@ def build_maps_from_vectors(
     needs_roughness = "roughness" in requested_outputs
     needs_city_lights = "city_lights" in requested_outputs
     needs_color = "color" in requested_outputs
+    needs_nebula = bool({"nebula_color", "nebula_alpha", "nebula_stars"} & requested_outputs)
 
     lat_abs = np.abs(np.sin(lat))
 
@@ -2816,6 +2972,8 @@ def build_maps_from_vectors(
             mountain_mask,
             polar_ice,
         )
+    if needs_nebula:
+        maps.update(build_nebula_maps(cfg, x, y, z))
     if return_raw_stats:
         maps["_land_field"] = land_field
         if cloud_field is not None:
@@ -3053,12 +3211,15 @@ TEXTURE_MAP_NAMES = (
     "ocean_depth",
     "cloud_mask",
     "cloud_shadow",
+    "nebula_color",
+    "nebula_alpha",
+    "nebula_stars",
     "city_lights",
 )
 
 QUAD_SPHERE_MAP_NAMES = TEXTURE_MAP_NAMES
 
-CLOUD_16BIT_MAPS = {"cloud_mask", "cloud_shadow"}
+CLOUD_16BIT_MAPS = {"cloud_mask", "cloud_shadow", "nebula_alpha", "nebula_stars"}
 
 
 def selected_texture_maps(map_names=None):
@@ -3102,6 +3263,12 @@ def save_map_set(out_dir, maps, map_names=None):
         save_gray16(out_dir / "cloud_mask.png", maps["cloud_mask"])
     if "cloud_shadow" in selected:
         save_gray16(out_dir / "cloud_shadow.png", maps["cloud_shadow"])
+    if "nebula_color" in selected:
+        save_rgb(out_dir / "nebula_color.png", maps["nebula_color"])
+    if "nebula_alpha" in selected:
+        save_gray16(out_dir / "nebula_alpha.png", maps["nebula_alpha"])
+    if "nebula_stars" in selected:
+        save_gray16(out_dir / "nebula_stars.png", maps["nebula_stars"])
     if "city_lights" in selected:
         save_rgb(out_dir / "city_lights.png", maps["city_lights"])
 
@@ -3130,7 +3297,7 @@ QUAD_SPHERE_EDGE_PAIRS = (
     (("nz", "bottom"), ("ny", "bottom"), True),
 )
 
-QUAD_SPHERE_SCALAR_SEAM_MAPS = {"cloud_mask", "cloud_shadow"}
+QUAD_SPHERE_SCALAR_SEAM_MAPS = {"cloud_mask", "cloud_shadow", "nebula_alpha", "nebula_stars"}
 CUBEMAP_CROSS_BLEED_PIXELS = 8
 
 
@@ -3438,6 +3605,7 @@ def quad_sphere_low_memory_map_groups(selected_maps):
         ("shoreline_mask",),
         ("ocean_depth",),
         ("cloud_mask", "cloud_shadow"),
+        ("nebula_color", "nebula_alpha", "nebula_stars"),
         ("city_lights",),
     ):
         present = tuple(name for name in group if name in selected)
@@ -3617,6 +3785,8 @@ def write_quad_sphere_manifest(out_dir, face_size, map_names=None, write_cubemap
                 "default": "transparent alpha 0",
                 "cloud_mask": f"{CUBEMAP_CROSS_BLEED_PIXELS}px copied edge bleed around face borders; remaining empty-cell interior stays alpha 0",
                 "cloud_shadow": f"{CUBEMAP_CROSS_BLEED_PIXELS}px copied edge bleed around face borders; remaining empty-cell interior stays alpha 0",
+                "nebula_alpha": f"{CUBEMAP_CROSS_BLEED_PIXELS}px copied edge bleed around face borders; remaining empty-cell interior stays alpha 0",
+                "nebula_stars": f"{CUBEMAP_CROSS_BLEED_PIXELS}px copied edge bleed around face borders; remaining empty-cell interior stays alpha 0",
             },
         },
         "face_vectors": {

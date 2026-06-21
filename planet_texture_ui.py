@@ -147,6 +147,24 @@ PARAM_GROUPS = [
         ],
     },
     {
+        "name": "Nebula Compositing",
+        "params": [
+            ("nebula_intensity", 0.00, 2.00, 0.01),
+            ("nebula_coverage", 0.00, 1.00, 0.01),
+            ("nebula_scale", 0.15, 8.00, 0.05),
+            ("nebula_detail", 1, 8, 1),
+            ("nebula_roughness", 0.10, 0.95, 0.01),
+            ("nebula_warp", 0.00, 2.00, 0.01),
+            ("nebula_filament_strength", 0.00, 1.00, 0.01),
+            ("nebula_star_density", 0.00, 1.00, 0.01),
+            ("nebula_color_mix", 0.00, 1.00, 0.01),
+            ("nebula_color_softness", 0.00, 1.00, 0.01),
+            ("nebula_base_color", "#000000", "#ffffff", "color"),
+            ("nebula_core_color", "#000000", "#ffffff", "color"),
+            ("nebula_accent_color", "#000000", "#ffffff", "color"),
+        ],
+    },
+    {
         "name": "City Lights",
         "params": [
             ("city_lights_strength", 0.00, 1.00, 0.01),
@@ -474,6 +492,9 @@ TEXTURE_MAP_LABELS = {
     "ocean_depth": "Ocean depth",
     "cloud_mask": "Cloud mask",
     "cloud_shadow": "Cloud shadow",
+    "nebula_color": "Nebula color",
+    "nebula_alpha": "Nebula alpha",
+    "nebula_stars": "Nebula stars",
     "city_lights": "City lights",
 }
 
@@ -497,6 +518,19 @@ PARAM_LABELS = {
     "spiral_storm_strength": "Spiral storm strength",
     "polar_cloud_strength": "Polar cloud strength",
     "polar_cloud_asymmetry": "Polar texture asymmetry",
+    "nebula_intensity": "Nebula intensity",
+    "nebula_coverage": "Nebula coverage",
+    "nebula_scale": "Nebula scale",
+    "nebula_detail": "Nebula detail",
+    "nebula_roughness": "Nebula raggedness",
+    "nebula_warp": "Nebula warp",
+    "nebula_filament_strength": "Filament strength",
+    "nebula_star_density": "Star density",
+    "nebula_color_mix": "Color mix",
+    "nebula_color_softness": "Color boundary softness",
+    "nebula_base_color": "Base gas color",
+    "nebula_core_color": "Core emission color",
+    "nebula_accent_color": "Accent gas color",
 }
 
 
