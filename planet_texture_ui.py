@@ -46,7 +46,7 @@ from rocky_planet_gen import (
 
 HOST = "127.0.0.1"
 PORT = int(os.environ.get("PLANET_TEXTURE_UI_PORT", "8765"))
-QUAD_WORKERS = resolve_quad_workers(os.environ.get("PLANET_QUAD_WORKERS", "1"))
+QUAD_WORKERS = resolve_quad_workers(os.environ.get("PLANET_QUAD_WORKERS"))
 OUTPUT_ROOT = Path("output")
 SAVED_CONFIG_ROOT = OUTPUT_ROOT / "saved_configs"
 UI_STATE_VERSION = 1
@@ -2481,6 +2481,7 @@ boot().catch(error => setStatus(error.message, "error"));
 def main() -> None:
     server = ThreadingHTTPServer((HOST, PORT), PlanetUiHandler)
     print(f"Rocky Planet Texture UI running at http://{HOST}:{PORT}")
+    print(f"Quad-sphere worker processes: {QUAD_WORKERS}")
     print("Press Ctrl+C to stop the server.")
     server.serve_forever()
 

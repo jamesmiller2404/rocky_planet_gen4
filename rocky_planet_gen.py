@@ -3233,11 +3233,13 @@ def selected_texture_maps(map_names=None):
 
 def resolve_quad_workers(value=None):
     if value is None:
-        value = os.environ.get("PLANET_QUAD_WORKERS", "1")
+        value = os.environ.get("PLANET_QUAD_WORKERS", "auto")
+    if isinstance(value, str) and value.strip().lower() in {"", "auto", "default"}:
+        return max(1, min(os.cpu_count() or 1, len(QUAD_SPHERE_FACES)))
     try:
         workers = int(value)
     except (TypeError, ValueError) as exc:
-        raise ValueError("Quad workers must be an integer.") from exc
+        raise ValueError("Quad workers must be an integer or 'auto'.") from exc
     if workers < 1:
         raise ValueError("Quad workers must be at least 1.")
     return min(workers, len(QUAD_SPHERE_FACES))
@@ -3717,7 +3719,8 @@ def save_quad_sphere_color_faces_tiled(out_dir, cfg, face_size, tile_rows=None):
 
 def save_quad_sphere_maps_low_memory(out_dir, cfg, face_size, map_names=None, quad_workers=1, write_cubemap_crosses=None):
     selected_maps = selected_texture_maps(map_names)
-    if selected_maps == ("color",):
+    resolved_quad_workers = resolve_quad_workers(quad_workers)
+    if selected_maps == ("color",) and resolved_quad_workers == 1:
         save_quad_sphere_color_faces_tiled(out_dir, cfg, face_size)
         if write_cubemap_crosses is None:
             write_cubemap_crosses = should_write_quad_sphere_crosses(face_size)
@@ -3729,14 +3732,14 @@ def save_quad_sphere_maps_low_memory(out_dir, cfg, face_size, map_names=None, qu
         cfg,
         face_size,
         selected_maps,
-        quad_workers=quad_workers,
+        quad_workers=resolved_quad_workers,
     )
     for group in quad_sphere_low_memory_map_groups(selected_maps):
         for face, maps in iter_quad_sphere_face_pass(
             cfg,
             face_size,
             group,
-            quad_workers=quad_workers,
+            quad_workers=resolved_quad_workers,
             land_threshold=land_threshold,
             cloud_threshold=cloud_threshold,
             moisture_range=moisture_range,
@@ -3932,7 +3935,7 @@ def build_arg_parser():
     parser.add_argument("--height", type=int, default=1024)
     parser.add_argument("--quad-sphere", action="store_true", help="Write six quad-sphere face folders instead of equirectangular maps.")
     parser.add_argument("--face-size", type=int, default=None, help="Quad-sphere face size in pixels. Defaults to min(width, height).")
-    parser.add_argument("--quad-workers", type=int, default=None, help="Worker processes for quad-sphere face generation. Defaults to PLANET_QUAD_WORKERS or 1.")
+    parser.add_argument("--quad-workers", default=None, help="Worker processes for quad-sphere face generation. Defaults to PLANET_QUAD_WORKERS or auto.")
     parser.add_argument("--out", type=Path, default=Path("planet_output"))
     parser.add_argument(
         "--texture-maps",
