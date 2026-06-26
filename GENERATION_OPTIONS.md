@@ -20,7 +20,7 @@ Example:
 
 | Option | Default | Description |
 | --- | ---: | --- |
-| `--preset` | `earthlike` | Starting planet recipe. Choices: `archipelago`, `dry_rocky`, `earthlike`, `frozen_ocean`, `moon`, `supercontinent`. |
+| `--preset` | `earthlike` | Starting planet recipe. Choices include the original recipes plus V2 non-Earth families: `archipelago`, `carbon_world`, `clouded_greenhouse`, `dry_rocky`, `earthlike`, `frozen_ocean`, `icy_moon`, `iron_desert`, `marslike_desert`, `moon`, `supercontinent`, `tidally_locked_rocky`, `volcanic_moon`. |
 | `--land-palette` | preset default | Land-source color palette. Choices: `alien_mineral`, `basaltic_dark`, `cold_tundra`, `dry_savanna`, `lunar_gray`, `lush_green`, `natural_earth`, `pale_sedimentary`, `red_desert`. |
 | `--seed` | `42` | Random seed. Same seed and same options produce the same maps. |
 | `--width` | `2048` | Equirectangular output width in pixels. Minimum `64`. |
@@ -29,7 +29,7 @@ Example:
 | `--quad-sphere` | off | Writes six cube/quad-sphere face folders instead of only equirectangular maps. |
 | `--face-size` | `min(width, height)` | Quad-sphere face size in pixels. Minimum `32` when `--quad-sphere` is used. |
 | `--quad-workers` | `PLANET_QUAD_WORKERS` or `auto` | Worker processes for quad-sphere face generation. Auto uses up to the six quad-sphere faces; use `1` for serial generation. |
-| `--texture-maps` | all maps | One or more texture maps to save: `color`, `height`, `normal`, `roughness`, `land_mask`, `shoreline_mask`, `ocean_depth`, `cloud_mask`, `cloud_shadow`, `nebula_color`, `nebula_alpha`, `nebula_stars`, `city_lights`. |
+| `--texture-maps` | all maps | One or more texture maps to save: `color`, `height`, `normal`, `roughness`, `land_mask`, `shoreline_mask`, `ocean_depth`, `cloud_mask`, `cloud_shadow`, `nebula_color`, `nebula_alpha`, `nebula_stars`, `city_lights`, `atmosphere_haze`, `emissive_heat`. |
 | `--profile` | off | Prints `cProfile` timing for generation, saving, preview, and metadata writes. |
 | `--profile-limit` | `40` | Number of timing rows to print when `--profile` is enabled. |
 | `--profile-out` | unset | Optional raw `.prof` output path for external profile viewers. |
@@ -107,6 +107,8 @@ For normal equirectangular output:
 | `nebula_alpha.png` | Separate 16-bit grayscale nebula density/opacity mask for soft Photoshop compositing. |
 | `nebula_stars.png` | Separate 16-bit grayscale star/speckle layer. |
 | `city_lights.png` | Separate RGB emission texture for night-side artificial lights. |
+| `atmosphere_haze.png` | Separate 16-bit grayscale atmosphere/haze influence map, strongest for dense-atmosphere families. |
+| `emissive_heat.png` | Separate 16-bit grayscale lava/geologic heat map for volcanic worlds. |
 | `preview.png` | Rendered globe preview. |
 | `preview.html` | Interactive rotating globe preview using `color.png`. |
 | `preset.json` | Resolved config, output projection, and seed-varied palette. |
@@ -134,6 +136,28 @@ It also writes cubemap-cross atlases such as `quad_sphere/color_cubemap_cross.pn
 | `dry_rocky` | High land coverage, strong deserts, exposed rock, minimal ice and wetland tinting. |
 | `frozen_ocean` | Low land coverage, large polar ice, cold terrain, subdued land color variation. |
 | `moon` | Airless all-land rocky moon with gray regolith, dark maria-like basins, dense impact craters, no oceans, no clouds, and no city lights. |
+| `marslike_desert` | All-land oxidized desert world with old cratered terrain, dry basins, thin haze, and no artificial lights. |
+| `icy_moon` | Airless all-land ice-rich moon with cryogenic surface tinting, worn impacts, and no clouds or lights. |
+| `volcanic_moon` | Airless volcanic moon with dark basaltic terrain, young geologic relief, and a separate lava heat map. |
+| `iron_desert` | Iron-rich arid all-land planet with strong red mineral staining and thin atmosphere. |
+| `carbon_world` | Dark carbon/basalt all-land world with subdued minerals and minimal atmosphere. |
+| `clouded_greenhouse` | Dense-atmosphere cloudy planet with muted surface colors, high haze, and no biosphere/city defaults. |
+| `tidally_locked_rocky` | All-land exoplanet with day/night color asymmetry, night-side volatile ice bias, and thin atmosphere. |
+
+## Planet Type Controls
+
+These V2 controls bias the generator toward broader rocky-body families without replacing the detailed sliders. They are saved in `preset.json`, exposed as CLI options, and visible in the browser UI.
+
+| Option | Earthlike default | Description |
+| --- | ---: | --- |
+| `--planet-family` | `wet_terrestrial` | High-level family. Choices: `wet_terrestrial`, `arid_terrestrial`, `frozen_world`, `airless_rocky`, `icy_moon`, `volcanic_world`, `iron_rich`, `carbon_world`, `clouded_greenhouse`, `tidally_locked`. |
+| `--biosphere-strength` | `1.0` | Strength of vegetation, wetland, productivity, and life-friendly color cues. Use `0.0` for lifeless rocky bodies. |
+| `--atmosphere-density` | `0.72` | Strength of the standalone `atmosphere_haze.png` map and dense-atmosphere visual bias. Use `0.0` for airless bodies. |
+| `--surface-age` | `0.42` | Age/wear bias used by regolith and mature surface texture effects. Higher values look older and more weathered. |
+| `--geologic-activity` | `0.48` | Activity bias for fresh geology, volcanic relief, and heat-map generation. |
+| `--volatile-ice-strength` | `0.0` | Non-ocean volatile ice strength for icy moons, night-side ice, and frozen rocky bodies. |
+| `--tidal-lock-strength` | `0.0` | Day/night asymmetry for tidally locked exoplanets. |
+| `--lava-activity` | `0.0` | Lava/fissure activity. Higher values darken cooled lava in `color.png`, affect height/roughness, and write nonzero `emissive_heat.png`. |
 
 ## Land And Ocean Shape
 

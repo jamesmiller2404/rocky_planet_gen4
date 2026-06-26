@@ -29,6 +29,7 @@ from PIL import Image
 from rocky_planet_gen import (
     LAND_PALETTE_LABELS,
     LAND_PALETTES,
+    PLANET_FAMILIES,
     PRESETS,
     PlanetConfig,
     TEXTURE_MAP_NAMES,
@@ -53,6 +54,19 @@ UI_STATE_VERSION = 1
 
 
 PARAM_GROUPS = [
+    {
+        "name": "Planet Type",
+        "params": [
+            ("planet_family", None, None, "select"),
+            ("biosphere_strength", 0.00, 1.00, 0.01),
+            ("atmosphere_density", 0.00, 1.00, 0.01),
+            ("surface_age", 0.00, 1.00, 0.01),
+            ("geologic_activity", 0.00, 1.00, 0.01),
+            ("volatile_ice_strength", 0.00, 1.00, 0.01),
+            ("tidal_lock_strength", 0.00, 1.00, 0.01),
+            ("lava_activity", 0.00, 1.00, 0.01),
+        ],
+    },
     {
         "name": "Land And Ocean Shape",
         "params": [
@@ -473,6 +487,8 @@ def config_from_payload(payload: dict, preview: bool) -> PlanetConfig:
                 value = str(value)
                 if key == "land_palette" and value not in LAND_PALETTES:
                     raise ValueError(f"Unknown land palette: {value}")
+                if key == "planet_family" and value not in PLANET_FAMILIES:
+                    raise ValueError(f"Unknown planet family: {value}")
                 data[key] = value
             else:
                 data[key] = int(value) if key in INT_PARAMS else float(value)
@@ -510,9 +526,19 @@ TEXTURE_MAP_LABELS = {
     "nebula_alpha": "Nebula alpha",
     "nebula_stars": "Nebula stars",
     "city_lights": "City lights",
+    "atmosphere_haze": "Atmosphere haze",
+    "emissive_heat": "Emissive heat",
 }
 
 PARAM_LABELS = {
+    "planet_family": "Planet family",
+    "biosphere_strength": "Biosphere strength",
+    "atmosphere_density": "Atmosphere density",
+    "surface_age": "Surface age",
+    "geologic_activity": "Geologic activity",
+    "volatile_ice_strength": "Volatile ice strength",
+    "tidal_lock_strength": "Tidal locking",
+    "lava_activity": "Lava activity",
     "crater_small_density": "Small crater density",
     "crater_medium_density": "Medium crater density",
     "crater_large_basin_density": "Large basin density",
@@ -883,10 +909,14 @@ def default_payload() -> dict:
                     {
                         "key": key,
                         "label": PARAM_LABELS.get(key, key.replace("_", " ").title()),
-                        "type": "color" if key in COLOR_PARAMS else "range",
+                        "type": "color" if key in COLOR_PARAMS else ("select" if step == "select" else "range"),
                         "min": minimum,
                         "max": maximum,
                         "step": step,
+                        "options": [
+                            {"key": option_key, "label": option_label}
+                            for option_key, option_label in PLANET_FAMILIES.items()
+                        ] if key == "planet_family" else None,
                         "integer": key in INT_PARAMS,
                     }
                     for key, minimum, maximum, step in group["params"]
@@ -1752,6 +1782,27 @@ function renderControls() {
     }
 
     for (const param of group.params) {
+      if (param.type === "select") {
+        const row = document.createElement("div");
+        row.className = "color-control";
+        const label = document.createElement("label");
+        label.htmlFor = sliderId(param.key);
+        label.textContent = param.label;
+        const select = document.createElement("select");
+        select.id = sliderId(param.key);
+        select.dataset.key = param.key;
+        for (const optionData of param.options || []) {
+          const option = document.createElement("option");
+          option.value = optionData.key;
+          option.textContent = optionData.label;
+          select.appendChild(option);
+        }
+        select.addEventListener("change", () => schedulePreview(0));
+        row.append(label, select);
+        details.appendChild(row);
+        continue;
+      }
+
       if (param.type === "color") {
         const row = document.createElement("div");
         row.className = "color-control";
@@ -1826,7 +1877,7 @@ function renderTextureMapOptions() {
 
 function syncValue(key) {
   const slider = document.getElementById(sliderId(key));
-  if (!slider || slider.type === "color") return;
+  if (!slider || slider.type === "color" || slider.tagName === "SELECT") return;
   const value = document.getElementById(valueId(key));
   value.textContent = slider.dataset.integer === "1"
     ? String(parseInt(slider.value, 10))
@@ -1864,7 +1915,7 @@ function getParams() {
   for (const group of schema.param_groups) {
     for (const param of group.params) {
       const slider = document.getElementById(sliderId(param.key));
-      params[param.key] = param.type === "color"
+      params[param.key] = (param.type === "color" || param.type === "select")
         ? slider.value
         : (param.integer ? parseInt(slider.value, 10) : parseFloat(slider.value));
     }

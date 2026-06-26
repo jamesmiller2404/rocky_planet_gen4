@@ -52,6 +52,20 @@ from scipy import ndimage
 Image.MAX_IMAGE_PIXELS = None
 
 
+PLANET_FAMILIES = {
+    "wet_terrestrial": "Wet Terrestrial",
+    "arid_terrestrial": "Arid Terrestrial",
+    "frozen_world": "Frozen World",
+    "airless_rocky": "Airless Rocky",
+    "icy_moon": "Icy Moon",
+    "volcanic_world": "Volcanic World",
+    "iron_rich": "Iron Rich",
+    "carbon_world": "Carbon World",
+    "clouded_greenhouse": "Clouded Greenhouse",
+    "tidally_locked": "Tidally Locked",
+}
+
+
 PRESETS = {
     "earthlike": {
         "land_coverage": 0.46,
@@ -700,6 +714,363 @@ PRESETS = {
     },
 }
 
+PRESETS.update(
+    {
+        "marslike_desert": {
+            **PRESETS["dry_rocky"],
+            "land_coverage": 1.0,
+            "continent_scale": 1.05,
+            "continent_contrast": 0.16,
+            "shoreline_complexity": 0.0,
+            "beach_width": 0.0,
+            "shelf_width": 0.0,
+            "desert_coverage": 0.86,
+            "forest_coverage": 0.0,
+            "mountain_density": 0.48,
+            "mountain_height": 0.52,
+            "crater_density": 0.34,
+            "crater_small_density": 0.28,
+            "crater_medium_density": 0.18,
+            "crater_large_basin_density": 0.08,
+            "crater_erosion": 0.58,
+            "crater_floor_darkening": 0.32,
+            "polar_ice_size": 0.025,
+            "polar_ice_shelf_strength": 0.0,
+            "snow_threshold": 0.99,
+            "land_palette": "red_desert",
+            "land_lowland_color": "#9b4a22",
+            "land_vegetation_color": "#7c3b22",
+            "land_forest_color": "#4a2d26",
+            "land_dry_color": "#b35d2d",
+            "land_desert_color": "#c47035",
+            "land_rock_color": "#6f5145",
+            "land_beach_color": "#b98255",
+            "land_snow_color": "#e8dfd0",
+            "land_ice_color": "#d8d8ce",
+            "land_color_variation": 0.42,
+            "continent_color_variation": 0.62,
+            "iron_oxide_tint_strength": 0.58,
+            "basalt_tint_strength": 0.22,
+            "salt_flat_tint_strength": 0.24,
+            "clay_tint_strength": 0.24,
+            "cloud_coverage": 0.05,
+            "cloud_opacity": 0.18,
+            "cloud_shadow_strength": 0.04,
+            "city_lights_strength": 0.0,
+            "city_density": 0.0,
+            "megacity_count": 0,
+            "road_network_strength": 0.0,
+            "planet_family": "arid_terrestrial",
+            "biosphere_strength": 0.0,
+            "atmosphere_density": 0.28,
+            "surface_age": 0.72,
+            "geologic_activity": 0.24,
+            "volatile_ice_strength": 0.08,
+            "tidal_lock_strength": 0.0,
+            "lava_activity": 0.0,
+        },
+        "icy_moon": {
+            **PRESETS["moon"],
+            "land_coverage": 1.0,
+            "continent_scale": 1.40,
+            "continent_detail": 6,
+            "continent_contrast": 0.12,
+            "mountain_density": 0.28,
+            "mountain_height": 0.28,
+            "crater_density": 0.48,
+            "crater_small_density": 0.42,
+            "crater_medium_density": 0.30,
+            "crater_large_basin_density": 0.16,
+            "crater_erosion": 0.42,
+            "crater_color_strength": 0.38,
+            "moon_basin_strength": 0.18,
+            "moon_regolith_variation": 0.24,
+            "polar_ice_size": 0.0,
+            "land_palette": "cold_tundra",
+            "land_lowland_color": "#aeb7b4",
+            "land_vegetation_color": "#9caeb4",
+            "land_forest_color": "#76888f",
+            "land_dry_color": "#b7b4aa",
+            "land_desert_color": "#c8c4b8",
+            "land_rock_color": "#8b9292",
+            "land_beach_color": "#c9d4d8",
+            "land_snow_color": "#edf2ef",
+            "land_ice_color": "#c7e4ec",
+            "land_ochre_tint_color": "#b8b4a8",
+            "land_rust_tint_color": "#928b82",
+            "land_wet_tint_color": "#9eb8c0",
+            "land_tundra_tint_color": "#b8d0d8",
+            "land_highland_tint_color": "#d8d8ce",
+            "land_iron_oxide_tint_color": "#aaa096",
+            "land_basalt_tint_color": "#606a70",
+            "land_salt_flat_tint_color": "#ecf0e8",
+            "land_clay_tint_color": "#b4ada0",
+            "land_solid_ice_tint_color": "#f4fbfb",
+            "land_color_variation": 0.10,
+            "continent_color_variation": 0.26,
+            "land_brightness": 0.08,
+            "land_contrast": 0.86,
+            "mineral_tint_strength": 0.04,
+            "basalt_tint_strength": 0.06,
+            "cloud_coverage": 0.0,
+            "city_lights_strength": 0.0,
+            "planet_family": "icy_moon",
+            "biosphere_strength": 0.0,
+            "atmosphere_density": 0.0,
+            "surface_age": 0.64,
+            "geologic_activity": 0.18,
+            "volatile_ice_strength": 0.92,
+            "tidal_lock_strength": 0.0,
+            "lava_activity": 0.0,
+        },
+        "volcanic_moon": {
+            **PRESETS["moon"],
+            "land_coverage": 1.0,
+            "continent_scale": 0.90,
+            "continent_detail": 8,
+            "continent_roughness": 0.70,
+            "continent_contrast": 0.18,
+            "mountain_density": 0.78,
+            "mountain_scale": 18.0,
+            "mountain_sharpness": 0.86,
+            "mountain_height": 0.82,
+            "crater_density": 0.22,
+            "crater_small_density": 0.16,
+            "crater_medium_density": 0.10,
+            "crater_large_basin_density": 0.04,
+            "crater_erosion": 0.62,
+            "crater_color_strength": 0.42,
+            "moon_basin_strength": 0.10,
+            "moon_regolith_variation": 0.18,
+            "land_palette": "basaltic_dark",
+            "land_lowland_color": "#2e2d27",
+            "land_vegetation_color": "#463c24",
+            "land_forest_color": "#1c1d1d",
+            "land_dry_color": "#5a4626",
+            "land_desert_color": "#8c6028",
+            "land_rock_color": "#27292a",
+            "land_beach_color": "#6b5f3a",
+            "land_snow_color": "#d8d2bf",
+            "land_ice_color": "#777b78",
+            "land_ochre_tint_color": "#9a6c2c",
+            "land_rust_tint_color": "#7a2c20",
+            "land_wet_tint_color": "#343128",
+            "land_tundra_tint_color": "#575141",
+            "land_highland_tint_color": "#8d7f5a",
+            "land_iron_oxide_tint_color": "#a33b1f",
+            "land_basalt_tint_color": "#121416",
+            "land_salt_flat_tint_color": "#c7ba88",
+            "land_clay_tint_color": "#8e5632",
+            "land_solid_ice_tint_color": "#cfcab8",
+            "land_color_variation": 0.34,
+            "continent_color_variation": 0.50,
+            "land_brightness": -0.04,
+            "land_contrast": 1.28,
+            "mineral_tint_strength": 0.18,
+            "iron_oxide_tint_strength": 0.34,
+            "basalt_tint_strength": 0.78,
+            "salt_flat_tint_strength": 0.10,
+            "clay_tint_strength": 0.06,
+            "cloud_coverage": 0.0,
+            "city_lights_strength": 0.0,
+            "planet_family": "volcanic_world",
+            "biosphere_strength": 0.0,
+            "atmosphere_density": 0.08,
+            "surface_age": 0.34,
+            "geologic_activity": 0.92,
+            "volatile_ice_strength": 0.0,
+            "tidal_lock_strength": 0.0,
+            "lava_activity": 0.74,
+        },
+        "iron_desert": {
+            **PRESETS["dry_rocky"],
+            "land_coverage": 1.0,
+            "desert_coverage": 0.78,
+            "forest_coverage": 0.0,
+            "polar_ice_size": 0.0,
+            "snow_threshold": 1.0,
+            "land_palette": "red_desert",
+            "land_lowland_color": "#92351f",
+            "land_vegetation_color": "#7a2d1d",
+            "land_forest_color": "#4a241c",
+            "land_dry_color": "#aa4624",
+            "land_desert_color": "#c85b2d",
+            "land_rock_color": "#5d3f37",
+            "land_beach_color": "#9a6648",
+            "land_snow_color": "#ddd4c8",
+            "land_ice_color": "#c8c4bc",
+            "iron_oxide_tint_strength": 0.72,
+            "basalt_tint_strength": 0.28,
+            "cloud_coverage": 0.0,
+            "city_lights_strength": 0.0,
+            "planet_family": "iron_rich",
+            "biosphere_strength": 0.0,
+            "atmosphere_density": 0.10,
+            "surface_age": 0.58,
+            "geologic_activity": 0.34,
+            "volatile_ice_strength": 0.0,
+            "tidal_lock_strength": 0.0,
+            "lava_activity": 0.02,
+        },
+        "carbon_world": {
+            **PRESETS["dry_rocky"],
+            "land_coverage": 1.0,
+            "desert_coverage": 0.58,
+            "forest_coverage": 0.0,
+            "polar_ice_size": 0.0,
+            "snow_threshold": 1.0,
+            "land_palette": "basaltic_dark",
+            "land_lowland_color": "#242626",
+            "land_vegetation_color": "#2d3433",
+            "land_forest_color": "#111414",
+            "land_dry_color": "#34302c",
+            "land_desert_color": "#4a4038",
+            "land_rock_color": "#171819",
+            "land_beach_color": "#56524a",
+            "land_snow_color": "#9a9a92",
+            "land_ice_color": "#6a7070",
+            "land_ochre_tint_color": "#4c473e",
+            "land_rust_tint_color": "#3e302c",
+            "land_wet_tint_color": "#182020",
+            "land_tundra_tint_color": "#3c4646",
+            "land_highland_tint_color": "#5d5c56",
+            "land_iron_oxide_tint_color": "#493028",
+            "land_basalt_tint_color": "#08090a",
+            "land_salt_flat_tint_color": "#8a8678",
+            "land_clay_tint_color": "#504038",
+            "land_solid_ice_tint_color": "#aaa8a0",
+            "land_brightness": -0.10,
+            "land_contrast": 1.30,
+            "mineral_tint_strength": 0.08,
+            "basalt_tint_strength": 0.62,
+            "cloud_coverage": 0.0,
+            "city_lights_strength": 0.0,
+            "planet_family": "carbon_world",
+            "biosphere_strength": 0.0,
+            "atmosphere_density": 0.18,
+            "surface_age": 0.52,
+            "geologic_activity": 0.32,
+            "volatile_ice_strength": 0.0,
+            "tidal_lock_strength": 0.0,
+            "lava_activity": 0.04,
+        },
+        "clouded_greenhouse": {
+            **PRESETS["frozen_ocean"],
+            "land_coverage": 0.24,
+            "desert_coverage": 0.62,
+            "forest_coverage": 0.0,
+            "polar_ice_size": 0.0,
+            "land_palette": "pale_sedimentary",
+            "ocean_base_color": "#263439",
+            "ocean_saturation": 0.44,
+            "ocean_brightness": -0.06,
+            "ocean_contrast": 0.78,
+            "wetland_tint_strength": 0.0,
+            "cloud_coverage": 0.92,
+            "cloud_scale": 0.82,
+            "cloud_detail": 6,
+            "cloud_softness": 0.42,
+            "cloud_land_correlation": 0.08,
+            "cloud_opacity": 0.96,
+            "cloud_shadow_strength": 0.58,
+            "cloud_band_strength": 0.52,
+            "cloud_breakup": 0.10,
+            "storm_density": 0.10,
+            "polar_cloud_strength": 0.28,
+            "city_lights_strength": 0.0,
+            "planet_family": "clouded_greenhouse",
+            "biosphere_strength": 0.0,
+            "atmosphere_density": 1.0,
+            "surface_age": 0.40,
+            "geologic_activity": 0.36,
+            "volatile_ice_strength": 0.0,
+            "tidal_lock_strength": 0.0,
+            "lava_activity": 0.0,
+        },
+        "tidally_locked_rocky": {
+            **PRESETS["dry_rocky"],
+            "land_coverage": 1.0,
+            "desert_coverage": 0.72,
+            "forest_coverage": 0.0,
+            "polar_ice_size": 0.0,
+            "land_palette": "alien_mineral",
+            "cloud_coverage": 0.18,
+            "cloud_opacity": 0.42,
+            "cloud_shadow_strength": 0.10,
+            "city_lights_strength": 0.0,
+            "planet_family": "tidally_locked",
+            "biosphere_strength": 0.0,
+            "atmosphere_density": 0.36,
+            "surface_age": 0.46,
+            "geologic_activity": 0.30,
+            "volatile_ice_strength": 0.20,
+            "tidal_lock_strength": 0.86,
+            "lava_activity": 0.0,
+        },
+    }
+)
+
+PRESETS["earthlike"].update(
+    planet_family="wet_terrestrial",
+    biosphere_strength=1.0,
+    atmosphere_density=0.72,
+    surface_age=0.42,
+    geologic_activity=0.48,
+    volatile_ice_strength=0.0,
+    tidal_lock_strength=0.0,
+    lava_activity=0.0,
+)
+PRESETS["archipelago"].update(
+    planet_family="wet_terrestrial",
+    biosphere_strength=1.0,
+    atmosphere_density=0.78,
+    surface_age=0.36,
+    geologic_activity=0.50,
+    volatile_ice_strength=0.0,
+    tidal_lock_strength=0.0,
+    lava_activity=0.0,
+)
+PRESETS["supercontinent"].update(
+    planet_family="arid_terrestrial",
+    biosphere_strength=0.56,
+    atmosphere_density=0.64,
+    surface_age=0.48,
+    geologic_activity=0.46,
+    volatile_ice_strength=0.0,
+    tidal_lock_strength=0.0,
+    lava_activity=0.0,
+)
+PRESETS["dry_rocky"].update(
+    planet_family="arid_terrestrial",
+    biosphere_strength=0.18,
+    atmosphere_density=0.46,
+    surface_age=0.54,
+    geologic_activity=0.42,
+    volatile_ice_strength=0.0,
+    tidal_lock_strength=0.0,
+    lava_activity=0.0,
+)
+PRESETS["frozen_ocean"].update(
+    planet_family="frozen_world",
+    biosphere_strength=0.08,
+    atmosphere_density=0.62,
+    surface_age=0.40,
+    geologic_activity=0.26,
+    volatile_ice_strength=0.70,
+    tidal_lock_strength=0.0,
+    lava_activity=0.0,
+)
+PRESETS["moon"].update(
+    planet_family="airless_rocky",
+    biosphere_strength=0.0,
+    atmosphere_density=0.0,
+    surface_age=0.86,
+    geologic_activity=0.06,
+    volatile_ice_strength=0.0,
+    tidal_lock_strength=0.0,
+    lava_activity=0.0,
+)
+
 
 OCEAN_COLORS = {
     "deep_ocean": np.array([4, 20, 66], dtype=np.float32),
@@ -1153,6 +1524,17 @@ MOON_SURFACE_DEFAULTS = {
     "moon_regolith_variation": 0.0,
 }
 
+PLANET_FAMILY_DEFAULTS = {
+    "planet_family": "wet_terrestrial",
+    "biosphere_strength": 1.0,
+    "atmosphere_density": 1.0,
+    "surface_age": 0.45,
+    "geologic_activity": 0.45,
+    "volatile_ice_strength": 0.0,
+    "tidal_lock_strength": 0.0,
+    "lava_activity": 0.0,
+}
+
 
 def seed_custom_palette_defaults() -> None:
     for values in PRESETS.values():
@@ -1163,6 +1545,8 @@ def seed_custom_palette_defaults() -> None:
         for key, value in MOON_SURFACE_DEFAULTS.items():
             values.setdefault(key, value)
         for key, value in NEBULA_DEFAULTS.items():
+            values.setdefault(key, value)
+        for key, value in PLANET_FAMILY_DEFAULTS.items():
             values.setdefault(key, value)
         apply_palette_defaults_to_config_values(values, values.get("land_palette", "natural_earth"), only_missing=True)
 
@@ -1324,6 +1708,14 @@ class PlanetConfig:
     seed: int
     width: int
     height: int
+    planet_family: str
+    biosphere_strength: float
+    atmosphere_density: float
+    surface_age: float
+    geologic_activity: float
+    volatile_ice_strength: float
+    tidal_lock_strength: float
+    lava_activity: float
     land_coverage: float
     continent_scale: float
     continent_detail: int
@@ -1535,6 +1927,161 @@ def build_mountain_range_bands(x, y, z, cfg):
         bands = np.maximum(bands, core * length_gate * breakup * float(rng.uniform(0.72, 1.0)))
 
     return np.clip(bands, 0.0, 1.0)
+
+
+def normalize_planet_family(value: str) -> str:
+    key = str(value or "wet_terrestrial")
+    return key if key in PLANET_FAMILIES else "wet_terrestrial"
+
+
+def build_land_water_layers(cfg, x, y, z, land_threshold=None):
+    continent = fbm_3d(
+        x,
+        y,
+        z,
+        cfg.continent_scale,
+        cfg.continent_detail,
+        cfg.continent_roughness,
+        cfg.seed,
+    )
+    coast_detail = fbm_3d(
+        x,
+        y,
+        z,
+        cfg.shoreline_noise_scale,
+        cfg.shoreline_detail,
+        0.62,
+        cfg.seed + 811,
+    )
+    coast_detail = (coast_detail - 0.5) * cfg.shoreline_complexity * 0.38
+    land_field = continent + coast_detail - cfg.shoreline_erosion * 0.12
+
+    no_surface_water = all_land_mode(cfg)
+    threshold = (
+        float(np.quantile(land_field, land_threshold_quantile(cfg)))
+        if land_threshold is None
+        else float(land_threshold)
+    )
+    continent_land = np.ones_like(land_field, dtype=bool) if no_surface_water else land_field >= threshold
+    land = continent_land
+
+    if no_surface_water:
+        shoreline = np.zeros_like(land_field, dtype=np.float32)
+        shelf = np.zeros_like(land_field, dtype=np.float32)
+        ocean_depth = np.zeros_like(land_field, dtype=np.float32)
+    else:
+        continent_shoreline_distance = np.abs(land_field - threshold)
+        continent_shoreline = 1.0 - smoothstep(0.0, max(cfg.beach_width, 0.005), continent_shoreline_distance)
+        shoreline = np.where(land, continent_shoreline, continent_shoreline * 0.55)
+
+        continent_shelf = 1.0 - smoothstep(0.0, max(cfg.shelf_width, 0.005), np.clip(threshold - land_field, 0.0, 10.0))
+        shelf = np.where(~land, continent_shelf, 0.0)
+        ocean_depth = np.where(land, 0.0, 1.0 - shelf * 0.75)
+
+    return {
+        "land_field": land_field,
+        "threshold": threshold,
+        "land": land,
+        "shoreline": shoreline.astype(np.float32),
+        "shelf": shelf.astype(np.float32),
+        "ocean_depth": ocean_depth.astype(np.float32),
+    }
+
+
+def build_climate_fields(cfg, x, y, z, lat_abs, shelf, moisture_range=None):
+    biome = fbm_3d(x, y, z, cfg.biome_scale, cfg.biome_complexity, 0.57, cfg.seed + 2333)
+    moisture_input = (
+        fbm_3d(x, y, z, cfg.biome_scale * 0.7, 4, 0.55, cfg.seed + 3441)
+        + shelf * 0.28
+        + (1.0 - lat_abs) * 0.16
+    )
+    moisture = normalize01(moisture_input, moisture_range)
+    biosphere = float(np.clip(cfg.biosphere_strength, 0.0, 1.0))
+    desert_bias = cfg.desert_coverage * (0.45 + (1.0 - moisture) * 0.75)
+    forest_bias = cfg.forest_coverage * biosphere * (0.35 + moisture * 0.85)
+    return biome, moisture_input, moisture, desert_bias, forest_bias
+
+
+def build_planet_family_masks(
+    cfg,
+    x,
+    y,
+    z,
+    lat,
+    lon,
+    land,
+    lowland,
+    mountain_mask,
+    moisture,
+    arid,
+    soil_noise,
+    mineral_noise,
+):
+    family = normalize_planet_family(cfg.planet_family)
+    lat_abs = np.abs(np.sin(lat))
+    land_float = land.astype(np.float32)
+    geologic_activity = float(np.clip(cfg.geologic_activity, 0.0, 1.0))
+    lava_activity = float(np.clip(cfg.lava_activity, 0.0, 1.0))
+    volatile_ice_strength = float(np.clip(cfg.volatile_ice_strength, 0.0, 1.0))
+    tidal_lock_strength = float(np.clip(cfg.tidal_lock_strength, 0.0, 1.0))
+    surface_age = float(np.clip(cfg.surface_age, 0.0, 1.0))
+
+    fissure_noise = fbm_3d(x * 1.18 + 0.13, y * 0.92 - 0.21, z * 1.11 + 0.07, 26.0, 5, 0.60, cfg.seed + 12431)
+    lava_gate = np.clip(mountain_mask * 0.45 + mineral_noise * 0.35 + geologic_activity * 0.35, 0.0, 1.0)
+    lava = smoothstep(0.78 - lava_activity * 0.18, 0.98, fissure_noise * 0.70 + lava_gate * 0.30)
+    lava *= land_float * lava_activity * geologic_activity
+
+    volatile_noise = fbm_3d(x * 0.94 - 0.17, y * 1.16 + 0.22, z * 1.05, 8.5, 4, 0.54, cfg.seed + 12511)
+    cold_gate = smoothstep(0.34, 0.96, lat_abs)
+    if family == "tidally_locked":
+        substellar = np.clip(np.cos(lon), -1.0, 1.0)
+        cold_gate = np.maximum(cold_gate, smoothstep(0.10, 0.82, -substellar) * tidal_lock_strength)
+    volatile_ice = smoothstep(0.44, 0.82, volatile_noise * 0.38 + cold_gate * 0.62)
+    volatile_ice *= land_float * volatile_ice_strength
+
+    dry_basin = np.clip(arid * lowland * smoothstep(0.44, 0.92, soil_noise) * (1.0 - moisture * 0.60), 0.0, 1.0)
+    regolith = np.clip(
+        land_float
+        * surface_age
+        * (0.45 + fbm_3d(x, y, z, 64.0, 4, 0.56, cfg.seed + 12613) * 0.55),
+        0.0,
+        1.0,
+    )
+
+    day_side = np.clip((np.cos(lon) + 1.0) * 0.5, 0.0, 1.0)
+    day_night = (day_side - 0.5) * tidal_lock_strength
+
+    return {
+        "family": family,
+        "lava": lava.astype(np.float32),
+        "volatile_ice": volatile_ice.astype(np.float32),
+        "dry_basin": dry_basin.astype(np.float32),
+        "regolith": regolith.astype(np.float32),
+        "day_night": day_night.astype(np.float32),
+    }
+
+
+def build_atmosphere_haze_map(cfg, lat, cloud_mask=None):
+    density = float(np.clip(cfg.atmosphere_density, 0.0, 1.0))
+    if density <= 0.0:
+        shape = cloud_mask.shape if cloud_mask is not None else lat.shape
+        return np.zeros(shape, dtype=np.float32)
+    lat_abs = np.abs(np.sin(lat))
+    limb_like_band = 0.42 + smoothstep(0.44, 0.98, lat_abs) * 0.22
+    base = np.full(lat.shape, 0.20 + density * 0.34, dtype=np.float32) * limb_like_band
+    if cloud_mask is not None:
+        base = np.maximum(base, np.clip(cloud_mask, 0.0, 1.0) * (0.34 + density * 0.42))
+    return np.clip(base * density, 0.0, 1.0).astype(np.float32)
+
+
+def build_emissive_heat_map(cfg, family_masks):
+    lava_activity = float(np.clip(cfg.lava_activity, 0.0, 1.0))
+    geologic_activity = float(np.clip(cfg.geologic_activity, 0.0, 1.0))
+    if lava_activity <= 0.0 or geologic_activity <= 0.0:
+        return np.zeros_like(family_masks["lava"], dtype=np.float32)
+    lava = np.clip(family_masks["lava"], 0.0, 1.0)
+    glow = ndimage.gaussian_filter(lava, sigma=(0.9, 0.9), mode=("nearest", "wrap"))
+    return np.clip(lava * 0.78 + glow * 0.38, 0.0, 1.0).astype(np.float32)
 
 
 def build_cloud_field(cfg, x, y, z, lat, land_field, land_threshold):
@@ -2825,39 +3372,14 @@ def build_maps_from_vectors(
     needs_nebula = bool({"nebula_color", "nebula_alpha", "nebula_stars"} & requested_outputs)
 
     lat_abs = np.abs(np.sin(lat))
-
-    continent = fbm_3d(
-        x,
-        y,
-        z,
-        cfg.continent_scale,
-        cfg.continent_detail,
-        cfg.continent_roughness,
-        cfg.seed,
-    )
-    coast_detail = fbm_3d(
-        x,
-        y,
-        z,
-        cfg.shoreline_noise_scale,
-        cfg.shoreline_detail,
-        0.62,
-        cfg.seed + 811,
-    )
-    coast_detail = (coast_detail - 0.5) * cfg.shoreline_complexity * 0.38
-    land_field = continent + coast_detail - cfg.shoreline_erosion * 0.12
-
-    no_surface_water = all_land_mode(cfg)
-    threshold = (
-        float(np.quantile(land_field, land_threshold_quantile(cfg)))
-        if land_threshold is None
-        else float(land_threshold)
-    )
-    continent_land = np.ones_like(land_field, dtype=bool) if no_surface_water else land_field >= threshold
-
+    land_layers = build_land_water_layers(cfg, x, y, z, land_threshold)
+    land_field = land_layers["land_field"]
+    threshold = land_layers["threshold"]
+    land = land_layers["land"]
+    shoreline = land_layers["shoreline"]
+    shelf = land_layers["shelf"]
+    ocean_depth = land_layers["ocean_depth"]
     map_height, map_width = x.shape
-    island_land = np.zeros_like(continent_land, dtype=bool)
-    land = continent_land
     if stats_only and stats <= {"land"}:
         return {"_land_field": land_field}
 
@@ -2873,31 +3395,17 @@ def build_maps_from_vectors(
             )
         cloud_mask = cloud_mask_from_field(cfg, cloud_field, float(cloud_threshold))
 
-    if no_surface_water:
-        shoreline = np.zeros_like(land_field, dtype=np.float32)
-        shelf = np.zeros_like(land_field, dtype=np.float32)
-        ocean_depth = np.zeros_like(land_field, dtype=np.float32)
-    else:
-        continent_shoreline_distance = np.abs(land_field - threshold)
-        continent_shoreline = 1.0 - smoothstep(0.0, max(cfg.beach_width, 0.005), continent_shoreline_distance)
-        shoreline = np.where(land, continent_shoreline, continent_shoreline * 0.55)
-
-        continent_shelf = 1.0 - smoothstep(0.0, max(cfg.shelf_width, 0.005), np.clip(threshold - land_field, 0.0, 10.0))
-        shelf = np.where(~land, continent_shelf, 0.0)
-        ocean_depth = np.where(land, 0.0, 1.0 - shelf * 0.75)
-
-    biome = fbm_3d(x, y, z, cfg.biome_scale, cfg.biome_complexity, 0.57, cfg.seed + 2333)
-    moisture_input = (
-        fbm_3d(x, y, z, cfg.biome_scale * 0.7, 4, 0.55, cfg.seed + 3441)
-        + shelf * 0.28
-        + (1.0 - lat_abs) * 0.16
+    biome, moisture_input, moisture, desert_bias, forest_bias = build_climate_fields(
+        cfg,
+        x,
+        y,
+        z,
+        lat_abs,
+        shelf,
+        moisture_range,
     )
     if stats_only and stats <= {"moisture"}:
         return {"_land_field": land_field, "_moisture_input": moisture_input}
-
-    moisture = normalize01(moisture_input, moisture_range)
-    desert_bias = cfg.desert_coverage * (0.45 + (1.0 - moisture) * 0.75)
-    forest_bias = cfg.forest_coverage * (0.35 + moisture * 0.85)
 
     range_scale = max(1.0, cfg.mountain_scale * 0.38)
     range_spine = 1.0 - np.abs(fbm_3d(x, y, z, range_scale, 5, 0.62, cfg.seed + 4073) * 2.0 - 1.0)
@@ -3086,6 +3594,21 @@ def build_maps_from_vectors(
         0.0,
         1.0,
     )
+    family_masks = build_planet_family_masks(
+        cfg,
+        x,
+        y,
+        z,
+        lat,
+        lon,
+        land,
+        lowland,
+        mountain_mask,
+        moisture,
+        arid,
+        soil_noise,
+        mineral_noise,
+    )
     if needs_color:
         land_tints = resolve_land_tints(cfg)
         ochre_tint = land_tints["ochre"]
@@ -3163,8 +3686,35 @@ def build_maps_from_vectors(
         land_color = color_blend(
             land_color,
             salt_flat_tint,
-            np.clip(salt_basin * cfg.salt_flat_tint_strength * non_ice_land, 0.0, 0.48),
+            np.clip(np.maximum(salt_basin, family_masks["dry_basin"] * 0.72) * cfg.salt_flat_tint_strength * non_ice_land, 0.0, 0.48),
         )
+        family = family_masks["family"]
+        if family in {"icy_moon", "frozen_world"} or cfg.volatile_ice_strength > 0.0:
+            cryo_color = colors["ice"] * 0.58 + colors["snow"] * 0.42
+            land_color = color_blend(
+                land_color,
+                cryo_color,
+                np.clip(family_masks["volatile_ice"] * (0.54 + cfg.volatile_ice_strength * 0.36), 0.0, 0.88),
+            )
+        if family in {"volcanic_world", "carbon_world"} or cfg.lava_activity > 0.0:
+            cooled_lava = np.array([24, 22, 20], dtype=np.float32)
+            hot_lava = np.array([238, 86, 18], dtype=np.float32)
+            lava_mask = np.clip(family_masks["lava"], 0.0, 1.0)
+            land_color = color_blend(land_color, cooled_lava, np.clip(lava_mask * 0.72, 0.0, 0.78))
+            land_color = color_blend(land_color, hot_lava, np.clip(lava_mask * cfg.lava_activity * 0.32, 0.0, 0.45))
+        if family == "iron_rich":
+            iron_color = np.array([146, 48, 26], dtype=np.float32)
+            land_color = color_blend(land_color, iron_color, np.clip(arid * mineral_noise * 0.26 * non_ice_land, 0.0, 0.34))
+        if family == "carbon_world":
+            carbon_color = np.array([20, 22, 22], dtype=np.float32)
+            land_color = color_blend(land_color, carbon_color, np.clip(family_masks["regolith"] * 0.32 * non_ice_land, 0.0, 0.42))
+        if cfg.tidal_lock_strength > 0.0:
+            day_tint = np.array([188, 116, 66], dtype=np.float32)
+            night_tint = np.array([74, 96, 124], dtype=np.float32)
+            day_weight = np.clip(np.maximum(family_masks["day_night"], 0.0) * 0.34 * non_ice_land, 0.0, 0.34)
+            night_weight = np.clip(np.maximum(-family_masks["day_night"], 0.0) * 0.42 * non_ice_land, 0.0, 0.46)
+            land_color = color_blend(land_color, day_tint, day_weight)
+            land_color = color_blend(land_color, night_tint, night_weight)
         land_color = (land_color - 127.5) * cfg.land_contrast + 127.5
         land_color = land_color + cfg.land_brightness * 255.0
         land_color = np.clip(land_color, 0.0, 255.0)
@@ -3214,6 +3764,10 @@ def build_maps_from_vectors(
             shelf_layer_mask = np.clip(shallow_tint_weight * shelf_color_strength, 0.0, 1.0)
             shelf_layer_mask = np.where(~land, shelf_layer_mask, 0.0)
             color = color_blend(color, shelf_layer_color, shelf_layer_mask)
+        if family_masks["family"] == "clouded_greenhouse":
+            haze_color = np.array([222, 196, 126], dtype=np.float32)
+            haze_strength = np.clip(build_atmosphere_haze_map(cfg, lat, cloud_mask) * 0.26, 0.0, 0.32)
+            color = color_blend(color, haze_color, haze_strength)
         if crater_layers is not None and cfg.crater_color_strength > 0.0:
             crater_color_strength = float(np.clip(cfg.crater_color_strength, 0.0, 1.0))
             floor = crater_layers["floor"]
@@ -3249,6 +3803,10 @@ def build_maps_from_vectors(
             polar_ice * (0.018 + ice_solidity * 0.034 + ice_texture * 0.026),
             polar_ice * cfg.polar_ice_shelf_strength * (0.008 + ice_solidity * 0.014),
         )
+        if cfg.volatile_ice_strength > 0.0:
+            height += family_masks["volatile_ice"] * (0.018 + cfg.volatile_ice_strength * 0.030)
+        if cfg.lava_activity > 0.0:
+            height += family_masks["lava"] * (0.018 + cfg.geologic_activity * 0.040)
         if moon_basin_strength > 0.0:
             height -= moon_basin_mask * 0.075
             height = lerp(height, height - np.clip(moon_basin_mask, 0.0, 1.0) * 0.018, moon_basin_strength * 0.35)
@@ -3292,6 +3850,9 @@ def build_maps_from_vectors(
         roughness = np.where(land, 0.72, 0.24)
         roughness = roughness + mountain_mask * 0.18 - shelf * 0.07
         roughness = roughness + polar_ice * (0.06 + ice_solidity * 0.12 + ice_texture * 0.16)
+        roughness = roughness + family_masks["regolith"] * 0.10
+        roughness = roughness + family_masks["lava"] * 0.14
+        roughness = roughness - family_masks["volatile_ice"] * 0.18
         if moon_regolith_variation > 0.0:
             roughness += np.where(land, (moon_regolith_noise - 0.5) * moon_regolith_variation * 0.10, 0.0)
         if crater_layers is not None:
@@ -3340,6 +3901,10 @@ def build_maps_from_vectors(
         )
     if needs_nebula:
         maps.update(build_nebula_maps(cfg, x, y, z))
+    if "atmosphere_haze" in selected_maps:
+        maps["atmosphere_haze"] = build_atmosphere_haze_map(cfg, lat, cloud_mask)
+    if "emissive_heat" in selected_maps:
+        maps["emissive_heat"] = build_emissive_heat_map(cfg, family_masks)
     if return_raw_stats:
         maps["_land_field"] = land_field
         if cloud_field is not None:
@@ -3581,11 +4146,13 @@ TEXTURE_MAP_NAMES = (
     "nebula_alpha",
     "nebula_stars",
     "city_lights",
+    "atmosphere_haze",
+    "emissive_heat",
 )
 
 QUAD_SPHERE_MAP_NAMES = TEXTURE_MAP_NAMES
 
-CLOUD_16BIT_MAPS = {"cloud_mask", "cloud_shadow", "nebula_alpha", "nebula_stars"}
+CLOUD_16BIT_MAPS = {"cloud_mask", "cloud_shadow", "nebula_alpha", "nebula_stars", "atmosphere_haze", "emissive_heat"}
 
 
 def selected_texture_maps(map_names=None):
@@ -3639,6 +4206,10 @@ def save_map_set(out_dir, maps, map_names=None):
         save_gray16(out_dir / "nebula_stars.png", maps["nebula_stars"])
     if "city_lights" in selected:
         save_rgb(out_dir / "city_lights.png", maps["city_lights"])
+    if "atmosphere_haze" in selected:
+        save_gray16(out_dir / "atmosphere_haze.png", maps["atmosphere_haze"])
+    if "emissive_heat" in selected:
+        save_gray16(out_dir / "emissive_heat.png", maps["emissive_heat"])
 
 
 CUBEMAP_CROSS_LAYOUT = {
@@ -3665,7 +4236,7 @@ QUAD_SPHERE_EDGE_PAIRS = (
     (("nz", "bottom"), ("ny", "bottom"), True),
 )
 
-QUAD_SPHERE_SCALAR_SEAM_MAPS = {"cloud_mask", "cloud_shadow", "nebula_alpha", "nebula_stars"}
+QUAD_SPHERE_SCALAR_SEAM_MAPS = {"cloud_mask", "cloud_shadow", "nebula_alpha", "nebula_stars", "atmosphere_haze", "emissive_heat"}
 CUBEMAP_CROSS_BLEED_PIXELS = 8
 
 
@@ -3975,6 +4546,8 @@ def quad_sphere_low_memory_map_groups(selected_maps):
         ("cloud_mask", "cloud_shadow"),
         ("nebula_color", "nebula_alpha", "nebula_stars"),
         ("city_lights",),
+        ("atmosphere_haze",),
+        ("emissive_heat",),
     ):
         present = tuple(name for name in group if name in selected)
         if present:
@@ -4156,6 +4729,8 @@ def write_quad_sphere_manifest(out_dir, face_size, map_names=None, write_cubemap
                 "cloud_shadow": f"{CUBEMAP_CROSS_BLEED_PIXELS}px copied edge bleed around face borders; remaining empty-cell interior stays alpha 0",
                 "nebula_alpha": f"{CUBEMAP_CROSS_BLEED_PIXELS}px copied edge bleed around face borders; remaining empty-cell interior stays alpha 0",
                 "nebula_stars": f"{CUBEMAP_CROSS_BLEED_PIXELS}px copied edge bleed around face borders; remaining empty-cell interior stays alpha 0",
+                "atmosphere_haze": f"{CUBEMAP_CROSS_BLEED_PIXELS}px copied edge bleed around face borders; remaining empty-cell interior stays alpha 0",
+                "emissive_heat": f"{CUBEMAP_CROSS_BLEED_PIXELS}px copied edge bleed around face borders; remaining empty-cell interior stays alpha 0",
             },
         },
         "face_vectors": {
@@ -4315,6 +4890,14 @@ def build_arg_parser():
     parser.add_argument("--profile-limit", type=int, default=40, help="Number of profile rows to print when --profile is enabled.")
     parser.add_argument("--profile-out", type=Path, default=None, help="Optional path to write raw .prof data for tools like snakeviz.")
     for key, value in PRESETS["earthlike"].items():
+        if key == "planet_family":
+            parser.add_argument(
+                f"--{key.replace('_', '-')}",
+                dest=key,
+                choices=sorted(PLANET_FAMILIES),
+                default=None,
+            )
+            continue
         if key == "land_palette":
             parser.add_argument(
                 f"--{key.replace('_', '-')}",
