@@ -120,6 +120,20 @@ PARAM_GROUPS = [
             ("crater_erosion", 0.00, 1.00, 0.01),
             ("crater_land_bias", 0.00, 1.00, 0.01),
             ("crater_color_strength", 0.00, 1.00, 0.01),
+            ("crater_small_density", 0.00, 1.00, 0.01),
+            ("crater_medium_density", 0.00, 1.00, 0.01),
+            ("crater_large_basin_density", 0.00, 1.00, 0.01),
+            ("crater_ray_strength", 0.00, 1.00, 0.01),
+            ("crater_floor_darkening", 0.00, 1.00, 0.01),
+            ("crater_micro_pitting", 0.00, 1.00, 0.01),
+        ],
+    },
+    {
+        "name": "Moon Surface",
+        "params": [
+            ("moon_basin_strength", 0.00, 1.00, 0.01),
+            ("moon_basin_scale", 0.15, 5.00, 0.05),
+            ("moon_regolith_variation", 0.00, 1.00, 0.01),
         ],
     },
     {
@@ -499,6 +513,15 @@ TEXTURE_MAP_LABELS = {
 }
 
 PARAM_LABELS = {
+    "crater_small_density": "Small crater density",
+    "crater_medium_density": "Medium crater density",
+    "crater_large_basin_density": "Large basin density",
+    "crater_ray_strength": "Fresh ray strength",
+    "crater_floor_darkening": "Floor darkening",
+    "crater_micro_pitting": "Micro-pitting",
+    "moon_basin_strength": "Maria basin strength",
+    "moon_basin_scale": "Maria basin scale",
+    "moon_regolith_variation": "Regolith variation",
     "cloud_coverage": "Cloud coverage",
     "cloud_scale": "System size",
     "cloud_detail": "Cloud detail",

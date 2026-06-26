@@ -583,6 +583,121 @@ PRESETS = {
         "road_network_strength": 0.14,
         "light_temperature": 0.50,
     },
+    "moon": {
+        "land_coverage": 1.0,
+        "continent_scale": 1.10,
+        "continent_detail": 7,
+        "continent_roughness": 0.56,
+        "continent_contrast": 0.15,
+        "shoreline_complexity": 0.0,
+        "shoreline_noise_scale": 18.0,
+        "shoreline_detail": 4,
+        "shoreline_erosion": 0.0,
+        "beach_width": 0.0,
+        "shelf_width": 0.0,
+        "island_density": 0.0,
+        "island_scale": 34.0,
+        "island_threshold": 0.90,
+        "island_chain_strength": 0.0,
+        "island_min_continent_distance": 0.0,
+        "island_max_continent_distance": 0.0,
+        "island_min_area": 0.0,
+        "island_max_area": 0.0,
+        "biome_scale": 9.0,
+        "biome_complexity": 6,
+        "desert_coverage": 0.62,
+        "forest_coverage": 0.0,
+        "mountain_density": 0.36,
+        "mountain_scale": 13.0,
+        "mountain_sharpness": 0.50,
+        "mountain_height": 0.42,
+        "mountain_boundary_alignment": 0.12,
+        "crater_density": 0.78,
+        "crater_min_radius": 0.004,
+        "crater_max_radius": 0.115,
+        "crater_depth": 0.86,
+        "crater_rim_height": 0.80,
+        "crater_rim_width": 0.18,
+        "crater_erosion": 0.18,
+        "crater_land_bias": 0.0,
+        "crater_color_strength": 0.92,
+        "crater_small_density": 0.88,
+        "crater_medium_density": 0.78,
+        "crater_large_basin_density": 0.58,
+        "crater_ray_strength": 0.48,
+        "crater_floor_darkening": 0.70,
+        "crater_micro_pitting": 0.82,
+        "moon_basin_strength": 0.62,
+        "moon_basin_scale": 1.35,
+        "moon_regolith_variation": 0.58,
+        "polar_ice_size": 0.0,
+        "polar_ice_scale": 2.15,
+        "polar_ice_complexity": 0.0,
+        "polar_ice_fragmentation": 0.0,
+        "polar_ice_shelf_strength": 0.0,
+        "polar_ice_solidity": 0.0,
+        "snow_threshold": 1.0,
+        "ocean_current_strength": 0.0,
+        "land_palette": "lunar_gray",
+        "land_color_variation": 0.18,
+        "continent_color_variation": 0.30,
+        "continent_color_scale": 1.80,
+        "continent_color_diversity": 0.45,
+        "continent_color_blend_smoothness": 0.78,
+        "ocean_base_color": "#101010",
+        "ocean_flat_color_strength": 0.0,
+        "ocean_shelf_color": "#202020",
+        "ocean_shelf_color_strength": 0.0,
+        "ocean_color_variation": 0.0,
+        "ocean_shallow_tint_strength": 0.0,
+        "ocean_shelf_brightness": 0.0,
+        "ocean_shelf_contrast": 1.0,
+        "ocean_depth_tint_strength": 0.0,
+        "ocean_latitude_tint_strength": 0.0,
+        "ocean_productivity_strength": 0.0,
+        "ocean_sediment_strength": 0.0,
+        "ocean_brightness": 0.0,
+        "ocean_contrast": 1.0,
+        "ocean_hue_shift": 0.0,
+        "ocean_saturation": 0.0,
+        "ocean_colorizer_hue": 0.0,
+        "ocean_colorizer_strength": 0.0,
+        "land_brightness": -0.02,
+        "land_contrast": 1.18,
+        "mineral_tint_strength": 0.16,
+        "wetland_tint_strength": 0.0,
+        "iron_oxide_tint_strength": 0.0,
+        "basalt_tint_strength": 0.36,
+        "salt_flat_tint_strength": 0.0,
+        "clay_tint_strength": 0.0,
+        "cloud_coverage": 0.0,
+        "cloud_scale": 1.0,
+        "cloud_detail": 4,
+        "cloud_roughness": 0.45,
+        "cloud_softness": 0.20,
+        "cloud_land_correlation": 0.0,
+        "cloud_opacity": 0.0,
+        "cloud_shadow_strength": 0.0,
+        "cloud_shadow_softness": 0.0,
+        "cloud_latitude_bias": 0.0,
+        "cloud_band_strength": 0.0,
+        "cloud_latitude_warp": 0.0,
+        "cloud_hemisphere_imbalance": 0.0,
+        "cloud_wind_stretch": 0.0,
+        "cloud_breakup": 0.0,
+        "storm_density": 0.0,
+        "spiral_storm_strength": 0.0,
+        "polar_cloud_strength": 0.0,
+        "polar_cloud_asymmetry": 0.0,
+        "city_lights_strength": 0.0,
+        "city_density": 0.0,
+        "megacity_count": 0,
+        "coastal_city_bias": 0.0,
+        "inland_city_bias": 0.0,
+        "city_sprawl": 0.0,
+        "road_network_strength": 0.0,
+        "light_temperature": 0.50,
+    },
 }
 
 
@@ -633,6 +748,7 @@ LAND_PALETTE_LABELS = {
     "pale_sedimentary": "Pale Sedimentary",
     "cold_tundra": "Cold Tundra",
     "alien_mineral": "Alien Mineral",
+    "lunar_gray": "Lunar Gray",
 }
 
 
@@ -901,6 +1017,39 @@ LAND_PALETTE_DATA = {
             "solid_ice": [244, 248, 250],
         },
     },
+    "lunar_gray": {
+        "colors": {
+            "beach": [128, 124, 116],
+            "dark_forest": [58, 58, 58],
+            "forest": [84, 84, 80],
+            "grass": [112, 110, 104],
+            "dry_plain": [136, 132, 122],
+            "desert": [154, 148, 134],
+            "rock": [92, 90, 86],
+            "snow": [188, 184, 172],
+            "ice": [104, 104, 104],
+        },
+        "region_tints": [
+            [96, 96, 92],
+            [126, 122, 112],
+            [70, 70, 70],
+            [150, 146, 134],
+            [112, 108, 100],
+            [82, 82, 78],
+        ],
+        "tints": {
+            "ochre": [128, 120, 104],
+            "rust": [104, 96, 88],
+            "dark_wet": [70, 70, 68],
+            "cool_tundra": [118, 120, 122],
+            "pale_highland": [166, 160, 146],
+            "iron_oxide": [110, 94, 82],
+            "basalt": [42, 42, 42],
+            "salt_flat": [178, 172, 156],
+            "clay": [132, 122, 110],
+            "solid_ice": [194, 190, 180],
+        },
+    },
 }
 
 
@@ -989,11 +1138,30 @@ NEBULA_DEFAULTS = {
     "nebula_accent_color": "#44b4cd",
 }
 
+CRATER_LAYER_DEFAULTS = {
+    "crater_small_density": 0.0,
+    "crater_medium_density": 0.0,
+    "crater_large_basin_density": 0.0,
+    "crater_ray_strength": 0.0,
+    "crater_floor_darkening": 0.0,
+    "crater_micro_pitting": 0.0,
+}
+
+MOON_SURFACE_DEFAULTS = {
+    "moon_basin_strength": 0.0,
+    "moon_basin_scale": 1.0,
+    "moon_regolith_variation": 0.0,
+}
+
 
 def seed_custom_palette_defaults() -> None:
     for values in PRESETS.values():
         values.setdefault("land_color_count", 9)
         values.setdefault("region_tint_count", DEFAULT_REGION_TINT_COUNT)
+        for key, value in CRATER_LAYER_DEFAULTS.items():
+            values.setdefault(key, value)
+        for key, value in MOON_SURFACE_DEFAULTS.items():
+            values.setdefault(key, value)
         for key, value in NEBULA_DEFAULTS.items():
             values.setdefault(key, value)
         apply_palette_defaults_to_config_values(values, values.get("land_palette", "natural_earth"), only_missing=True)
@@ -1193,6 +1361,15 @@ class PlanetConfig:
     crater_erosion: float
     crater_land_bias: float
     crater_color_strength: float
+    crater_small_density: float
+    crater_medium_density: float
+    crater_large_basin_density: float
+    crater_ray_strength: float
+    crater_floor_darkening: float
+    crater_micro_pitting: float
+    moon_basin_strength: float
+    moon_basin_scale: float
+    moon_regolith_variation: float
     polar_ice_size: float
     polar_ice_scale: float
     polar_ice_complexity: float
@@ -1836,56 +2013,182 @@ def build_city_lights_map(
     return np.clip(city_intensity[..., None] * light_color, 0.0, 255.0).astype(np.float32)
 
 
-def build_crater_field(cfg, x, y, z, land):
-    density = float(np.clip(cfg.crater_density, 0.0, 1.0))
-    if density <= 0.0:
-        blank = np.zeros_like(x, dtype=np.float32)
-        return blank, blank, blank
+def crater_generation_enabled(cfg) -> bool:
+    return any(
+        float(getattr(cfg, key)) > 0.0
+        for key in (
+            "crater_density",
+            "crater_small_density",
+            "crater_medium_density",
+            "crater_large_basin_density",
+            "crater_micro_pitting",
+        )
+    )
 
-    min_radius = max(0.001, float(cfg.crater_min_radius))
-    max_radius = max(min_radius, float(cfg.crater_max_radius))
-    crater_count = max(1, int(round(density * 150.0)))
+
+def blank_crater_layers(shape):
+    return {
+        "floor": np.zeros(shape, dtype=np.float32),
+        "rim": np.zeros(shape, dtype=np.float32),
+        "ejecta": np.zeros(shape, dtype=np.float32),
+        "rays": np.zeros(shape, dtype=np.float32),
+        "basin": np.zeros(shape, dtype=np.float32),
+        "micro": np.zeros(shape, dtype=np.float32),
+    }
+
+
+def tangent_basis(center):
+    up = np.array([0.0, 1.0, 0.0], dtype=np.float32)
+    if abs(float(np.dot(center, up))) > 0.92:
+        up = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+    u = np.cross(center, up)
+    u /= max(float(np.linalg.norm(u)), 1e-6)
+    v = np.cross(center, u)
+    v /= max(float(np.linalg.norm(v)), 1e-6)
+    return u.astype(np.float32), v.astype(np.float32)
+
+
+def accumulate_crater_layer(
+    layers,
+    cfg,
+    x,
+    y,
+    z,
+    rng,
+    count,
+    min_radius,
+    max_radius,
+    target,
+    layer_kind,
+    seed_offset,
+):
+    if count <= 0:
+        return
+
     erosion = float(np.clip(cfg.crater_erosion, 0.0, 1.0))
-    land_bias = float(np.clip(cfg.crater_land_bias, 0.0, 1.0))
     rim_width = float(np.clip(cfg.crater_rim_width, 0.0, 1.0))
-
-    rng = np.random.default_rng(cfg.seed + 7019)
-    centers = rng.normal(size=(crater_count, 3)).astype(np.float32)
+    ray_strength = float(np.clip(cfg.crater_ray_strength, 0.0, 1.0))
+    centers = rng.normal(size=(count, 3)).astype(np.float32)
     centers /= np.maximum(np.linalg.norm(centers, axis=1, keepdims=True), 1e-6)
-    radius_mix = rng.random(crater_count) ** 1.65
+    radius_mix = rng.random(count) ** (2.35 if layer_kind == "small" else 1.35)
     radii = min_radius + (max_radius - min_radius) * radius_mix
-    strengths = 0.85 + rng.random(crater_count) * 0.55
+    strengths = 0.70 + rng.random(count) * 0.62
 
-    wear_noise = fbm_3d(x, y, z, 42.0, 3, 0.52, cfg.seed + 7103)
-    wear = lerp(1.0, 0.62 + wear_noise * 0.38, erosion)
-    target = lerp(np.ones_like(x, dtype=np.float32), land.astype(np.float32), land_bias)
+    wear_noise = fbm_3d(x, y, z, 38.0 + seed_offset, 3, 0.52, cfg.seed + 7103 + seed_offset)
+    wear = lerp(1.0, 0.54 + wear_noise * 0.46, erosion)
 
-    floor = np.zeros_like(x, dtype=np.float32)
-    rim = np.zeros_like(x, dtype=np.float32)
-    ejecta = np.zeros_like(x, dtype=np.float32)
-
-    for center, radius, strength in zip(centers, radii, strengths):
+    for index, (center, radius, strength) in enumerate(zip(centers, radii, strengths)):
         dot = np.clip(x * center[0] + y * center[1] + z * center[2], -1.0, 1.0)
         chord_radius = max(1e-6, 2.0 * math.sin(float(radius) * 0.5))
         radial = np.sqrt(np.maximum(0.0, 2.0 - 2.0 * dot)) / chord_radius
+        local_wear = wear * strength * target
 
-        bowl = 1.0 - smoothstep(0.0, 1.00 + erosion * 0.12, radial)
-        bowl *= 0.58 + 0.42 * (1.0 - smoothstep(0.0, 0.18 + erosion * 0.18, radial))
-        rim_inner_start = 0.92 - rim_width * 0.18
-        rim_inner_peak = 0.985 - rim_width * 0.035
-        rim_outer_end = 1.025 + rim_width * 0.18 + erosion * 0.05
+        if layer_kind == "basin":
+            basin_floor = 1.0 - smoothstep(0.0, 1.05 + erosion * 0.30, radial)
+            basin_floor *= 0.70 + 0.30 * (1.0 - smoothstep(0.0, 0.32, radial))
+            basin_rim = smoothstep(0.82, 1.00, radial) * (1.0 - smoothstep(1.0, 1.22 + rim_width * 0.25, radial))
+            layers["basin"] += basin_floor * local_wear * (1.0 - erosion * 0.20)
+            layers["rim"] += basin_rim * local_wear * 0.42
+            continue
+
+        bowl = 1.0 - smoothstep(0.0, 1.0 + erosion * 0.14, radial)
+        bowl *= 0.52 + 0.48 * (1.0 - smoothstep(0.0, 0.16 + erosion * 0.14, radial))
+        rim_inner_start = 0.90 - rim_width * 0.22
+        rim_inner_peak = 0.975 - rim_width * 0.04
+        rim_outer_end = 1.035 + rim_width * 0.24 + erosion * 0.06
         ring = smoothstep(rim_inner_start, rim_inner_peak, radial) * (1.0 - smoothstep(1.0, rim_outer_end, radial))
-        rays = smoothstep(0.98, 1.05, radial) * (1.0 - smoothstep(1.08, 2.05 + erosion * 0.42, radial))
+        ejecta = smoothstep(0.96, 1.04, radial) * (1.0 - smoothstep(1.06, 2.20 + erosion * 0.55, radial))
 
-        local_wear = wear * (1.0 - erosion * 0.12)
-        floor += bowl * strength * local_wear * (1.0 - erosion * 0.25)
-        rim += ring * strength * local_wear * (1.0 - erosion * 0.16)
-        ejecta += rays * strength * local_wear * (1.0 - erosion * 0.12)
+        floor_scale = 0.72 if layer_kind == "small" else 1.0
+        rim_scale = 1.12 if layer_kind == "medium" else 0.82
+        layers["floor"] += bowl * local_wear * floor_scale * (1.0 - erosion * 0.24)
+        layers["rim"] += ring * local_wear * rim_scale * (1.0 - erosion * 0.18)
+        layers["ejecta"] += ejecta * local_wear * (0.45 if layer_kind == "small" else 0.90) * (1.0 - erosion * 0.18)
 
-    floor = np.clip(floor * target, 0.0, 1.0)
-    rim = np.clip(rim * target, 0.0, 1.0)
-    ejecta = np.clip(ejecta * target, 0.0, 1.0)
-    return floor.astype(np.float32), rim.astype(np.float32), ejecta.astype(np.float32)
+        if ray_strength > 0.0 and layer_kind == "medium" and index % 4 == 0:
+            u, v = tangent_basis(center)
+            tx = x * u[0] + y * u[1] + z * u[2]
+            ty = x * v[0] + y * v[1] + z * v[2]
+            angle = np.arctan2(ty, tx)
+            ray_count = int(rng.integers(9, 18))
+            phase = float(rng.random() * math.tau)
+            spoke = np.power(np.clip(0.5 + 0.5 * np.cos(angle * ray_count + phase), 0.0, 1.0), 8.0)
+            ray_falloff = smoothstep(1.02, 1.18, radial) * (1.0 - smoothstep(1.22, 3.25, radial))
+            layers["rays"] += spoke * ray_falloff * local_wear * ray_strength * 0.95
+
+
+def build_crater_field(cfg, x, y, z, land):
+    legacy_density = float(np.clip(cfg.crater_density, 0.0, 1.0))
+    small_density = float(np.clip(cfg.crater_small_density, 0.0, 1.0))
+    medium_density = float(np.clip(cfg.crater_medium_density, 0.0, 1.0))
+    basin_density = float(np.clip(cfg.crater_large_basin_density, 0.0, 1.0))
+    micro_strength = float(np.clip(cfg.crater_micro_pitting, 0.0, 1.0))
+    if max(legacy_density, small_density, medium_density, basin_density, micro_strength) <= 0.0:
+        return blank_crater_layers(x.shape)
+
+    min_radius = max(0.001, float(cfg.crater_min_radius))
+    max_radius = max(min_radius, float(cfg.crater_max_radius))
+    land_bias = float(np.clip(cfg.crater_land_bias, 0.0, 1.0))
+    target = lerp(np.ones_like(x, dtype=np.float32), land.astype(np.float32), land_bias)
+
+    layers = blank_crater_layers(x.shape)
+    rng = np.random.default_rng(cfg.seed + 7019)
+    small_count = int(round(small_density * 240.0 + legacy_density * 55.0))
+    medium_count = int(round(medium_density * 120.0 + legacy_density * 120.0))
+    basin_count = int(round(basin_density * 10.0 + legacy_density * 4.0))
+
+    accumulate_crater_layer(
+        layers,
+        cfg,
+        x,
+        y,
+        z,
+        rng,
+        basin_count,
+        max(max_radius * 1.05, 0.070),
+        max(max_radius * 2.35, 0.18),
+        target,
+        "basin",
+        101,
+    )
+    accumulate_crater_layer(
+        layers,
+        cfg,
+        x,
+        y,
+        z,
+        rng,
+        medium_count,
+        min_radius,
+        max_radius,
+        target,
+        "medium",
+        211,
+    )
+    accumulate_crater_layer(
+        layers,
+        cfg,
+        x,
+        y,
+        z,
+        rng,
+        small_count,
+        max(0.0015, min_radius * 0.32),
+        max(min_radius * 1.8, 0.010),
+        target,
+        "small",
+        307,
+    )
+
+    if micro_strength > 0.0:
+        fine = fbm_3d(x, y, z, 95.0, 4, 0.54, cfg.seed + 7433)
+        finer = fbm_3d(x, y, z, 180.0, 3, 0.50, cfg.seed + 7529)
+        pitting = smoothstep(0.52, 0.93, fine * 0.62 + finer * 0.38)
+        layers["micro"] = np.clip((pitting * 0.74 + layers["floor"] * 0.35) * micro_strength * target, 0.0, 1.0)
+
+    for key, value in layers.items():
+        layers[key] = np.clip(value, 0.0, 1.0).astype(np.float32)
+    return layers
 
 
 def distance_from_mask(mask, wrap_x=False):
@@ -2613,11 +2916,9 @@ def build_maps_from_vectors(
     range_mask = np.clip(range_mask + band_mask * (0.18 + ridge_mask * 0.42), 0.0, 1.0)
     range_mask = np.maximum(range_mask, boundary_range)
     mountain_mask = np.clip(range_mask * (0.48 + ridge_mask * 0.92) + ridge_mask * range_mask * 0.22, 0.0, 1.0)
-    crater_floor = None
-    crater_rim = None
-    crater_ejecta = None
-    if (needs_color or needs_height or needs_roughness) and cfg.crater_density > 0.0:
-        crater_floor, crater_rim, crater_ejecta = build_crater_field(cfg, x, y, z, land)
+    crater_layers = None
+    if (needs_color or needs_height or needs_roughness) and crater_generation_enabled(cfg):
+        crater_layers = build_crater_field(cfg, x, y, z, land)
 
     color = None
     regional_debug = None
@@ -2760,6 +3061,18 @@ def build_maps_from_vectors(
     cold_lat = smoothstep(0.42, 0.88, lat_abs)
     arid = np.clip(desert_bias + (1.0 - moisture) * 0.45, 0.0, 1.0)
     non_ice_land = 1.0 - np.clip(ice_mask, 0.0, 1.0)
+    moon_basin_strength = float(np.clip(cfg.moon_basin_strength, 0.0, 1.0))
+    moon_regolith_variation = float(np.clip(cfg.moon_regolith_variation, 0.0, 1.0))
+    moon_basin_mask = np.zeros_like(land_field, dtype=np.float32)
+    moon_regolith_noise = np.zeros_like(land_field, dtype=np.float32)
+    if moon_basin_strength > 0.0 or moon_regolith_variation > 0.0:
+        basin_scale = max(0.15, float(cfg.moon_basin_scale))
+        basin_field = (
+            fbm_3d(x, y, z, basin_scale, 4, 0.54, cfg.seed + 8123) * 0.72
+            + fbm_3d(x, y, z, basin_scale * 2.2, 3, 0.55, cfg.seed + 8191) * 0.28
+        )
+        moon_basin_mask = smoothstep(0.58, 0.86, basin_field) * land.astype(np.float32) * moon_basin_strength
+        moon_regolith_noise = fbm_3d(x, y, z, 54.0, 4, 0.56, cfg.seed + 8273)
     continent_lowland = 1.0 - smoothstep(threshold, threshold + cfg.continent_contrast * 1.8, land_field)
     lowland = continent_lowland
     ice_solidity = np.clip(cfg.polar_ice_solidity, 0.0, 1.0)
@@ -2855,6 +3168,21 @@ def build_maps_from_vectors(
         land_color = (land_color - 127.5) * cfg.land_contrast + 127.5
         land_color = land_color + cfg.land_brightness * 255.0
         land_color = np.clip(land_color, 0.0, 255.0)
+        if moon_basin_strength > 0.0 or moon_regolith_variation > 0.0:
+            maria_color = np.array([54, 54, 54], dtype=np.float32)
+            highland_dust = np.array([168, 162, 146], dtype=np.float32)
+            regolith_weight = np.clip((moon_regolith_noise - 0.5) * 2.0 * moon_regolith_variation, -1.0, 1.0)
+            land_color = color_blend(land_color, maria_color, np.clip(moon_basin_mask * 0.82, 0.0, 0.86))
+            land_color = color_blend(
+                land_color,
+                highland_dust,
+                np.clip(np.maximum(regolith_weight, 0.0) * land.astype(np.float32) * 0.22, 0.0, 0.22),
+            )
+            land_color = color_blend(
+                land_color,
+                land_color * 0.72,
+                np.clip(np.maximum(-regolith_weight, 0.0) * land.astype(np.float32) * 0.18, 0.0, 0.18),
+            )
         solid_ice_tint = land_tints["solid_ice"]
         ice_highlight = color_blend(
             colors["ice"],
@@ -2886,14 +3214,29 @@ def build_maps_from_vectors(
             shelf_layer_mask = np.clip(shallow_tint_weight * shelf_color_strength, 0.0, 1.0)
             shelf_layer_mask = np.where(~land, shelf_layer_mask, 0.0)
             color = color_blend(color, shelf_layer_color, shelf_layer_mask)
-        if crater_floor is not None and cfg.crater_color_strength > 0.0:
+        if crater_layers is not None and cfg.crater_color_strength > 0.0:
             crater_color_strength = float(np.clip(cfg.crater_color_strength, 0.0, 1.0))
+            floor = crater_layers["floor"]
+            rim = crater_layers["rim"]
+            ejecta = crater_layers["ejecta"]
+            rays = crater_layers["rays"]
+            basin = crater_layers["basin"]
+            micro = crater_layers["micro"]
+            floor_darkening = float(np.clip(cfg.crater_floor_darkening, 0.0, 1.0))
             crater_shadow = color * 0.52
             crater_highlight = color * 0.60 + np.array([205, 190, 160], dtype=np.float32) * 0.40
-            floor_tint = np.clip(crater_floor * crater_color_strength * 0.86, 0.0, 0.78)
-            rim_tint = np.clip((crater_rim * 0.92 + crater_ejecta * 0.34) * crater_color_strength, 0.0, 0.70)
+            ray_highlight = color * 0.48 + np.array([225, 218, 194], dtype=np.float32) * 0.52
+            basin_shadow = color * 0.42 + np.array([28, 28, 28], dtype=np.float32) * 0.58
+            floor_tint = np.clip(floor * crater_color_strength * (0.62 + floor_darkening * 0.58), 0.0, 0.86)
+            rim_tint = np.clip((rim * 1.08 + ejecta * 0.46) * crater_color_strength, 0.0, 0.82)
+            ray_tint = np.clip(rays * crater_color_strength, 0.0, 0.84)
+            basin_tint = np.clip(basin * crater_color_strength * (0.46 + floor_darkening * 0.50), 0.0, 0.82)
+            micro_tint = np.clip(micro * crater_color_strength * floor_darkening * 0.20, 0.0, 0.24)
+            color = color_blend(color, basin_shadow, basin_tint)
             color = color_blend(color, crater_shadow, floor_tint)
             color = color_blend(color, crater_highlight, rim_tint)
+            color = color_blend(color, ray_highlight, ray_tint)
+            color = color_blend(color, color * 0.82, micro_tint)
 
     if needs_height:
         continent_base_land_height = smoothstep(threshold - cfg.continent_contrast, threshold + cfg.continent_contrast, land_field)
@@ -2906,15 +3249,28 @@ def build_maps_from_vectors(
             polar_ice * (0.018 + ice_solidity * 0.034 + ice_texture * 0.026),
             polar_ice * cfg.polar_ice_shelf_strength * (0.008 + ice_solidity * 0.014),
         )
-        if crater_floor is not None:
+        if moon_basin_strength > 0.0:
+            height -= moon_basin_mask * 0.075
+            height = lerp(height, height - np.clip(moon_basin_mask, 0.0, 1.0) * 0.018, moon_basin_strength * 0.35)
+        if moon_regolith_variation > 0.0:
+            regolith_relief = (moon_regolith_noise - 0.5) * moon_regolith_variation * 0.025
+            height += np.where(land, regolith_relief, 0.0)
+        if crater_layers is not None:
             crater_depth = float(np.clip(cfg.crater_depth, 0.0, 1.0))
             crater_rim_height = float(np.clip(cfg.crater_rim_height, 0.0, 1.0))
-            crater_floor_level = np.where(land, 0.32 + base_land_height * 0.02, height - ocean_depth * 0.06)
-            crater_flatten = np.clip(crater_floor * (0.58 + crater_depth * 0.40), 0.0, 0.98)
+            floor = crater_layers["floor"]
+            rim = crater_layers["rim"]
+            ejecta = crater_layers["ejecta"]
+            basin = crater_layers["basin"]
+            micro = crater_layers["micro"]
+            crater_floor_level = np.where(land, 0.30 + base_land_height * 0.025, height - ocean_depth * 0.06)
+            crater_flatten = np.clip((floor * 0.92 + basin * 0.42) * (0.48 + crater_depth * 0.48), 0.0, 0.98)
             height = lerp(height, crater_floor_level, crater_flatten)
-            height -= crater_floor * crater_depth * 0.46
-            height += crater_rim * crater_rim_height * 0.38
-            height += crater_ejecta * crater_rim_height * 0.10
+            height -= floor * crater_depth * 0.52
+            height -= basin * crater_depth * 0.20
+            height -= micro * crater_depth * 0.035
+            height += rim * crater_rim_height * 0.44
+            height += ejecta * crater_rim_height * 0.14
         raw_height = height
         height = normalize01(raw_height, height_range)
 
@@ -2936,8 +3292,18 @@ def build_maps_from_vectors(
         roughness = np.where(land, 0.72, 0.24)
         roughness = roughness + mountain_mask * 0.18 - shelf * 0.07
         roughness = roughness + polar_ice * (0.06 + ice_solidity * 0.12 + ice_texture * 0.16)
-        if crater_floor is not None:
-            roughness = roughness + crater_rim * 0.16 + crater_ejecta * 0.07 - crater_floor * 0.035
+        if moon_regolith_variation > 0.0:
+            roughness += np.where(land, (moon_regolith_noise - 0.5) * moon_regolith_variation * 0.10, 0.0)
+        if crater_layers is not None:
+            roughness = (
+                roughness
+                + crater_layers["rim"] * 0.22
+                + crater_layers["ejecta"] * 0.12
+                + crater_layers["rays"] * 0.08
+                + crater_layers["micro"] * 0.16
+                - crater_layers["floor"] * 0.05
+                - crater_layers["basin"] * 0.06
+            )
         roughness = np.clip(roughness, 0.0, 1.0)
 
     maps = {}

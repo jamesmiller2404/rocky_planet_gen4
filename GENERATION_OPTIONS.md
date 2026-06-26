@@ -20,8 +20,8 @@ Example:
 
 | Option | Default | Description |
 | --- | ---: | --- |
-| `--preset` | `earthlike` | Starting planet recipe. Choices: `archipelago`, `dry_rocky`, `earthlike`, `frozen_ocean`, `supercontinent`. |
-| `--land-palette` | preset default | Land-source color palette. Choices: `alien_mineral`, `basaltic_dark`, `cold_tundra`, `dry_savanna`, `lush_green`, `natural_earth`, `pale_sedimentary`, `red_desert`. |
+| `--preset` | `earthlike` | Starting planet recipe. Choices: `archipelago`, `dry_rocky`, `earthlike`, `frozen_ocean`, `moon`, `supercontinent`. |
+| `--land-palette` | preset default | Land-source color palette. Choices: `alien_mineral`, `basaltic_dark`, `cold_tundra`, `dry_savanna`, `lunar_gray`, `lush_green`, `natural_earth`, `pale_sedimentary`, `red_desert`. |
 | `--seed` | `42` | Random seed. Same seed and same options produce the same maps. |
 | `--width` | `2048` | Equirectangular output width in pixels. Minimum `64`. |
 | `--height` | `1024` | Equirectangular output height in pixels. Minimum `32`. |
@@ -44,6 +44,12 @@ Save a specific Blender-oriented set:
 
 ```powershell
 .\.venv\Scripts\python.exe rocky_planet_gen.py --preset earthlike --seed 42 --width 2048 --height 1024 --out output/blender_maps --texture-maps color height normal roughness cloud_mask cloud_shadow
+```
+
+Generate a realistic airless moon texture:
+
+```powershell
+.\.venv\Scripts\python.exe rocky_planet_gen.py --preset moon --seed 42 --width 2048 --height 1024 --out output/moon
 ```
 
 The selected texture maps also reduce avoidable computation where possible. For example, omitting `city_lights`, `cloud_mask`, `cloud_shadow`, `normal`, or `roughness` skips those final build steps instead of only skipping the saved PNG files.
@@ -127,6 +133,7 @@ It also writes cubemap-cross atlases such as `quad_sphere/color_cubemap_cross.pn
 | `supercontinent` | Large landmass, fewer islands, more dry interior terrain. |
 | `dry_rocky` | High land coverage, strong deserts, exposed rock, minimal ice and wetland tinting. |
 | `frozen_ocean` | Low land coverage, large polar ice, cold terrain, subdued land color variation. |
+| `moon` | Airless all-land rocky moon with gray regolith, dark maria-like basins, dense impact craters, no oceans, no clouds, and no city lights. |
 
 ## Land And Ocean Shape
 
@@ -185,7 +192,7 @@ It also writes cubemap-cross atlases such as `quad_sphere/color_cubemap_cross.pn
 
 ## Meteor Impact Craters
 
-These controls bake crater bowls, raised rims, and ejecta into `height.png`, `normal.png`, `roughness.png`, `color.png`, and previews. They do not change land, shoreline, ocean-depth, cloud, or city-light masks. Crater centers are generated on the sphere, so the same seed produces matching equirectangular and quad-sphere crater placement.
+These controls bake crater bowls, raised rims, ejecta, rays, basin sag, micro-pitting, and crater albedo into `height.png`, `normal.png`, `roughness.png`, `color.png`, and previews. They do not change land, shoreline, ocean-depth, cloud, or city-light masks. Crater centers are generated on the sphere, so the same seed produces matching equirectangular and quad-sphere crater placement.
 
 | Option | Earthlike Default | Description |
 | --- | ---: | --- |
@@ -198,6 +205,22 @@ These controls bake crater bowls, raised rims, and ejecta into `height.png`, `no
 | `--crater-erosion` | `0.25` | Wear and softening applied to craters. Lower values create crisp fresh impacts; higher values make older, subdued craters. |
 | `--crater-land-bias` | `0.85` | Bias toward land surfaces. `1.0` restricts crater visibility to land; `0.0` allows all surfaces equally. |
 | `--crater-color-strength` | `0.45` | Amount of crater darkening/highlighting baked into `color.png`. Set to `0.0` for height-only craters. |
+| `--crater-small-density` | `0.0` | Adds dense small crater pitting. The `moon` preset uses this heavily for a worn regolith surface. |
+| `--crater-medium-density` | `0.0` | Adds medium craters with stronger bowls, rims, ejecta blankets, and optional rays. |
+| `--crater-large-basin-density` | `0.0` | Adds sparse large impact basins with broad floor darkening and shallow height sag. |
+| `--crater-ray-strength` | `0.0` | Bright radial ray strength on a subset of fresher medium impacts. |
+| `--crater-floor-darkening` | `0.0` | Extra color darkening for crater floors and large basin floors. |
+| `--crater-micro-pitting` | `0.0` | Fine high-frequency pitting that affects albedo, height, and roughness. |
+
+## Moon Surface
+
+These controls are neutral at `0.0` for non-moon presets. The `moon` preset enables them to create broad dark maria-like plains and fine gray regolith variation below the crater layer.
+
+| Option | Earthlike Default | Description |
+| --- | ---: | --- |
+| `--moon-basin-strength` | `0.0` | Strength of broad dark maria-like basin plains. Also subtly lowers basin height. |
+| `--moon-basin-scale` | `1.0` | Size of procedural maria basin regions. Lower values make broader plains; higher values make smaller patches. |
+| `--moon-regolith-variation` | `0.0` | Fine gray/tan albedo mottling plus subtle height and roughness variation. |
 
 ## Cloud Layer
 
@@ -409,6 +432,8 @@ Examples:
 ```
 
 ## Preset Defaults
+
+The table below lists the original ocean/rocky presets. The `moon` preset is intentionally airless (`land_coverage=1.0`, no clouds, no city lights, no polar ice) and uses the crater and moon-surface defaults documented above.
 
 | Option | earthlike | archipelago | supercontinent | dry_rocky | frozen_ocean |
 | --- | ---: | ---: | ---: | ---: | ---: |
