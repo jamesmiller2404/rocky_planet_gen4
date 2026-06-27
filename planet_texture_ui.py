@@ -652,7 +652,75 @@ def metadata_from_payload(payload: dict, output_kind: str = "texture_output") ->
     return metadata_for_config(cfg, projection, metadata_face_size, texture_maps, ui_state, output_kind)
 
 
-def save_planet_output(payload: dict) -> Path:
+def image_file_summary(path: Path) -> dict:
+    with Image.open(path) as image:
+        width, height = image.size
+        mode = image.mode
+    return {
+        "path": str(path.resolve()),
+        "file": path.name,
+        "width": width,
+        "height": height,
+        "mode": mode,
+        "bytes": path.stat().st_size,
+    }
+
+
+def timed_stage(report: dict, name: str, label: str, fn):
+    started = time.perf_counter()
+    try:
+        return fn()
+    finally:
+        report["stages"].append(
+            {
+                "name": name,
+                "label": label,
+                "seconds": time.perf_counter() - started,
+            }
+        )
+
+
+def save_map_set_with_report(out_dir: Path, maps: dict, texture_maps: tuple[str, ...], report: dict) -> None:
+    for name in texture_maps:
+        started = time.perf_counter()
+        save_map_set(out_dir, maps, (name,))
+        write_seconds = time.perf_counter() - started
+        path = out_dir / f"{name}.png"
+        entry = {
+            "name": name,
+            "projection": "equirectangular",
+            "write_seconds": write_seconds,
+            "files": [image_file_summary(path)] if path.exists() else [],
+        }
+        report["maps"].append(entry)
+
+
+def summarize_quad_sphere_maps(quad_dir: Path, face_dirs: list[str], texture_maps: tuple[str, ...]) -> list[dict]:
+    entries = []
+    for name in texture_maps:
+        face_files = []
+        for face in face_dirs:
+            path = quad_dir / face / f"{name}.png"
+            if path.exists():
+                info = image_file_summary(path)
+                info["face"] = face
+                face_files.append(info)
+        stitched_path = quad_dir / f"{name}_cubemap_cross.png"
+        stitched = image_file_summary(stitched_path) if stitched_path.exists() else None
+        entries.append(
+            {
+                "name": name,
+                "projection": "quad_sphere",
+                "face_count": len(face_files),
+                "files": face_files,
+                "stitched_atlas": stitched,
+                "bytes": sum(item["bytes"] for item in face_files) + (stitched["bytes"] if stitched else 0),
+            }
+        )
+    return entries
+
+
+def save_planet_output(payload: dict) -> tuple[Path, dict]:
     cfg = config_from_payload(payload, preview=False)
     projection = str(payload.get("projection", "equirectangular"))
     texture_maps = texture_maps_from_payload(payload)
@@ -662,6 +730,17 @@ def save_planet_output(payload: dict) -> Path:
     )
     out_dir = unique_output_dir(output_name)
     out_dir.mkdir(parents=True, exist_ok=False)
+    report = {
+        "preset": cfg.preset,
+        "seed": cfg.seed,
+        "projection": projection,
+        "texture_maps": list(texture_maps),
+        "requested_size": {"width": cfg.width, "height": cfg.height},
+        "started_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "stages": [],
+        "maps": [],
+    }
+    total_started = time.perf_counter()
 
     if projection == "quad_sphere":
         face_size = int(payload.get("face_size") or min(cfg.width, cfg.height))
@@ -669,21 +748,61 @@ def save_planet_output(payload: dict) -> Path:
             raise ValueError("Quad-sphere face size must be at least 32.")
         quad_dir = out_dir / "quad_sphere"
         quad_dir.mkdir(parents=True, exist_ok=True)
-        save_quad_sphere_maps_low_memory(quad_dir, cfg, face_size, texture_maps, quad_workers=QUAD_WORKERS)
-        write_quad_sphere_manifest(out_dir, face_size, texture_maps)
+        report["face_size"] = face_size
+        report["quad_workers"] = QUAD_WORKERS
+        timed_stage(
+            report,
+            "quad_sphere_maps",
+            "Generate and write quad-sphere faces",
+            lambda: save_quad_sphere_maps_low_memory(quad_dir, cfg, face_size, texture_maps, quad_workers=QUAD_WORKERS),
+        )
+        timed_stage(
+            report,
+            "quad_sphere_manifest",
+            "Write quad-sphere manifest",
+            lambda: write_quad_sphere_manifest(out_dir, face_size, texture_maps),
+        )
         ui_state = ui_state_from_payload(payload, cfg, "quad_sphere", face_size, texture_maps)
         metadata = metadata_for_config(cfg, "quad_sphere", face_size, texture_maps, ui_state)
+        face_dirs = sorted(path.name for path in quad_dir.iterdir() if path.is_dir())
+        report["maps"] = summarize_quad_sphere_maps(quad_dir, face_dirs, texture_maps)
+        report["face_count"] = len(face_dirs)
     else:
-        maps = build_maps(cfg, texture_maps)
-        save_map_set(out_dir, maps, texture_maps)
+        maps = timed_stage(
+            report,
+            "build_maps",
+            "Build selected texture maps",
+            lambda: build_maps(cfg, texture_maps),
+        )
+        timed_stage(
+            report,
+            "write_maps",
+            "Write selected texture maps",
+            lambda: save_map_set_with_report(out_dir, maps, texture_maps, report),
+        )
         if "color" in texture_maps:
-            render_globe_preview(maps["color"], maps["height"], out_dir / "preview.png")
-            write_html_preview(out_dir, f"{cfg.preset} planet preview", texture_maps)
+            timed_stage(
+                report,
+                "preview_assets",
+                "Write preview assets",
+                lambda: (
+                    render_globe_preview(maps["color"], maps["height"], out_dir / "preview.png"),
+                    write_html_preview(out_dir, f"{cfg.preset} planet preview", texture_maps),
+                ),
+            )
         ui_state = ui_state_from_payload(payload, cfg, "equirectangular", int(payload.get("face_size") or min(cfg.width, cfg.height)), texture_maps)
         metadata = metadata_for_config(cfg, "equirectangular", texture_maps=texture_maps, ui_state=ui_state)
 
-    (out_dir / "preset.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
-    return out_dir
+    timed_stage(
+        report,
+        "metadata",
+        "Write preset metadata",
+        lambda: (out_dir / "preset.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8"),
+    )
+    report["total_seconds"] = time.perf_counter() - total_started
+    report["output_dir"] = str(out_dir.resolve())
+    (out_dir / "generation_report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+    return out_dir, report
 
 
 def save_config_only(payload: dict) -> Path:
@@ -711,7 +830,7 @@ def unique_config_dir(name: str) -> Path:
     return candidate
 
 
-def output_summary(out_dir: Path) -> dict:
+def output_summary(out_dir: Path, report: dict | None = None) -> dict:
     quad_dir = out_dir / "quad_sphere"
     stitched = sorted(path.name for path in quad_dir.glob("*_cubemap_cross.png")) if quad_dir.exists() else []
     face_dirs = sorted(path.name for path in quad_dir.iterdir() if path.is_dir()) if quad_dir.exists() else []
@@ -722,12 +841,15 @@ def output_summary(out_dir: Path) -> dict:
             for name in TEXTURE_MAP_NAMES
             if any((quad_dir / face / f"{name}.png").exists() for face in face_dirs)
         ]
-    return {
+    summary = {
         "output_dir": str(out_dir.resolve()),
         "quad_sphere_faces": face_dirs,
         "stitched_quad_sphere_maps": stitched,
         "generated_maps": generated_maps,
     }
+    if report is not None:
+        summary["generation_report"] = report
+    return summary
 
 
 def validate_texture_maps(value) -> list[str]:
@@ -970,8 +1092,8 @@ class PlanetUiHandler(BaseHTTPRequestHandler):
                     }
                 )
             elif parsed.path == "/api/save":
-                out_dir = save_planet_output(payload)
-                self.write_json(output_summary(out_dir))
+                out_dir, report = save_planet_output(payload)
+                self.write_json(output_summary(out_dir, report))
             elif parsed.path == "/api/config/save":
                 out_dir = save_config_only(payload)
                 self.write_json({"output_dir": str(out_dir.resolve()), "preset_path": str((out_dir / "preset.json").resolve())})
@@ -1415,11 +1537,137 @@ img {
   height: 16px;
   margin: 0;
 }
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(5, 6, 8, 0.72);
+}
+.modal-backdrop[hidden] {
+  display: none;
+}
+.report-modal {
+  width: min(1040px, 100%);
+  max-height: min(820px, calc(100vh - 36px));
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: 0 18px 70px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+}
+.report-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+}
+.report-head h2 {
+  color: var(--text);
+  font-size: 16px;
+}
+.report-close {
+  width: 36px;
+  min-height: 32px;
+  font-size: 20px;
+  line-height: 1;
+}
+.report-body {
+  overflow: auto;
+  padding: 16px;
+}
+.report-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.report-stat {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #11151d;
+  padding: 9px 10px;
+}
+.report-stat-label {
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+.report-stat-value {
+  margin-top: 3px;
+  color: var(--text);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.report-section-title {
+  margin: 14px 0 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.report-stage-list {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.report-stage {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  padding: 5px 0;
+}
+.report-stage span:last-child {
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+.report-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.report-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 760px;
+}
+.report-table th,
+.report-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+.report-table th {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+.report-table td {
+  font-size: 13px;
+}
+.report-table tr:last-child td {
+  border-bottom: 0;
+}
+.report-note {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
 @media (max-width: 900px) {
   main { grid-template-columns: 1fr; }
   aside { max-height: none; border-right: 0; border-bottom: 1px solid var(--line); }
   .image-grid { grid-template-columns: 1fr; }
   .map-options { grid-template-columns: 1fr; }
+  .report-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 </style>
 </head>
@@ -1578,6 +1826,15 @@ img {
     </div>
   </section>
 </main>
+<div class="modal-backdrop" id="generationReportModal" hidden>
+  <section class="report-modal" role="dialog" aria-modal="true" aria-labelledby="generationReportTitle">
+    <header class="report-head">
+      <h2 id="generationReportTitle">Generation Report</h2>
+      <button class="report-close" id="generationReportClose" type="button" aria-label="Close generation report">&times;</button>
+    </header>
+    <div class="report-body" id="generationReportBody"></div>
+  </section>
+</div>
 <script>
 let schema = null;
 let debounceTimer = null;
@@ -1620,6 +1877,9 @@ const els = {
   refreshSavedBtn: document.getElementById("refreshSavedBtn"),
   savedPlanets: document.getElementById("savedPlanets"),
   loadPath: document.getElementById("loadPath"),
+  generationReportModal: document.getElementById("generationReportModal"),
+  generationReportClose: document.getElementById("generationReportClose"),
+  generationReportBody: document.getElementById("generationReportBody"),
 };
 
 const globe = {
@@ -1671,6 +1931,142 @@ function applyFaceSizePreset() {
 function setStatus(text, kind = "") {
   els.status.className = `status ${kind}`;
   els.status.textContent = text;
+}
+
+function formatSeconds(value) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "n/a";
+  if (value < 0.01) return "<0.01 s";
+  if (value < 60) return `${value.toFixed(2)} s`;
+  const minutes = Math.floor(value / 60);
+  const seconds = value - minutes * 60;
+  return `${minutes}m ${seconds.toFixed(1)}s`;
+}
+
+function formatBytes(value) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "n/a";
+  const units = ["B", "KB", "MB", "GB"];
+  let amount = value;
+  let unit = 0;
+  while (amount >= 1024 && unit < units.length - 1) {
+    amount /= 1024;
+    unit += 1;
+  }
+  return `${amount.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
+}
+
+function formatMapName(name) {
+  return String(name || "").replace(/_/g, " ");
+}
+
+function makeEl(tag, className = "", text = "") {
+  const element = document.createElement(tag);
+  if (className) element.className = className;
+  if (text) element.textContent = text;
+  return element;
+}
+
+function appendReportStat(container, label, value) {
+  const stat = makeEl("div", "report-stat");
+  stat.appendChild(makeEl("div", "report-stat-label", label));
+  stat.appendChild(makeEl("div", "report-stat-value", value));
+  container.appendChild(stat);
+}
+
+function summarizeMapDimensions(entry) {
+  const files = entry.files || [];
+  if (entry.projection === "quad_sphere") {
+    const face = files[0];
+    const faceText = face ? `${face.width} x ${face.height} faces` : "n/a";
+    const atlas = entry.stitched_atlas;
+    return atlas ? `${faceText}; atlas ${atlas.width} x ${atlas.height}` : faceText;
+  }
+  const file = files[0];
+  return file ? `${file.width} x ${file.height}` : "n/a";
+}
+
+function summarizeMapModes(entry) {
+  const modes = new Set((entry.files || []).map(file => file.mode).filter(Boolean));
+  if (entry.stitched_atlas && entry.stitched_atlas.mode) modes.add(entry.stitched_atlas.mode);
+  return modes.size ? Array.from(modes).join(", ") : "n/a";
+}
+
+function summarizeMapBytes(entry) {
+  if (typeof entry.bytes === "number") return entry.bytes;
+  return (entry.files || []).reduce((total, file) => total + (file.bytes || 0), 0);
+}
+
+function closeGenerationReport() {
+  els.generationReportModal.hidden = true;
+}
+
+function showGenerationReport(report) {
+  if (!report) return;
+  const body = els.generationReportBody;
+  body.replaceChildren();
+
+  const summary = makeEl("div", "report-summary");
+  appendReportStat(summary, "Total time", formatSeconds(report.total_seconds));
+  appendReportStat(summary, "Projection", String(report.projection || "n/a").replace(/_/g, " "));
+  appendReportStat(summary, "Preset / seed", `${report.preset || "n/a"} / ${report.seed ?? "n/a"}`);
+  appendReportStat(summary, "Output", report.output_dir || "n/a");
+  if (report.projection === "quad_sphere") {
+    appendReportStat(summary, "Quad faces", `${report.face_count || 0} at ${report.face_size || "n/a"} px`);
+    appendReportStat(summary, "Workers", String(report.quad_workers || "n/a"));
+  } else if (report.requested_size) {
+    appendReportStat(summary, "Map size", `${report.requested_size.width} x ${report.requested_size.height}`);
+  }
+  body.appendChild(summary);
+
+  body.appendChild(makeEl("div", "report-section-title", "Save stages"));
+  const stages = makeEl("div", "report-stage-list");
+  for (const stage of report.stages || []) {
+    const row = makeEl("div", "report-stage");
+    row.appendChild(makeEl("span", "", stage.label || stage.name || "Stage"));
+    row.appendChild(makeEl("span", "", formatSeconds(stage.seconds)));
+    stages.appendChild(row);
+  }
+  body.appendChild(stages);
+
+  body.appendChild(makeEl("div", "report-section-title", "Texture maps"));
+  const tableWrap = makeEl("div", "report-table-wrap");
+  const table = makeEl("table", "report-table");
+  const thead = document.createElement("thead");
+  const headRow = document.createElement("tr");
+  for (const label of ["Map", "Files", "Dimensions", "Mode", "Size", "Map time"]) {
+    headRow.appendChild(makeEl("th", "", label));
+  }
+  thead.appendChild(headRow);
+  table.appendChild(thead);
+  const tbody = document.createElement("tbody");
+  for (const entry of report.maps || []) {
+    const row = document.createElement("tr");
+    const fileCount = (entry.files || []).length + (entry.stitched_atlas ? 1 : 0);
+    const timeText = typeof entry.write_seconds === "number"
+      ? formatSeconds(entry.write_seconds)
+      : "included in save stage";
+    for (const value of [
+      formatMapName(entry.name),
+      String(fileCount),
+      summarizeMapDimensions(entry),
+      summarizeMapModes(entry),
+      formatBytes(summarizeMapBytes(entry)),
+      timeText,
+    ]) {
+      row.appendChild(makeEl("td", "", value));
+    }
+    tbody.appendChild(row);
+  }
+  table.appendChild(tbody);
+  tableWrap.appendChild(table);
+  body.appendChild(tableWrap);
+
+  const reportPath = report.output_dir ? `${report.output_dir}\\generation_report.json` : "generation_report.json";
+  body.appendChild(makeEl("p", "report-note", `Saved report: ${reportPath}`));
+  if (report.projection === "equirectangular") {
+    body.appendChild(makeEl("p", "report-note", "Equirectangular map computation is a shared build stage; per-map time shows PNG write time."));
+  }
+
+  els.generationReportModal.hidden = false;
 }
 
 function normalizeSavedPath(path) {
@@ -2418,6 +2814,7 @@ async function saveOutput() {
     } else {
       setStatus(`Saved texture output: ${data.output_dir}.${generatedText}`, "ok");
     }
+    showGenerationReport(data.generation_report);
   } catch (error) {
     setStatus(error.message, "error");
   } finally {
@@ -2542,6 +2939,13 @@ async function boot() {
   });
   document.getElementById("refreshSavedBtn").addEventListener("click", () => refreshSavedPlanets(true));
   document.getElementById("loadBtn").addEventListener("click", loadPresetJson);
+  els.generationReportClose.addEventListener("click", closeGenerationReport);
+  els.generationReportModal.addEventListener("click", event => {
+    if (event.target === els.generationReportModal) closeGenerationReport();
+  });
+  document.addEventListener("keydown", event => {
+    if (event.key === "Escape" && !els.generationReportModal.hidden) closeGenerationReport();
+  });
   refreshSavedPlanets(false);
 }
 
