@@ -1016,6 +1016,9 @@ PRESETS["earthlike"].update(
     atmosphere_density=0.72,
     surface_age=0.42,
     geologic_activity=0.48,
+    plate_boundary_strength=0.78,
+    peak_prominence=0.70,
+    erosion_strength=0.42,
     volatile_ice_strength=0.0,
     tidal_lock_strength=0.0,
     lava_activity=0.0,
@@ -1026,6 +1029,9 @@ PRESETS["archipelago"].update(
     atmosphere_density=0.78,
     surface_age=0.36,
     geologic_activity=0.50,
+    plate_boundary_strength=0.66,
+    peak_prominence=0.58,
+    erosion_strength=0.50,
     volatile_ice_strength=0.0,
     tidal_lock_strength=0.0,
     lava_activity=0.0,
@@ -1036,6 +1042,9 @@ PRESETS["supercontinent"].update(
     atmosphere_density=0.64,
     surface_age=0.48,
     geologic_activity=0.46,
+    plate_boundary_strength=0.90,
+    peak_prominence=0.84,
+    erosion_strength=0.36,
     volatile_ice_strength=0.0,
     tidal_lock_strength=0.0,
     lava_activity=0.0,
@@ -1046,6 +1055,9 @@ PRESETS["dry_rocky"].update(
     atmosphere_density=0.46,
     surface_age=0.54,
     geologic_activity=0.42,
+    plate_boundary_strength=0.92,
+    peak_prominence=0.86,
+    erosion_strength=0.28,
     volatile_ice_strength=0.0,
     tidal_lock_strength=0.0,
     lava_activity=0.0,
@@ -1056,6 +1068,9 @@ PRESETS["frozen_ocean"].update(
     atmosphere_density=0.62,
     surface_age=0.40,
     geologic_activity=0.26,
+    plate_boundary_strength=0.58,
+    peak_prominence=0.48,
+    erosion_strength=0.58,
     volatile_ice_strength=0.70,
     tidal_lock_strength=0.0,
     lava_activity=0.0,
@@ -1066,10 +1081,20 @@ PRESETS["moon"].update(
     atmosphere_density=0.0,
     surface_age=0.86,
     geologic_activity=0.06,
+    plate_boundary_strength=0.18,
+    peak_prominence=0.26,
+    erosion_strength=0.10,
     volatile_ice_strength=0.0,
     tidal_lock_strength=0.0,
     lava_activity=0.0,
 )
+PRESETS["marslike_desert"].update(plate_boundary_strength=0.70, peak_prominence=0.56, erosion_strength=0.54)
+PRESETS["icy_moon"].update(plate_boundary_strength=0.12, peak_prominence=0.18, erosion_strength=0.16)
+PRESETS["volcanic_moon"].update(plate_boundary_strength=0.74, peak_prominence=0.74, erosion_strength=0.18)
+PRESETS["iron_desert"].update(plate_boundary_strength=0.88, peak_prominence=0.82, erosion_strength=0.26)
+PRESETS["carbon_world"].update(plate_boundary_strength=0.84, peak_prominence=0.76, erosion_strength=0.22)
+PRESETS["clouded_greenhouse"].update(plate_boundary_strength=0.52, peak_prominence=0.46, erosion_strength=0.60)
+PRESETS["tidally_locked_rocky"].update(plate_boundary_strength=0.78, peak_prominence=0.68, erosion_strength=0.30)
 
 
 OCEAN_COLORS = {
@@ -1518,6 +1543,12 @@ CRATER_LAYER_DEFAULTS = {
     "crater_micro_pitting": 0.0,
 }
 
+TECTONIC_DEFAULTS = {
+    "plate_boundary_strength": 0.72,
+    "peak_prominence": 0.62,
+    "erosion_strength": 0.38,
+}
+
 MOON_SURFACE_DEFAULTS = {
     "moon_basin_strength": 0.0,
     "moon_basin_scale": 1.0,
@@ -1541,6 +1572,8 @@ def seed_custom_palette_defaults() -> None:
         values.setdefault("land_color_count", 9)
         values.setdefault("region_tint_count", DEFAULT_REGION_TINT_COUNT)
         for key, value in CRATER_LAYER_DEFAULTS.items():
+            values.setdefault(key, value)
+        for key, value in TECTONIC_DEFAULTS.items():
             values.setdefault(key, value)
         for key, value in MOON_SURFACE_DEFAULTS.items():
             values.setdefault(key, value)
@@ -1744,6 +1777,9 @@ class PlanetConfig:
     mountain_sharpness: float
     mountain_height: float
     mountain_boundary_alignment: float
+    plate_boundary_strength: float
+    peak_prominence: float
+    erosion_strength: float
     crater_density: float
     crater_min_radius: float
     crater_max_radius: float
@@ -1927,6 +1963,110 @@ def build_mountain_range_bands(x, y, z, cfg):
         bands = np.maximum(bands, core * length_gate * breakup * float(rng.uniform(0.72, 1.0)))
 
     return np.clip(bands, 0.0, 1.0)
+
+
+def build_plate_boundary_field(cfg, x, y, z, land):
+    strength = float(np.clip(cfg.plate_boundary_strength, 0.0, 1.0))
+    if strength <= 0.0:
+        return np.zeros_like(x, dtype=np.float32)
+
+    density = float(np.clip(cfg.mountain_density, 0.0, 1.0))
+    sharpness = float(np.clip(cfg.mountain_sharpness, 0.0, 1.0))
+    plate_count = int(np.clip(round(7.0 + cfg.continent_scale * 3.0 + density * 6.0), 7, 28))
+    rng = np.random.default_rng(int(cfg.seed) + 4751)
+
+    anchors = rng.normal(size=(plate_count, 3)).astype(np.float32)
+    anchors /= np.linalg.norm(anchors, axis=1, keepdims=True)
+    spin_axes = rng.normal(size=(plate_count, 3)).astype(np.float32)
+    spin_axes /= np.linalg.norm(spin_axes, axis=1, keepdims=True)
+    spin_axes *= rng.uniform(0.55, 1.35, size=(plate_count, 1)).astype(np.float32)
+
+    best_score = np.full_like(x, -2.0, dtype=np.float32)
+    second_score = np.full_like(x, -2.0, dtype=np.float32)
+    best_id = np.zeros_like(x, dtype=np.int16)
+    second_id = np.zeros_like(x, dtype=np.int16)
+    for index, anchor in enumerate(anchors):
+        score = x * anchor[0] + y * anchor[1] + z * anchor[2]
+        better = score > best_score
+        between = (~better) & (score > second_score)
+        second_score = np.where(better, best_score, np.where(between, score, second_score))
+        second_id = np.where(better, best_id, np.where(between, index, second_id))
+        best_score = np.where(better, score, best_score)
+        best_id = np.where(better, index, best_id)
+
+    margin = best_score - second_score
+    boundary_width = 0.016 + strength * 0.028 + (1.0 - sharpness) * 0.020
+    boundary = 1.0 - smoothstep(0.0025, boundary_width, margin)
+
+    best_axis = [np.zeros_like(x, dtype=np.float32) for _ in range(3)]
+    second_axis = [np.zeros_like(x, dtype=np.float32) for _ in range(3)]
+    best_anchor = [np.zeros_like(x, dtype=np.float32) for _ in range(3)]
+    second_anchor = [np.zeros_like(x, dtype=np.float32) for _ in range(3)]
+    for index in range(plate_count):
+        best_mask = best_id == index
+        second_mask = second_id == index
+        for component in range(3):
+            best_axis[component] = np.where(best_mask, spin_axes[index, component], best_axis[component])
+            second_axis[component] = np.where(second_mask, spin_axes[index, component], second_axis[component])
+            best_anchor[component] = np.where(best_mask, anchors[index, component], best_anchor[component])
+            second_anchor[component] = np.where(second_mask, anchors[index, component], second_anchor[component])
+
+    best_vx = best_axis[1] * z - best_axis[2] * y
+    best_vy = best_axis[2] * x - best_axis[0] * z
+    best_vz = best_axis[0] * y - best_axis[1] * x
+    second_vx = second_axis[1] * z - second_axis[2] * y
+    second_vy = second_axis[2] * x - second_axis[0] * z
+    second_vz = second_axis[0] * y - second_axis[1] * x
+    rel_x = best_vx - second_vx
+    rel_y = best_vy - second_vy
+    rel_z = best_vz - second_vz
+
+    sep_x = best_anchor[0] - second_anchor[0]
+    sep_y = best_anchor[1] - second_anchor[1]
+    sep_z = best_anchor[2] - second_anchor[2]
+    sep_len = np.sqrt(sep_x * sep_x + sep_y * sep_y + sep_z * sep_z)
+    compression = np.abs((rel_x * sep_x + rel_y * sep_y + rel_z * sep_z) / np.maximum(sep_len, 1e-6))
+    compression = smoothstep(0.12, 0.84, normalize01(compression))
+
+    boundary_detail = fbm_3d(
+        x * 1.05 + 0.17,
+        y * 0.92 - 0.11,
+        z * 1.12 + 0.07,
+        max(3.0, cfg.mountain_scale * 0.48),
+        4,
+        0.58,
+        cfg.seed + 4789,
+    )
+    plate_boundary = boundary * (0.58 + compression * 0.42) * (0.72 + boundary_detail * 0.28)
+    return np.clip(plate_boundary * strength * land.astype(np.float32), 0.0, 1.0)
+
+
+def build_peak_and_erosion_fields(cfg, x, y, z, mountain_mask, plate_boundary):
+    prominence = float(np.clip(cfg.peak_prominence, 0.0, 1.0))
+    erosion = float(np.clip(cfg.erosion_strength, 0.0, 1.0))
+    if prominence <= 0.0 and erosion <= 0.0:
+        blank = np.zeros_like(x, dtype=np.float32)
+        return blank, blank
+
+    scale = max(3.0, float(cfg.mountain_scale))
+    summit_spine = 1.0 - np.abs(
+        fbm_3d(x * 1.09 - 0.13, y * 0.96 + 0.19, z * 1.04 + 0.05, scale * 1.75, 5, 0.64, cfg.seed + 4813) * 2.0
+        - 1.0
+    )
+    summit_spine = np.power(np.clip(summit_spine, 0.0, 1.0), 1.55)
+    summit_noise = fbm_3d(x, y, z, scale * 4.8 + 18.0, 4, 0.62, cfg.seed + 4831)
+    peak_seed = mountain_mask * 0.64 + plate_boundary * 0.52 + summit_spine * 0.42 + summit_noise * 0.18
+    peak_mask = smoothstep(0.66, 1.30, peak_seed) * prominence
+
+    valley_spine = 1.0 - np.abs(
+        fbm_3d(x * 0.94 + 0.31, y * 1.07 - 0.23, z * 1.02 + 0.14, scale * 2.6 + 8.0, 5, 0.60, cfg.seed + 4861) * 2.0
+        - 1.0
+    )
+    valley_detail = fbm_3d(x, y, z, scale * 9.0 + 35.0, 3, 0.54, cfg.seed + 4877)
+    valley_seed = valley_spine * 0.62 + valley_detail * 0.24 + plate_boundary * 0.24
+    erosion_valleys = smoothstep(0.48, 0.92, valley_seed) * np.clip(mountain_mask + plate_boundary * 0.65, 0.0, 1.0) * erosion
+    peak_mask *= 1.0 - erosion_valleys * 0.35
+    return np.clip(peak_mask, 0.0, 1.0), np.clip(erosion_valleys, 0.0, 1.0)
 
 
 def normalize_planet_family(value: str) -> str:
@@ -3420,10 +3560,15 @@ def build_maps_from_vectors(
     band_mask = build_mountain_range_bands(x, y, z, cfg)
     band_mask *= 0.70 + mountain_gate * 0.30
     boundary_mask = build_continent_color_boundary_mask(cfg, x, y, z, land)
+    plate_boundary = build_plate_boundary_field(cfg, x, y, z, land)
     boundary_range = np.clip(boundary_mask * (0.45 + ridge_mask * 0.55), 0.0, 1.0)
     range_mask = np.clip(range_mask + band_mask * (0.18 + ridge_mask * 0.42), 0.0, 1.0)
+    range_mask = np.clip(range_mask + plate_boundary * (0.36 + ridge_mask * 0.54), 0.0, 1.0)
     range_mask = np.maximum(range_mask, boundary_range)
     mountain_mask = np.clip(range_mask * (0.48 + ridge_mask * 0.92) + ridge_mask * range_mask * 0.22, 0.0, 1.0)
+    peak_mask, erosion_valleys = build_peak_and_erosion_fields(cfg, x, y, z, mountain_mask, plate_boundary)
+    mountain_mask = np.clip(mountain_mask + plate_boundary * 0.36 + peak_mask * 0.52, 0.0, 1.0)
+    orogenic_mask = np.clip(mountain_mask + plate_boundary * 0.24 + peak_mask * 0.72, 0.0, 1.0)
     crater_layers = None
     if (needs_color or needs_height or needs_roughness) and crater_generation_enabled(cfg):
         crater_layers = build_crater_field(cfg, x, y, z, land)
@@ -3554,13 +3699,13 @@ def build_maps_from_vectors(
         forest_mix = np.clip(forest_bias + moisture * 0.35 - biome * 0.35, 0.0, 1.0)
         land_color = color_blend(land_color, colors["forest"], forest_mix)
         land_color = color_blend(land_color, colors["dark_forest"], np.clip(forest_mix * moisture - 0.15, 0.0, 0.65))
-        land_color = color_blend(land_color, colors["rock"], mountain_mask * 0.88)
+        land_color = color_blend(land_color, colors["rock"], np.clip(orogenic_mask * 1.10, 0.0, 0.96))
         land_color = color_blend(land_color, colors["beach"], shoreline * 0.78)
 
     if cfg.polar_ice_size <= 0.0:
         snow_mask = np.zeros_like(land_field, dtype=np.float32)
     else:
-        snow_mask = smoothstep(cfg.snow_threshold, 1.0, mountain_mask * 0.72 + lat_abs * 0.38)
+        snow_mask = smoothstep(cfg.snow_threshold, 1.0, mountain_mask * 0.58 + peak_mask * 0.34 + lat_abs * 0.38)
     polar_ice, ice_texture = build_polar_ice_formation(cfg, x, y, z, lat, lon)
     ice_mask = np.maximum(snow_mask, polar_ice)
 
@@ -3656,16 +3801,16 @@ def build_maps_from_vectors(
         land_color = color_blend(
             land_color,
             pale_highland_tint,
-            np.clip(mountain_mask * mineral_noise * cfg.land_color_variation * 0.72 * non_ice_land, 0.0, 0.22),
+            np.clip(orogenic_mask * mineral_noise * cfg.land_color_variation * 0.90 * non_ice_land, 0.0, 0.34),
         )
-        mineral_exposure = np.clip(mountain_mask * 0.80 + arid * 0.30 + soil_noise * 0.12, 0.0, 1.0)
+        mineral_exposure = np.clip(orogenic_mask * 0.88 + arid * 0.30 + soil_noise * 0.12, 0.0, 1.0)
         land_color = color_blend(
             land_color,
             rust_tint,
             np.clip(mineral_noise * mineral_exposure * cfg.mineral_tint_strength * non_ice_land, 0.0, 0.58),
         )
-        exposed_dry = np.clip(arid * (0.65 + mountain_mask * 0.35) * (0.45 + soil_noise * 0.55), 0.0, 1.0)
-        basalt_exposure = np.clip((mountain_mask * 0.65 + mineral_noise * 0.35) * smoothstep(0.48, 0.90, mineral_noise), 0.0, 1.0)
+        exposed_dry = np.clip(arid * (0.60 + orogenic_mask * 0.48) * (0.45 + soil_noise * 0.55), 0.0, 1.0)
+        basalt_exposure = np.clip((orogenic_mask * 0.70 + mineral_noise * 0.35) * smoothstep(0.48, 0.90, mineral_noise), 0.0, 1.0)
         salt_basin = np.clip(arid * lowland * smoothstep(0.45, 0.95, soil_noise) * (1.0 - moisture * 0.55), 0.0, 1.0)
         clay_basin = np.clip((moisture * 0.55 + shoreline * 0.45) * lowland * (1.0 - mountain_mask * 0.70), 0.0, 1.0)
         land_color = color_blend(
@@ -3715,6 +3860,11 @@ def build_maps_from_vectors(
             night_weight = np.clip(np.maximum(-family_masks["day_night"], 0.0) * 0.42 * non_ice_land, 0.0, 0.46)
             land_color = color_blend(land_color, day_tint, day_weight)
             land_color = color_blend(land_color, night_tint, night_weight)
+        summit_highlight = np.clip((peak_mask * 0.74 + plate_boundary * 0.22) * (0.65 + mineral_noise * 0.35) * non_ice_land, 0.0, 1.0)
+        light_rock = np.clip(colors["rock"] * 1.32 + 18.0, 0.0, 255.0)
+        land_color = color_blend(land_color, light_rock, np.clip(summit_highlight * 0.34, 0.0, 0.34))
+        eroded_face = np.clip(erosion_valleys * (0.55 + mineral_noise * 0.45) * non_ice_land, 0.0, 1.0)
+        land_color = color_blend(land_color, colors["rock"] * 0.62, np.clip(eroded_face * 0.32, 0.0, 0.32))
         land_color = (land_color - 127.5) * cfg.land_contrast + 127.5
         land_color = land_color + cfg.land_brightness * 255.0
         land_color = np.clip(land_color, 0.0, 255.0)
@@ -3796,7 +3946,13 @@ def build_maps_from_vectors(
         continent_base_land_height = smoothstep(threshold - cfg.continent_contrast, threshold + cfg.continent_contrast, land_field)
         base_land_height = continent_base_land_height
         height = np.where(land, 0.38 + base_land_height * 0.20, 0.18 - ocean_depth * 0.18)
-        height += np.where(land, np.power(mountain_mask, 0.82) * cfg.mountain_height * 0.46, 0.0)
+        mountain_relief = (
+            np.power(np.clip(mountain_mask, 0.0, 1.0), 0.72) * cfg.mountain_height * 0.54
+            + np.power(np.clip(plate_boundary, 0.0, 1.0), 0.76) * cfg.plate_boundary_strength * 0.16
+            + np.power(np.clip(peak_mask, 0.0, 1.0), 0.82) * cfg.peak_prominence * 0.28
+        )
+        mountain_relief -= erosion_valleys * (0.055 + cfg.erosion_strength * 0.085)
+        height += np.where(land, mountain_relief, 0.0)
         height += np.where(land, shoreline * 0.025, 0.0)
         height += np.where(
             land,
@@ -3848,7 +4004,7 @@ def build_maps_from_vectors(
 
     if needs_roughness:
         roughness = np.where(land, 0.72, 0.24)
-        roughness = roughness + mountain_mask * 0.18 - shelf * 0.07
+        roughness = roughness + mountain_mask * 0.18 + peak_mask * 0.18 + plate_boundary * 0.12 + erosion_valleys * 0.10 - shelf * 0.07
         roughness = roughness + polar_ice * (0.06 + ice_solidity * 0.12 + ice_texture * 0.16)
         roughness = roughness + family_masks["regolith"] * 0.10
         roughness = roughness + family_masks["lava"] * 0.14
