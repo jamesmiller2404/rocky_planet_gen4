@@ -1981,12 +1981,22 @@ def build_plate_boundary_field(cfg, x, y, z, land):
     spin_axes /= np.linalg.norm(spin_axes, axis=1, keepdims=True)
     spin_axes *= rng.uniform(0.55, 1.35, size=(plate_count, 1)).astype(np.float32)
 
+    warp_strength = 0.080 + strength * 0.300 + density * 0.060
+    warp_scale = max(0.85, float(cfg.continent_scale) * 0.95)
+    wx = x + (fbm_3d(x, y, z, warp_scale, 4, 0.54, cfg.seed + 4721) - 0.5) * warp_strength
+    wy = y + (fbm_3d(x, y, z, warp_scale * 1.17, 4, 0.55, cfg.seed + 4733) - 0.5) * warp_strength
+    wz = z + (fbm_3d(x, y, z, warp_scale * 0.83, 4, 0.54, cfg.seed + 4747) - 0.5) * warp_strength
+    warp_len = np.sqrt(wx * wx + wy * wy + wz * wz)
+    wx = wx / np.maximum(warp_len, 1e-6)
+    wy = wy / np.maximum(warp_len, 1e-6)
+    wz = wz / np.maximum(warp_len, 1e-6)
+
     best_score = np.full_like(x, -2.0, dtype=np.float32)
     second_score = np.full_like(x, -2.0, dtype=np.float32)
     best_id = np.zeros_like(x, dtype=np.int16)
     second_id = np.zeros_like(x, dtype=np.int16)
     for index, anchor in enumerate(anchors):
-        score = x * anchor[0] + y * anchor[1] + z * anchor[2]
+        score = wx * anchor[0] + wy * anchor[1] + wz * anchor[2]
         better = score > best_score
         between = (~better) & (score > second_score)
         second_score = np.where(better, best_score, np.where(between, score, second_score))
@@ -2067,6 +2077,308 @@ def build_peak_and_erosion_fields(cfg, x, y, z, mountain_mask, plate_boundary):
     erosion_valleys = smoothstep(0.48, 0.92, valley_seed) * np.clip(mountain_mask + plate_boundary * 0.65, 0.0, 1.0) * erosion
     peak_mask *= 1.0 - erosion_valleys * 0.35
     return np.clip(peak_mask, 0.0, 1.0), np.clip(erosion_valleys, 0.0, 1.0)
+
+
+def build_summit_spike_field(cfg, x, y, z, mountain_mask, plate_boundary):
+    prominence = float(np.clip(cfg.peak_prominence, 0.0, 1.0))
+    if prominence <= 0.0:
+        return np.zeros_like(x, dtype=np.float32)
+
+    density = float(np.clip(cfg.mountain_density, 0.0, 1.0))
+    sharpness = float(np.clip(cfg.mountain_sharpness, 0.0, 1.0))
+    map_height, map_width = x.shape
+    crest_noise = fbm_3d(x * 1.17 - 0.09, y * 0.91 + 0.23, z * 1.08 + 0.11, max(22.0, cfg.mountain_scale * 5.0), 4, 0.60, cfg.seed + 4883)
+    crest_micro = fbm_3d(x * 0.83 + 0.27, y * 1.19 - 0.16, z * 1.03 - 0.07, max(60.0, cfg.mountain_scale * 14.0), 3, 0.54, cfg.seed + 4887)
+    ridge_source_raw = mountain_mask * 0.66 + plate_boundary * 0.48 + crest_noise * 0.22 + crest_micro * 0.14
+    ridge_source = np.clip(ridge_source_raw, 0.0, 1.0)
+    highland = ridge_source_raw > max(0.38, 0.64 - density * 0.18 - prominence * 0.08)
+
+    if np.any(highland):
+        crest_threshold = float(np.quantile(ridge_source_raw[highland], 0.970 - prominence * 0.020))
+    else:
+        crest_threshold = 0.74
+    local_max = ridge_source_raw >= ndimage.maximum_filter(ridge_source_raw, size=(9, 9), mode=("nearest", "wrap"))
+    summit_seeds = local_max & highland & (ridge_source_raw >= crest_threshold)
+    if np.any(summit_seeds):
+        distance = ndimage.distance_transform_edt(~summit_seeds).astype(np.float32)
+        radius = max(1.8, min(map_height, map_width) * (0.006 + prominence * 0.006) * (1.08 - sharpness * 0.30))
+        peak_cones = np.power(np.clip(1.0 - distance / radius, 0.0, 1.0), 1.9 + sharpness * 4.1)
+    else:
+        peak_cones = np.zeros_like(x, dtype=np.float32)
+
+    serration = 1.0 - np.abs(fbm_3d(x * 1.07 + 0.18, y * 0.97 - 0.26, z * 1.13 + 0.09, max(75.0, cfg.mountain_scale * 18.0), 3, 0.58, cfg.seed + 4895) * 2.0 - 1.0)
+    serration = np.power(np.clip(serration, 0.0, 1.0), 2.2 + sharpness * 3.8)
+    crest_gate = smoothstep(crest_threshold * 0.96, min(1.0, crest_threshold + 0.18), ridge_source)
+    jagged_crests = crest_gate * serration
+
+    spike_count = int(np.clip(round(12.0 + prominence * 34.0 + density * 24.0), 8, 90))
+    rng = np.random.default_rng(int(cfg.seed) + 4891)
+    anchors = rng.normal(size=(spike_count, 3)).astype(np.float32)
+    anchors /= np.linalg.norm(anchors, axis=1, keepdims=True)
+    radii = rng.uniform(0.012, 0.034, size=spike_count).astype(np.float32)
+    radii *= 1.08 - sharpness * 0.42
+    strengths = rng.uniform(0.72, 1.20, size=spike_count).astype(np.float32)
+
+    suitability = np.power(np.clip(ridge_source + plate_boundary * 0.22, 0.0, 1.0), 0.44)
+    anchor_spikes = np.zeros_like(x, dtype=np.float32)
+    exponent = 2.4 + sharpness * 4.6
+    for anchor, radius, strength in zip(anchors, radii, strengths):
+        dot = np.clip(x * anchor[0] + y * anchor[1] + z * anchor[2], -1.0, 1.0)
+        shoulder = math.cos(float(radius) * 2.45)
+        core = math.cos(float(radius) * 0.16)
+        cone = smoothstep(shoulder, core, dot)
+        cone = np.power(np.clip(cone, 0.0, 1.0), exponent)
+        anchor_spikes = np.maximum(anchor_spikes, cone * suitability * float(strength))
+
+    fracture = fbm_3d(x * 1.11 + 0.07, y * 0.93 - 0.17, z * 1.04 + 0.13, max(30.0, cfg.mountain_scale * 7.0), 3, 0.56, cfg.seed + 4909)
+    cone_spikes = np.maximum(anchor_spikes * 0.66, peak_cones)
+    ridge_teeth = jagged_crests * np.clip(peak_cones * 0.90 + anchor_spikes * 0.55 + plate_boundary * 0.18, 0.0, 1.0)
+    spikes = np.maximum(cone_spikes, ridge_teeth * 0.74)
+    spikes = np.maximum(spikes, jagged_crests * 0.46)
+    spikes *= 0.78 + fracture * 0.22
+    return np.clip(spikes * prominence, 0.0, 1.0)
+
+
+def build_orogenic_mountain_system(cfg, x, y, z, land, plate_boundary):
+    density = float(np.clip(cfg.mountain_density, 0.0, 1.0))
+    prominence = float(np.clip(cfg.peak_prominence, 0.0, 1.0))
+    sharpness = float(np.clip(cfg.mountain_sharpness, 0.0, 1.0))
+    boundary_strength = float(np.clip(cfg.plate_boundary_strength, 0.0, 1.0))
+    erosion = float(np.clip(cfg.erosion_strength, 0.0, 1.0))
+    land_f = land.astype(np.float32)
+
+    ridge_primary = 1.0 - np.abs(
+        fbm_3d(x * 1.08 - 0.13, y * 0.94 + 0.17, z * 1.11 + 0.05, max(12.0, cfg.mountain_scale * 1.15), 6, 0.66, cfg.seed + 5011)
+        * 2.0
+        - 1.0
+    )
+    ridge_secondary = 1.0 - np.abs(
+        fbm_3d(x * 0.91 + 0.27, y * 1.13 - 0.21, z * 1.02 + 0.19, max(28.0, cfg.mountain_scale * 3.1), 5, 0.62, cfg.seed + 5027)
+        * 2.0
+        - 1.0
+    )
+    crest_noise = fbm_3d(x * 1.21 + 0.05, y * 0.88 - 0.31, z * 1.09 + 0.16, max(60.0, cfg.mountain_scale * 8.0), 4, 0.57, cfg.seed + 5039)
+    peak_train = 1.0 - np.abs(
+        fbm_3d(x * 1.03 - 0.39, y * 1.17 + 0.24, z * 0.89 - 0.08, max(95.0, cfg.mountain_scale * 15.0), 3, 0.54, cfg.seed + 5051)
+        * 2.0
+        - 1.0
+    )
+
+    tectonic_core = smoothstep(0.12, 0.72, plate_boundary)
+    range_breakup = smoothstep(0.24, 0.72, crest_noise)
+    ridge_line = np.power(np.clip(ridge_primary, 0.0, 1.0), 1.3 + sharpness * 3.0)
+    narrow_crest = np.power(np.clip(ridge_secondary * ridge_line, 0.0, 1.0), 1.6 + sharpness * 4.2)
+
+    broken_core = tectonic_core * (0.34 + range_breakup * 0.66)
+    uplift = broken_core * (0.56 + ridge_line * 0.34 + range_breakup * 0.22) * (0.70 + boundary_strength * 0.36)
+    crest = broken_core * np.clip(narrow_crest * 1.45 + ridge_line * 0.26, 0.0, 1.0) * (0.66 + prominence * 0.42)
+    peaks = crest * np.power(np.clip(peak_train, 0.0, 1.0), 4.5 + sharpness * 8.0) * smoothstep(0.30, 0.78, crest_noise)
+
+    valley_noise = 1.0 - np.abs(
+        fbm_3d(x * 0.86 + 0.19, y * 1.26 - 0.18, z * 1.07 + 0.33, max(44.0, cfg.mountain_scale * 7.0), 4, 0.59, cfg.seed + 5069)
+        * 2.0
+        - 1.0
+    )
+    valleys = tectonic_core * np.power(np.clip(valley_noise, 0.0, 1.0), 2.4) * smoothstep(0.26, 0.88, uplift) * erosion
+
+    rng = np.random.default_rng(int(cfg.seed) + 5011)
+    fragment_count = int(np.clip(round(density * 1.5 + boundary_strength * 1.5), 0, 3))
+    fragment_uplift = np.zeros_like(x, dtype=np.float32)
+    fragment_crest = np.zeros_like(x, dtype=np.float32)
+    fragment_peaks = np.zeros_like(x, dtype=np.float32)
+    for _ in range(fragment_count):
+        normal = rng.normal(size=3).astype(np.float32)
+        normal /= max(1e-6, float(np.linalg.norm(normal)))
+        tangent = rng.normal(size=3).astype(np.float32)
+        tangent -= normal * float(np.dot(tangent, normal))
+        tangent /= max(1e-6, float(np.linalg.norm(tangent)))
+        bitangent = np.cross(normal, tangent).astype(np.float32)
+        bitangent /= max(1e-6, float(np.linalg.norm(bitangent)))
+
+        plane = x * normal[0] + y * normal[1] + z * normal[2]
+        arc_x = x * tangent[0] + y * tangent[1] + z * tangent[2]
+        arc_y = x * bitangent[0] + y * bitangent[1] + z * bitangent[2]
+        arc_angle = np.arctan2(arc_y, arc_x)
+        center = float(rng.uniform(-math.pi, math.pi))
+        arc_delta = np.arctan2(np.sin(arc_angle - center), np.cos(arc_angle - center))
+        half_length = float(rng.uniform(0.55, 1.55))
+        length_gate = 1.0 - smoothstep(half_length, half_length + 0.38, np.abs(arc_delta))
+
+        width = (0.030 + density * 0.035 + boundary_strength * 0.018) * float(rng.uniform(0.70, 1.25))
+        crest_width = width * (0.105 + (1.0 - sharpness) * 0.085)
+        phase = float(rng.uniform(0.0, math.tau))
+        meander = (
+            np.sin(arc_angle * float(rng.uniform(1.3, 2.7)) + phase) * 0.58
+            + np.sin(arc_angle * float(rng.uniform(3.7, 6.5)) - phase * 0.61) * 0.24
+        ) * width
+        signed_distance = plane + meander
+        distance = np.abs(signed_distance)
+
+        range_profile = np.exp(-np.power(distance / max(width, 1e-5), 1.5 + sharpness * 0.7))
+        crest_profile = np.exp(-np.power(distance / max(crest_width, 1e-5), 1.8 + sharpness * 1.4))
+        foothills = np.exp(-np.power(distance / max(width * 2.7, 1e-5), 1.05)) * 0.28
+
+        along = arc_delta / max(half_length, 1e-5)
+        peak_frequency = float(rng.uniform(9.0, 18.0) + prominence * 12.0 + density * 5.0)
+        peak_train = 1.0 - np.abs(np.sin((along * peak_frequency + phase) * math.pi))
+        peak_train = np.power(np.clip(peak_train, 0.0, 1.0), 5.0 + sharpness * 8.0)
+        peak_breakup = fbm_3d(
+            x * 1.08 + phase * 0.03,
+            y * 0.91 - phase * 0.02,
+            z * 1.13 + phase * 0.01,
+            max(36.0, cfg.mountain_scale * 7.0),
+            3,
+            0.58,
+            cfg.seed + int(abs(phase) * 1000.0) + 5039,
+        )
+        peak_chain = crest_profile * peak_train * smoothstep(0.28, 0.76, peak_breakup)
+
+        fragment_gate = length_gate * smoothstep(0.35, 0.86, peak_breakup)
+        range_strength = float(rng.uniform(0.20, 0.38)) * (0.55 + boundary_strength * 0.16)
+        fragment_uplift = np.maximum(fragment_uplift, np.clip((range_profile + foothills) * fragment_gate * range_strength, 0.0, 0.34))
+        fragment_crest = np.maximum(fragment_crest, np.clip(crest_profile * fragment_gate * range_strength, 0.0, 0.38))
+        fragment_peaks = np.maximum(fragment_peaks, np.clip(peak_chain * fragment_gate * range_strength, 0.0, 0.48))
+
+    uplift = np.clip(np.maximum(uplift, fragment_uplift * 0.22) * land_f, 0.0, 1.0)
+    crest = np.clip(np.maximum(crest, fragment_crest * 0.28) * land_f, 0.0, 1.0)
+    peaks = np.clip(np.maximum(peaks, fragment_peaks * 0.40) * land_f * prominence, 0.0, 1.0)
+    valleys = np.clip(valleys * land_f, 0.0, 1.0)
+    crags = fbm_3d(x * 1.31 - 0.14, y * 0.79 + 0.28, z * 1.17 + 0.09, max(95.0, cfg.mountain_scale * 21.0), 4, 0.61, cfg.seed + 5099)
+    crags = (crags - 0.5) * np.clip(crest * 0.55 + peaks * 1.15, 0.0, 1.0)
+    return {
+        "uplift": uplift,
+        "crest": crest,
+        "peaks": peaks,
+        "valleys": valleys,
+        "crags": crags,
+    }
+
+
+def build_alpine_range_system(cfg, lat, lon, land):
+    density = float(np.clip(cfg.mountain_density, 0.0, 1.0))
+    prominence = float(np.clip(cfg.peak_prominence, 0.0, 1.0))
+    sharpness = float(np.clip(cfg.mountain_sharpness, 0.0, 1.0))
+    erosion = float(np.clip(cfg.erosion_strength, 0.0, 1.0))
+    if density <= 0.0 or prominence <= 0.0:
+        blank = np.zeros_like(lat, dtype=np.float32)
+        return {"uplift": blank, "crest": blank, "peaks": blank, "valleys": blank, "crags": blank}
+
+    rng = np.random.default_rng(int(cfg.seed) + 5311)
+    range_count = int(np.clip(round(3.0 + density * 6.0), 3, 10))
+    uplift = np.zeros_like(lat, dtype=np.float32)
+    crest = np.zeros_like(lat, dtype=np.float32)
+    peaks = np.zeros_like(lat, dtype=np.float32)
+    valleys = np.zeros_like(lat, dtype=np.float32)
+    crags = np.zeros_like(lat, dtype=np.float32)
+    land_f = land.astype(np.float32)
+
+    for _ in range(range_count):
+        center_lon = float(rng.uniform(-math.pi, math.pi))
+        center_lat = float(rng.uniform(-0.92, 0.92))
+        orientation = float(rng.uniform(-math.pi, math.pi))
+        half_length = float(rng.uniform(0.36, 0.86) * (0.88 + density * 0.30))
+        width = float(rng.uniform(0.105, 0.225) * (1.08 - sharpness * 0.16))
+        crest_width = width * float(0.38 + (1.0 - sharpness) * 0.10)
+        phase = float(rng.uniform(0.0, math.tau))
+
+        dlon = np.arctan2(np.sin(lon - center_lon), np.cos(lon - center_lon)) * max(0.20, math.cos(center_lat))
+        dlat = lat - center_lat
+        along = dlon * math.cos(orientation) + dlat * math.sin(orientation)
+        across = -dlon * math.sin(orientation) + dlat * math.cos(orientation)
+
+        length_gate = 1.0 - smoothstep(half_length * 0.78, half_length, np.abs(along))
+        meander = (
+            np.sin(along / max(half_length, 1e-5) * math.pi * float(rng.uniform(0.85, 1.85)) + phase) * 0.42
+            + np.sin(along / max(half_length, 1e-5) * math.pi * float(rng.uniform(2.1, 3.8)) - phase * 0.47) * 0.18
+        ) * width
+        signed_dist = across - meander
+        dist = np.abs(signed_dist)
+        massif_profile = np.exp(-np.power(dist / max(width, 1e-5), 1.18 + sharpness * 0.24))
+        foothill_profile = np.exp(-np.power(dist / max(width * 2.9, 1e-5), 1.02)) * 0.18
+        crest_profile = np.exp(-np.power(dist / max(crest_width, 1e-5), 1.34 + sharpness * 0.72))
+        texture_gate = smoothstep(0.22, 0.82, fbm_3d(
+            np.cos(lon + phase * 0.05) * np.cos(lat),
+            np.sin(lat - phase * 0.03),
+            np.sin(lon - phase * 0.04) * np.cos(lat),
+            max(10.0, cfg.mountain_scale * 1.8),
+            4,
+            0.57,
+            cfg.seed + int(phase * 1000.0) + 5369,
+        ))
+        body_profile = np.clip(massif_profile * (0.78 + texture_gate * 0.16), 0.0, 1.0)
+
+        cluster_noise = smoothstep(0.28, 0.84, fbm_3d(
+            np.cos(lon + phase * 0.11) * np.cos(lat),
+            np.sin(lat - phase * 0.05),
+            np.sin(lon - phase * 0.07) * np.cos(lat),
+            max(18.0, cfg.mountain_scale * 3.2),
+            4,
+            0.58,
+            cfg.seed + int(phase * 1000.0) + 5389,
+        ))
+        peak_profile = np.zeros_like(lat, dtype=np.float32)
+        peak_count = int(np.clip(round(5.0 + density * 11.0 + prominence * 9.0), 5, 24))
+        for _peak_index in range(peak_count):
+            peak_center_along = float(rng.uniform(-half_length * 0.72, half_length * 0.72))
+            peak_center_across = float(rng.normal(0.0, width * 0.26))
+            peak_radius_along = float(rng.uniform(0.040, 0.092) * half_length)
+            peak_radius_across = float(rng.uniform(0.19, 0.36) * width)
+            peak_distance = np.sqrt(
+                np.square((along - peak_center_along) / max(peak_radius_along, 1e-5))
+                + np.square((signed_dist - peak_center_across) / max(peak_radius_across, 1e-5))
+            )
+            cone = np.clip(1.0 - peak_distance, 0.0, 1.0)
+            cone = np.power(cone, 1.08 + sharpness * 1.28)
+            summit_gate = smoothstep(0.18, 0.70, body_profile) * (0.70 + texture_gate * 0.30)
+            peak_profile = np.maximum(
+                peak_profile,
+                cone * summit_gate * float(rng.uniform(0.78, 1.20)),
+            )
+
+        summit_mass = np.clip(crest_profile * 0.28 + body_profile * 0.72, 0.0, 1.0)
+        peak_profile = np.clip(peak_profile * cluster_noise * summit_mass, 0.0, 1.0)
+
+        valley_noise = 1.0 - np.abs(
+            fbm_3d(
+                np.cos(lon - phase * 0.09) * np.cos(lat),
+                np.sin(lat + phase * 0.04),
+                np.sin(lon + phase * 0.06) * np.cos(lat),
+                max(16.0, cfg.mountain_scale * 2.7),
+                4,
+                0.60,
+                cfg.seed + int(phase * 1000.0) + 5333,
+            )
+            * 2.0
+            - 1.0
+        )
+        flank_gate = smoothstep(width * 0.38, width * 1.42, dist)
+        valley_profile = smoothstep(0.58, 0.93, valley_noise) * flank_gate * body_profile * (1.0 - peak_profile * 0.52) * length_gate * erosion
+
+        range_strength = float(rng.uniform(0.78, 1.16))
+        uplift = np.maximum(uplift, np.clip((body_profile * 0.88 + foothill_profile) * length_gate * range_strength, 0.0, 0.92))
+        crest = np.maximum(crest, np.clip(crest_profile * length_gate * range_strength * 0.20, 0.0, 0.26))
+        peaks = np.maximum(peaks, np.clip(peak_profile * length_gate * range_strength, 0.0, 1.0))
+        valleys = np.maximum(valleys, np.clip(valley_profile * range_strength, 0.0, 1.0))
+
+        crag_seed = fbm_3d(
+            np.cos(lon + phase * 0.17) * np.cos(lat),
+            np.sin(lat + phase * 0.03),
+            np.sin(lon - phase * 0.13) * np.cos(lat),
+            max(42.0, cfg.mountain_scale * 7.0),
+            3,
+            0.58,
+            cfg.seed + int(phase * 1200.0) + 5351,
+        )
+        local_crag = (crag_seed - 0.5) * (body_profile * 0.16 + peak_profile * 0.42) * length_gate * range_strength
+        crags = np.where(np.abs(local_crag) > np.abs(crags), local_crag, crags)
+
+    return {
+        "uplift": np.clip(uplift * land_f, 0.0, 1.0),
+        "crest": np.clip(crest * land_f, 0.0, 1.0),
+        "peaks": np.clip(peaks * land_f * prominence, 0.0, 1.0),
+        "valleys": np.clip(valleys * land_f, 0.0, 1.0),
+        "crags": crags * land_f,
+    }
 
 
 def normalize_planet_family(value: str) -> str:
@@ -3566,9 +3878,18 @@ def build_maps_from_vectors(
     range_mask = np.clip(range_mask + plate_boundary * (0.36 + ridge_mask * 0.54), 0.0, 1.0)
     range_mask = np.maximum(range_mask, boundary_range)
     mountain_mask = np.clip(range_mask * (0.48 + ridge_mask * 0.92) + ridge_mask * range_mask * 0.22, 0.0, 1.0)
-    peak_mask, erosion_valleys = build_peak_and_erosion_fields(cfg, x, y, z, mountain_mask, plate_boundary)
-    mountain_mask = np.clip(mountain_mask + plate_boundary * 0.36 + peak_mask * 0.52, 0.0, 1.0)
-    orogenic_mask = np.clip(mountain_mask + plate_boundary * 0.24 + peak_mask * 0.72, 0.0, 1.0)
+    orogenic = build_orogenic_mountain_system(cfg, x, y, z, land, plate_boundary)
+    alpine = build_alpine_range_system(cfg, lat, lon, land)
+    range_uplift = np.maximum(orogenic["uplift"] * 0.58, alpine["uplift"])
+    crest_mask = np.maximum(orogenic["crest"] * 0.52, alpine["crest"])
+    peak_mask = np.maximum(orogenic["peaks"] * 0.56, alpine["peaks"])
+    erosion_valleys = np.maximum(
+        np.maximum(orogenic["valleys"], alpine["valleys"]),
+        smoothstep(0.50, 0.88, mountain_mask) * 0.14 * float(np.clip(cfg.erosion_strength, 0.0, 1.0)),
+    )
+    craggy_relief = orogenic["crags"] * 0.34 + alpine["crags"] * 0.42
+    mountain_mask = np.clip(np.maximum(mountain_mask * 0.42, range_uplift) + crest_mask * 0.22 + peak_mask * 0.48, 0.0, 1.0)
+    orogenic_mask = np.clip(range_uplift * 0.78 + crest_mask * 0.74 + peak_mask * 0.95 + plate_boundary * 0.22, 0.0, 1.0)
     crater_layers = None
     if (needs_color or needs_height or needs_roughness) and crater_generation_enabled(cfg):
         crater_layers = build_crater_field(cfg, x, y, z, land)
@@ -3577,6 +3898,7 @@ def build_maps_from_vectors(
     regional_debug = None
     raw_height = None
     height = None
+    normal_height = None
     roughness = None
     if needs_color:
         colors = resolve_planet_colors(cfg)
@@ -3705,7 +4027,7 @@ def build_maps_from_vectors(
     if cfg.polar_ice_size <= 0.0:
         snow_mask = np.zeros_like(land_field, dtype=np.float32)
     else:
-        snow_mask = smoothstep(cfg.snow_threshold, 1.0, mountain_mask * 0.58 + peak_mask * 0.34 + lat_abs * 0.38)
+        snow_mask = smoothstep(cfg.snow_threshold, 1.0, crest_mask * 0.42 + peak_mask * 0.62 + lat_abs * 0.38)
     polar_ice, ice_texture = build_polar_ice_formation(cfg, x, y, z, lat, lon)
     ice_mask = np.maximum(snow_mask, polar_ice)
 
@@ -3860,9 +4182,9 @@ def build_maps_from_vectors(
             night_weight = np.clip(np.maximum(-family_masks["day_night"], 0.0) * 0.42 * non_ice_land, 0.0, 0.46)
             land_color = color_blend(land_color, day_tint, day_weight)
             land_color = color_blend(land_color, night_tint, night_weight)
-        summit_highlight = np.clip((peak_mask * 0.74 + plate_boundary * 0.22) * (0.65 + mineral_noise * 0.35) * non_ice_land, 0.0, 1.0)
+        summit_highlight = np.clip((peak_mask * 1.35 + crest_mask * 0.44 + plate_boundary * 0.12) * (0.65 + mineral_noise * 0.35) * non_ice_land, 0.0, 1.0)
         light_rock = np.clip(colors["rock"] * 1.32 + 18.0, 0.0, 255.0)
-        land_color = color_blend(land_color, light_rock, np.clip(summit_highlight * 0.34, 0.0, 0.34))
+        land_color = color_blend(land_color, light_rock, np.clip(summit_highlight * 0.44, 0.0, 0.44))
         eroded_face = np.clip(erosion_valleys * (0.55 + mineral_noise * 0.45) * non_ice_land, 0.0, 1.0)
         land_color = color_blend(land_color, colors["rock"] * 0.62, np.clip(eroded_face * 0.32, 0.0, 0.32))
         land_color = (land_color - 127.5) * cfg.land_contrast + 127.5
@@ -3947,11 +4269,13 @@ def build_maps_from_vectors(
         base_land_height = continent_base_land_height
         height = np.where(land, 0.38 + base_land_height * 0.20, 0.18 - ocean_depth * 0.18)
         mountain_relief = (
-            np.power(np.clip(mountain_mask, 0.0, 1.0), 0.72) * cfg.mountain_height * 0.54
-            + np.power(np.clip(plate_boundary, 0.0, 1.0), 0.76) * cfg.plate_boundary_strength * 0.16
-            + np.power(np.clip(peak_mask, 0.0, 1.0), 0.82) * cfg.peak_prominence * 0.28
+            np.power(np.clip(range_uplift, 0.0, 1.0), 1.18) * cfg.mountain_height * 0.28
+            + np.power(np.clip(crest_mask, 0.0, 1.0), 1.70) * cfg.mountain_height * cfg.peak_prominence * 0.12
+            + np.power(np.clip(peak_mask, 0.0, 1.0), 1.10) * cfg.mountain_height * cfg.peak_prominence * 2.10
+            + np.power(np.clip(plate_boundary, 0.0, 1.0), 0.86) * cfg.plate_boundary_strength * 0.12
         )
-        mountain_relief -= erosion_valleys * (0.055 + cfg.erosion_strength * 0.085)
+        mountain_relief += craggy_relief * cfg.mountain_height * 0.12
+        mountain_relief -= erosion_valleys * (0.070 + cfg.erosion_strength * 0.110)
         height += np.where(land, mountain_relief, 0.0)
         height += np.where(land, shoreline * 0.025, 0.0)
         height += np.where(
@@ -3986,6 +4310,7 @@ def build_maps_from_vectors(
             height += rim * crater_rim_height * 0.44
             height += ejecta * crater_rim_height * 0.14
         raw_height = height
+        normal_height = raw_height
         height = normalize01(raw_height, height_range)
 
     if stats_only and stats <= {"height"}:
@@ -4004,7 +4329,7 @@ def build_maps_from_vectors(
 
     if needs_roughness:
         roughness = np.where(land, 0.72, 0.24)
-        roughness = roughness + mountain_mask * 0.18 + peak_mask * 0.18 + plate_boundary * 0.12 + erosion_valleys * 0.10 - shelf * 0.07
+        roughness = roughness + range_uplift * 0.16 + crest_mask * 0.18 + peak_mask * 0.32 + np.abs(craggy_relief) * 0.14 + plate_boundary * 0.10 + erosion_valleys * 0.12 - shelf * 0.07
         roughness = roughness + polar_ice * (0.06 + ice_solidity * 0.12 + ice_texture * 0.16)
         roughness = roughness + family_masks["regolith"] * 0.10
         roughness = roughness + family_masks["lava"] * 0.14
@@ -4029,7 +4354,7 @@ def build_maps_from_vectors(
     if needs_height:
         maps["height"] = height
     if "normal" in selected_maps:
-        maps["normal"] = normal_from_height(height, wrap_x=normal_wrap_x)
+        maps["normal"] = normal_from_height(normal_height if normal_height is not None else height, strength=7.5, wrap_x=normal_wrap_x)
     if "roughness" in selected_maps:
         maps["roughness"] = roughness
     if "land_mask" in selected_maps:

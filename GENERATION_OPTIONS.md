@@ -213,8 +213,8 @@ These V2 controls bias the generator toward broader rocky-body families without 
 | `--mountain-sharpness` | `0.76` | Ridge sharpness. Higher values make tighter, sharper range crests. |
 | `--mountain-height` | `0.84` | Height contribution from mountains. Higher values make stronger height-map relief. |
 | `--mountain-boundary-alignment` | `0.55` | Biases mountain ranges toward continent color-province borders. Higher values make ranges follow visible continental color transitions. |
-| `--plate-boundary-strength` | `0.78` | Adds seeded plate-margin uplift belts. Higher values make long mountain chains more visible and tectonic-looking. |
-| `--peak-prominence` | `0.70` | Strength of localized summit and crest masks inside mountain ranges. Higher values make peaks stand out in color, height, and normal maps. |
+| `--plate-boundary-strength` | `0.78` | Adds warped plate-margin uplift belts that constrain where mountain ranges form. Higher values make tectonic ranges more visible. |
+| `--peak-prominence` | `0.70` | Strength of clustered alpine summit peaks inside broad uplift belts. Higher values make individual peaks stand out in color, height, and normal maps. |
 | `--erosion-strength` | `0.42` | Carves valley-like breaks and darker exposed faces through highlands. Higher values make ranges look more eroded and less like smooth bands. |
 
 ## Meteor Impact Craters
@@ -591,6 +591,6 @@ The table below lists the original ocean/rocky presets. The `moon` preset is int
 - Use `--seed` to explore different layouts without changing the planet recipe.
 - Use `--land-coverage` and `--continent-scale` for main continent layout. Use `--island-density`, `--island-threshold`, continent-distance limits, and island area limits for detached island systems.
 - Use `--biome-scale`, `--desert-coverage`, and `--forest-coverage` for climate and surface character.
-- Use `--mountain-density`, `--mountain-scale`, `--mountain-height`, `--plate-boundary-strength`, `--peak-prominence`, `--erosion-strength`, and `--mountain-boundary-alignment` for connected ranges, relief, visible peaks, eroded valleys, ruggedness, and alignment with continent color transitions.
+- Use `--mountain-density`, `--mountain-scale`, `--mountain-height`, `--plate-boundary-strength`, `--peak-prominence`, `--erosion-strength`, and `--mountain-boundary-alignment` for connected ranges, relief, clustered alpine summits, eroded valleys, ruggedness, and alignment with continent color transitions.
 - Use the color variation options when the shape is good but the texture feels too uniform.
 - The resolved settings for each run are saved in `preset.json`, which is the easiest way to reproduce or compare outputs.
