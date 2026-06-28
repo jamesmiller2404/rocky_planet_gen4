@@ -229,6 +229,21 @@ These controls bake crater bowls, raised rims, ejecta, rays, basin sag, micro-pi
 | `--crater-depth` | `0.65` | Strength of crater floor depression in the height map. Higher values make bowls deeper and normal-map shading stronger. |
 | `--crater-rim-height` | `0.55` | Strength of raised rims and ejecta relief. Higher values make ring edges stand out. |
 | `--crater-rim-width` | `0.14` | Width of the raised crater rim band. Lower values make a thin sharp lip; higher values make broader raised rings. |
+| `--crater-rim-vault` | `0.65` | Sharpness and vaulted relief of the raised rim crest. Higher values make a more pointed rim with stronger sloped shoulders. |
+| `--crater-rim-color-shift` | `0.0` | Rim highlight color. Negative values cool rims toward gray-blue; positive values warm them toward ochre. |
+| `--crater-rim-color-variation` | `0.22` | Per-crater rim color variation. Higher values keep nearby crater rims from sharing the same color. |
+| `--crater-ancient-bombardment` | `0.0` | Adds an old impact era with large worn basins and softened medium craters. |
+| `--crater-middle-bombardment` | `0.0` | Adds a mid-age impact era with partly eroded medium and small craters. |
+| `--crater-fresh-bombardment` | `0.0` | Adds a young impact era with sharper small and medium craters. |
+| `--crater-ancient-erosion` | `0.82` | Erosion strength for the ancient bombardment era. Higher values soften and partially bury older rims. |
+| `--crater-middle-erosion` | `0.48` | Erosion strength for the middle bombardment era. |
+| `--crater-fresh-erosion` | `0.14` | Erosion strength for the fresh bombardment era. Lower values preserve crisp rims and wall shadows. |
+| `--crater-erosion-cycles` | `2` | Number of mask-softening passes used by era erosion. Higher values make old crater generations more worn and blended. |
+| `--crater-rim-breakup` | `0.32` | Irregularity applied to crater rim outlines. Higher values make broken, scalloped, less circular rims. |
+| `--crater-wall-terracing` | `0.35` | Strength of ledged and slumped wall terraces in medium and large craters. |
+| `--crater-central-peak-strength` | `0.35` | Strength of central uplift peaks and rough central mounds in larger craters. |
+| `--crater-shadow-strength` | `0.45` | Extra color-map cavity shadowing inside crater bowls and walls. |
+| `--crater-floor-dust-fill` | `0.45` | Dust fill applied to crater floors, especially older eras. Higher values flatten and warm old floors. |
 | `--crater-erosion` | `0.25` | Wear and softening applied to craters. Lower values create crisp fresh impacts; higher values make older, subdued craters. |
 | `--crater-land-bias` | `0.85` | Bias toward land surfaces. `1.0` restricts crater visibility to land; `0.0` allows all surfaces equally. |
 | `--crater-color-strength` | `0.45` | Amount of crater darkening/highlighting baked into `color.png`. Set to `0.0` for height-only craters. |
@@ -501,6 +516,21 @@ The table below lists the original ocean/rocky presets. The `moon` preset is int
 | `crater_depth` | `0.65` | `0.48` | `0.68` | `0.78` | `0.52` |
 | `crater_rim_height` | `0.55` | `0.40` | `0.58` | `0.68` | `0.44` |
 | `crater_rim_width` | `0.14` | `0.12` | `0.16` | `0.13` | `0.12` |
+| `crater_rim_vault` | `0.65` | `0.65` | `0.65` | `0.65` | `0.65` |
+| `crater_rim_color_shift` | `0.0` | `0.0` | `0.0` | `0.0` | `0.0` |
+| `crater_rim_color_variation` | `0.22` | `0.22` | `0.22` | `0.22` | `0.22` |
+| `crater_ancient_bombardment` | `0.0` | `0.0` | `0.0` | `0.0` | `0.0` |
+| `crater_middle_bombardment` | `0.0` | `0.0` | `0.0` | `0.0` | `0.0` |
+| `crater_fresh_bombardment` | `0.0` | `0.0` | `0.0` | `0.0` | `0.0` |
+| `crater_ancient_erosion` | `0.82` | `0.82` | `0.82` | `0.82` | `0.82` |
+| `crater_middle_erosion` | `0.48` | `0.48` | `0.48` | `0.48` | `0.48` |
+| `crater_fresh_erosion` | `0.14` | `0.14` | `0.14` | `0.14` | `0.14` |
+| `crater_erosion_cycles` | `2` | `2` | `2` | `2` | `2` |
+| `crater_rim_breakup` | `0.32` | `0.32` | `0.32` | `0.32` | `0.32` |
+| `crater_wall_terracing` | `0.35` | `0.35` | `0.35` | `0.35` | `0.35` |
+| `crater_central_peak_strength` | `0.35` | `0.35` | `0.35` | `0.35` | `0.35` |
+| `crater_shadow_strength` | `0.45` | `0.45` | `0.45` | `0.45` | `0.45` |
+| `crater_floor_dust_fill` | `0.45` | `0.45` | `0.45` | `0.45` | `0.45` |
 | `crater_erosion` | `0.25` | `0.38` | `0.22` | `0.18` | `0.36` |
 | `crater_land_bias` | `0.85` | `0.88` | `0.92` | `0.96` | `0.82` |
 | `crater_color_strength` | `0.45` | `0.32` | `0.50` | `0.66` | `0.32` |

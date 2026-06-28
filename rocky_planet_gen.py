@@ -632,6 +632,21 @@ PRESETS = {
         "crater_depth": 0.86,
         "crater_rim_height": 0.80,
         "crater_rim_width": 0.18,
+        "crater_rim_vault": 0.90,
+        "crater_rim_color_shift": -0.08,
+        "crater_rim_color_variation": 0.42,
+        "crater_ancient_bombardment": 0.78,
+        "crater_middle_bombardment": 0.58,
+        "crater_fresh_bombardment": 0.34,
+        "crater_ancient_erosion": 0.76,
+        "crater_middle_erosion": 0.42,
+        "crater_fresh_erosion": 0.08,
+        "crater_erosion_cycles": 3,
+        "crater_rim_breakup": 0.52,
+        "crater_wall_terracing": 0.58,
+        "crater_central_peak_strength": 0.46,
+        "crater_shadow_strength": 0.66,
+        "crater_floor_dust_fill": 0.52,
         "crater_erosion": 0.18,
         "crater_land_bias": 0.0,
         "crater_color_strength": 0.92,
@@ -732,6 +747,21 @@ PRESETS.update(
             "crater_small_density": 0.28,
             "crater_medium_density": 0.18,
             "crater_large_basin_density": 0.08,
+            "crater_rim_vault": 0.56,
+            "crater_rim_color_shift": 0.38,
+            "crater_rim_color_variation": 0.32,
+            "crater_ancient_bombardment": 0.62,
+            "crater_middle_bombardment": 0.34,
+            "crater_fresh_bombardment": 0.18,
+            "crater_ancient_erosion": 0.84,
+            "crater_middle_erosion": 0.56,
+            "crater_fresh_erosion": 0.18,
+            "crater_erosion_cycles": 3,
+            "crater_rim_breakup": 0.48,
+            "crater_wall_terracing": 0.42,
+            "crater_central_peak_strength": 0.38,
+            "crater_shadow_strength": 0.58,
+            "crater_floor_dust_fill": 0.62,
             "crater_erosion": 0.58,
             "crater_floor_darkening": 0.32,
             "polar_ice_size": 0.025,
@@ -781,6 +811,21 @@ PRESETS.update(
             "crater_small_density": 0.42,
             "crater_medium_density": 0.30,
             "crater_large_basin_density": 0.16,
+            "crater_rim_vault": 0.74,
+            "crater_rim_color_shift": -0.34,
+            "crater_rim_color_variation": 0.26,
+            "crater_ancient_bombardment": 0.48,
+            "crater_middle_bombardment": 0.30,
+            "crater_fresh_bombardment": 0.16,
+            "crater_ancient_erosion": 0.70,
+            "crater_middle_erosion": 0.44,
+            "crater_fresh_erosion": 0.16,
+            "crater_erosion_cycles": 2,
+            "crater_rim_breakup": 0.32,
+            "crater_wall_terracing": 0.30,
+            "crater_central_peak_strength": 0.26,
+            "crater_shadow_strength": 0.42,
+            "crater_floor_dust_fill": 0.40,
             "crater_erosion": 0.42,
             "crater_color_strength": 0.38,
             "moon_basin_strength": 0.18,
@@ -838,6 +883,21 @@ PRESETS.update(
             "crater_small_density": 0.16,
             "crater_medium_density": 0.10,
             "crater_large_basin_density": 0.04,
+            "crater_rim_vault": 0.50,
+            "crater_rim_color_shift": 0.46,
+            "crater_rim_color_variation": 0.34,
+            "crater_ancient_bombardment": 0.34,
+            "crater_middle_bombardment": 0.20,
+            "crater_fresh_bombardment": 0.16,
+            "crater_ancient_erosion": 0.82,
+            "crater_middle_erosion": 0.58,
+            "crater_fresh_erosion": 0.24,
+            "crater_erosion_cycles": 3,
+            "crater_rim_breakup": 0.58,
+            "crater_wall_terracing": 0.34,
+            "crater_central_peak_strength": 0.48,
+            "crater_shadow_strength": 0.62,
+            "crater_floor_dust_fill": 0.36,
             "crater_erosion": 0.62,
             "crater_color_strength": 0.42,
             "moon_basin_strength": 0.10,
@@ -1535,6 +1595,21 @@ NEBULA_DEFAULTS = {
 }
 
 CRATER_LAYER_DEFAULTS = {
+    "crater_rim_vault": 0.65,
+    "crater_rim_color_shift": 0.0,
+    "crater_rim_color_variation": 0.22,
+    "crater_ancient_bombardment": 0.0,
+    "crater_middle_bombardment": 0.0,
+    "crater_fresh_bombardment": 0.0,
+    "crater_ancient_erosion": 0.82,
+    "crater_middle_erosion": 0.48,
+    "crater_fresh_erosion": 0.14,
+    "crater_erosion_cycles": 2,
+    "crater_rim_breakup": 0.32,
+    "crater_wall_terracing": 0.35,
+    "crater_central_peak_strength": 0.35,
+    "crater_shadow_strength": 0.45,
+    "crater_floor_dust_fill": 0.45,
     "crater_small_density": 0.0,
     "crater_medium_density": 0.0,
     "crater_large_basin_density": 0.0,
@@ -1786,6 +1861,9 @@ class PlanetConfig:
     crater_depth: float
     crater_rim_height: float
     crater_rim_width: float
+    crater_rim_vault: float
+    crater_rim_color_shift: float
+    crater_rim_color_variation: float
     crater_erosion: float
     crater_land_bias: float
     crater_color_strength: float
@@ -1795,6 +1873,18 @@ class PlanetConfig:
     crater_ray_strength: float
     crater_floor_darkening: float
     crater_micro_pitting: float
+    crater_ancient_bombardment: float
+    crater_middle_bombardment: float
+    crater_fresh_bombardment: float
+    crater_ancient_erosion: float
+    crater_middle_erosion: float
+    crater_fresh_erosion: float
+    crater_erosion_cycles: int
+    crater_rim_breakup: float
+    crater_wall_terracing: float
+    crater_central_peak_strength: float
+    crater_shadow_strength: float
+    crater_floor_dust_fill: float
     moon_basin_strength: float
     moon_basin_scale: float
     moon_regolith_variation: float
@@ -3021,6 +3111,9 @@ def crater_generation_enabled(cfg) -> bool:
             "crater_medium_density",
             "crater_large_basin_density",
             "crater_micro_pitting",
+            "crater_ancient_bombardment",
+            "crater_middle_bombardment",
+            "crater_fresh_bombardment",
         )
     )
 
@@ -3028,7 +3121,15 @@ def crater_generation_enabled(cfg) -> bool:
 def blank_crater_layers(shape):
     return {
         "floor": np.zeros(shape, dtype=np.float32),
+        "inner_wall": np.zeros(shape, dtype=np.float32),
         "rim": np.zeros(shape, dtype=np.float32),
+        "outer_wall": np.zeros(shape, dtype=np.float32),
+        "rim_tone": np.zeros(shape, dtype=np.float32),
+        "rim_tone_weight": np.zeros(shape, dtype=np.float32),
+        "terrace": np.zeros(shape, dtype=np.float32),
+        "central_peak": np.zeros(shape, dtype=np.float32),
+        "shadow": np.zeros(shape, dtype=np.float32),
+        "floor_dust": np.zeros(shape, dtype=np.float32),
         "ejecta": np.zeros(shape, dtype=np.float32),
         "rays": np.zeros(shape, dtype=np.float32),
         "basin": np.zeros(shape, dtype=np.float32),
@@ -3047,6 +3148,46 @@ def tangent_basis(center):
     return u.astype(np.float32), v.astype(np.float32)
 
 
+CRATER_ERODABLE_LAYER_KEYS = (
+    "floor",
+    "inner_wall",
+    "rim",
+    "outer_wall",
+    "terrace",
+    "central_peak",
+    "shadow",
+    "floor_dust",
+    "ejecta",
+    "rays",
+    "basin",
+)
+
+
+def merge_crater_layers(target, source):
+    for key in target:
+        target[key] += source[key]
+
+
+def soften_crater_layers(layers, erosion, cycles):
+    erosion = float(np.clip(erosion, 0.0, 1.0))
+    cycles = max(0, int(cycles))
+    if erosion <= 0.01 or cycles <= 0:
+        return
+    passes = max(1, int(round(cycles * erosion)))
+    sigma = 0.35 + erosion * 1.10
+    blend = 0.22 + erosion * 0.48
+    for _ in range(passes):
+        for key in CRATER_ERODABLE_LAYER_KEYS:
+            blurred = ndimage.gaussian_filter(layers[key], sigma=sigma, mode="nearest")
+            layers[key] = lerp(layers[key], blurred, blend).astype(np.float32)
+        layers["rim"] *= 1.0 - erosion * 0.055
+        layers["inner_wall"] *= 1.0 - erosion * 0.045
+        layers["outer_wall"] *= 1.0 - erosion * 0.035
+        layers["terrace"] *= 1.0 - erosion * 0.18
+        layers["central_peak"] *= 1.0 - erosion * 0.16
+        layers["floor_dust"] += layers["floor"] * erosion * 0.035
+
+
 def accumulate_crater_layer(
     layers,
     cfg,
@@ -3060,13 +3201,26 @@ def accumulate_crater_layer(
     target,
     layer_kind,
     seed_offset,
+    erosion_override=None,
+    ray_strength_override=None,
+    breakup_scale=1.0,
+    terrace_scale=1.0,
+    central_peak_scale=1.0,
+    shadow_scale=1.0,
+    floor_dust_scale=1.0,
 ):
     if count <= 0:
         return
 
-    erosion = float(np.clip(cfg.crater_erosion, 0.0, 1.0))
+    erosion = float(np.clip(cfg.crater_erosion if erosion_override is None else erosion_override, 0.0, 1.0))
     rim_width = float(np.clip(cfg.crater_rim_width, 0.0, 1.0))
-    ray_strength = float(np.clip(cfg.crater_ray_strength, 0.0, 1.0))
+    rim_vault = float(np.clip(cfg.crater_rim_vault, 0.0, 1.0))
+    ray_strength = float(np.clip(cfg.crater_ray_strength if ray_strength_override is None else ray_strength_override, 0.0, 1.0))
+    rim_breakup = float(np.clip(cfg.crater_rim_breakup * breakup_scale, 0.0, 1.0))
+    wall_terracing = float(np.clip(cfg.crater_wall_terracing * terrace_scale, 0.0, 1.0))
+    central_peak_strength = float(np.clip(cfg.crater_central_peak_strength * central_peak_scale, 0.0, 1.0))
+    shadow_strength = float(np.clip(cfg.crater_shadow_strength * shadow_scale, 0.0, 1.0))
+    floor_dust_fill = float(np.clip(cfg.crater_floor_dust_fill * floor_dust_scale, 0.0, 1.0))
     centers = rng.normal(size=(count, 3)).astype(np.float32)
     centers /= np.maximum(np.linalg.norm(centers, axis=1, keepdims=True), 1e-6)
     radius_mix = rng.random(count) ** (2.35 if layer_kind == "small" else 1.35)
@@ -3081,38 +3235,136 @@ def accumulate_crater_layer(
         chord_radius = max(1e-6, 2.0 * math.sin(float(radius) * 0.5))
         radial = np.sqrt(np.maximum(0.0, 2.0 - 2.0 * dot)) / chord_radius
         local_wear = wear * strength * target
-
-        if layer_kind == "basin":
-            basin_floor = 1.0 - smoothstep(0.0, 1.05 + erosion * 0.30, radial)
-            basin_floor *= 0.70 + 0.30 * (1.0 - smoothstep(0.0, 0.32, radial))
-            basin_rim = smoothstep(0.82, 1.00, radial) * (1.0 - smoothstep(1.0, 1.22 + rim_width * 0.25, radial))
-            layers["basin"] += basin_floor * local_wear * (1.0 - erosion * 0.20)
-            layers["rim"] += basin_rim * local_wear * 0.42
-            continue
-
-        bowl = 1.0 - smoothstep(0.0, 1.0 + erosion * 0.14, radial)
-        bowl *= 0.52 + 0.48 * (1.0 - smoothstep(0.0, 0.16 + erosion * 0.14, radial))
-        rim_inner_start = 0.90 - rim_width * 0.22
-        rim_inner_peak = 0.975 - rim_width * 0.04
-        rim_outer_end = 1.035 + rim_width * 0.24 + erosion * 0.06
-        ring = smoothstep(rim_inner_start, rim_inner_peak, radial) * (1.0 - smoothstep(1.0, rim_outer_end, radial))
-        ejecta = smoothstep(0.96, 1.04, radial) * (1.0 - smoothstep(1.06, 2.20 + erosion * 0.55, radial))
-
-        floor_scale = 0.72 if layer_kind == "small" else 1.0
-        rim_scale = 1.12 if layer_kind == "medium" else 0.82
-        layers["floor"] += bowl * local_wear * floor_scale * (1.0 - erosion * 0.24)
-        layers["rim"] += ring * local_wear * rim_scale * (1.0 - erosion * 0.18)
-        layers["ejecta"] += ejecta * local_wear * (0.45 if layer_kind == "small" else 0.90) * (1.0 - erosion * 0.18)
-
-        if ray_strength > 0.0 and layer_kind == "medium" and index % 4 == 0:
+        tone_hash = math.sin(float(center[0] * 12.9898 + center[1] * 78.233 + center[2] * 37.719 + seed_offset * 0.073 + index * 0.618)) * 43758.5453
+        tone_unit = tone_hash - math.floor(tone_hash)
+        crater_tone = tone_unit * 2.0 - 1.0
+        phase = tone_unit * math.tau
+        angular = 0.0
+        profile_radial = radial
+        if rim_breakup > 0.0 or wall_terracing > 0.0 or ray_strength > 0.0:
             u, v = tangent_basis(center)
             tx = x * u[0] + y * u[1] + z * u[2]
             ty = x * v[0] + y * v[1] + z * v[2]
             angle = np.arctan2(ty, tx)
+            lobes = 5 + int(tone_unit * 8.0)
+            angular = (
+                np.sin(angle * lobes + phase) * 0.58
+                + np.sin(angle * (lobes * 2 + 1) - phase * 0.73) * 0.32
+                + np.cos(angle * (lobes + 3) + phase * 1.37) * 0.20
+            )
+            if rim_breakup > 0.0:
+                warp_band = smoothstep(0.32, 1.58, radial) * (1.0 - smoothstep(1.72, 2.40, radial))
+                profile_radial = np.maximum(0.0, radial * (1.0 + angular * rim_breakup * (0.055 + rim_width * 0.050) * (1.0 - erosion * 0.45) * warp_band))
+        else:
+            angle = None
+
+        if layer_kind == "basin":
+            basin_floor = 1.0 - smoothstep(0.0, 1.05 + erosion * 0.30, profile_radial)
+            basin_floor *= 0.70 + 0.30 * (1.0 - smoothstep(0.0, 0.32, profile_radial))
+            basin_inner_wall = smoothstep(0.58, 1.0, profile_radial) * (1.0 - smoothstep(1.0, 1.10 + rim_width * 0.18, profile_radial))
+            basin_rim = smoothstep(0.82, 1.00, profile_radial) * (1.0 - smoothstep(1.0, 1.22 + rim_width * 0.25, profile_radial))
+            basin_rim = np.power(np.clip(basin_rim, 0.0, 1.0), 1.0 + rim_vault * 1.30)
+            basin_outer_wall = smoothstep(0.98, 1.08, profile_radial) * (1.0 - smoothstep(1.08, 1.42 + rim_width * 0.34 + erosion * 0.18, profile_radial))
+            basin_tone_mask = (basin_rim + basin_outer_wall * 0.42 + basin_inner_wall * 0.18) * local_wear
+            basin_center = np.power(1.0 - smoothstep(0.0, 0.30 + erosion * 0.18, profile_radial), 1.45)
+            basin_terrace = np.zeros_like(profile_radial, dtype=np.float32)
+            if wall_terracing > 0.0:
+                wall_band = smoothstep(0.35, 0.92, profile_radial) * (1.0 - smoothstep(0.95, 1.08, profile_radial))
+                ledges = np.power(np.clip(0.5 + 0.5 * np.cos(profile_radial * 24.0 + phase + angular * 1.20), 0.0, 1.0), 2.2)
+                basin_terrace = wall_band * ledges
+            layers["basin"] += basin_floor * local_wear * (1.0 - erosion * 0.20)
+            layers["inner_wall"] += basin_inner_wall * local_wear * (0.14 + rim_vault * 0.10) * (1.0 - erosion * 0.26)
+            layers["rim"] += basin_rim * local_wear * (0.34 + rim_vault * 0.20)
+            layers["outer_wall"] += basin_outer_wall * local_wear * (0.10 + rim_vault * 0.10) * (1.0 - erosion * 0.18)
+            layers["terrace"] += basin_terrace * local_wear * wall_terracing * 0.40 * (1.0 - erosion * 0.45)
+            layers["central_peak"] += basin_center * local_wear * central_peak_strength * 0.22 * (1.0 - erosion * 0.58)
+            layers["shadow"] += (basin_inner_wall * 0.50 + basin_floor * 0.14 + basin_outer_wall * 0.20) * local_wear * shadow_strength
+            layers["floor_dust"] += basin_floor * local_wear * floor_dust_fill * (0.36 + erosion * 0.48)
+            layers["rim_tone"] += basin_tone_mask * crater_tone
+            layers["rim_tone_weight"] += basin_tone_mask
+            continue
+
+        bowl = 1.0 - smoothstep(0.0, 1.0 + erosion * 0.14, profile_radial)
+        bowl *= 0.52 + 0.48 * (1.0 - smoothstep(0.0, 0.16 + erosion * 0.14, profile_radial))
+        floor_edge = 0.44 + erosion * 0.10
+        rim_peak = 1.0
+        rim_inner_start = max(floor_edge + 0.08, rim_peak - (0.09 + rim_width * 0.34 + erosion * 0.05))
+        rim_outer_end = rim_peak + 0.08 + rim_width * 0.42 + erosion * 0.08
+        inner_wall = np.where(profile_radial < rim_peak, smoothstep(floor_edge, rim_peak, profile_radial), 0.0)
+        ring_inner = smoothstep(rim_inner_start, rim_peak, profile_radial)
+        ring_outer = 1.0 - smoothstep(rim_peak, rim_outer_end, profile_radial)
+        ring = np.where(profile_radial <= rim_peak, ring_inner, ring_outer)
+        ring = np.power(np.clip(ring, 0.0, 1.0), 1.10 + erosion * 0.55 + rim_vault * 2.35)
+        outer_wall_end = rim_peak + 0.22 + rim_width * 0.66 + erosion * 0.18
+        outer_wall = np.where(
+            profile_radial >= rim_peak,
+            1.0 - smoothstep(rim_peak, outer_wall_end, profile_radial),
+            0.0,
+        )
+        ejecta = smoothstep(0.96, 1.04, profile_radial) * (1.0 - smoothstep(1.06, 2.20 + erosion * 0.55, profile_radial))
+        tone_mask = (ring + outer_wall * 0.44 + inner_wall * 0.16) * local_wear
+        terrace = np.zeros_like(profile_radial, dtype=np.float32)
+        if wall_terracing > 0.0 and layer_kind != "small":
+            wall_band = smoothstep(0.34, 0.93, profile_radial) * (1.0 - smoothstep(0.96, 1.05, profile_radial))
+            ledges = np.power(np.clip(0.5 + 0.5 * np.cos(profile_radial * 28.0 + phase + angular * 1.35), 0.0, 1.0), 2.4)
+            terrace = wall_band * ledges
+        center_peak = np.zeros_like(profile_radial, dtype=np.float32)
+        center_floor_relief = np.zeros_like(profile_radial, dtype=np.float32)
+        if central_peak_strength > 0.0 and layer_kind == "medium":
+            if angle is None:
+                u, v = tangent_basis(center)
+                tx = x * u[0] + y * u[1] + z * u[2]
+                ty = x * v[0] + y * v[1] + z * v[2]
+                angle = np.arctan2(ty, tx)
+            else:
+                tx = x * u[0] + y * u[1] + z * u[2]
+                ty = x * v[0] + y * v[1] + z * v[2]
+
+            central_lobes = 3 + int(tone_unit * 4.0)
+            central_angular = (
+                np.sin(angle * central_lobes + phase * 1.41) * 0.34
+                + np.cos(angle * (central_lobes + 2) - phase * 0.83) * 0.22
+                + np.sin(angle * (central_lobes * 2 + 1) + phase * 0.37) * 0.14
+            )
+            center_profile = np.maximum(
+                0.0,
+                radial * (1.0 + central_angular * (0.16 + central_peak_strength * 0.08)),
+            )
+            center_radius = 0.17 + erosion * 0.07
+            center_spire_radius = 0.065 + erosion * 0.035
+            center_core = np.power(np.clip(1.0 - center_profile / center_radius, 0.0, 1.0), 1.70)
+            center_spire = np.power(np.clip(1.0 - center_profile / center_spire_radius, 0.0, 1.0), 1.18)
+            local_x = tx / chord_radius
+            local_y = ty / chord_radius
+            center_rubble = (
+                np.sin(local_x * 21.7 + local_y * 7.9 + phase) * 0.16
+                + np.cos(local_x * 8.3 - local_y * 18.1 - phase * 0.61) * 0.13
+                + central_angular * 0.12
+            )
+            center_peak = np.clip((center_core * 0.72 + center_spire * 0.55) * (0.86 + center_rubble), 0.0, 1.0)
+            center_floor_relief = smoothstep(0.12, 0.70, center_peak)
+
+        floor_scale = 0.72 if layer_kind == "small" else 1.0
+        rim_scale = 1.12 if layer_kind == "medium" else 0.82
+        floor_mask = bowl * (1.0 - center_floor_relief * (0.54 + central_peak_strength * 0.30))
+        layers["floor"] += floor_mask * local_wear * floor_scale * (1.0 - erosion * 0.24)
+        layers["inner_wall"] += inner_wall * local_wear * rim_scale * (0.28 + rim_vault * 0.20) * (1.0 - erosion * 0.22)
+        layers["rim"] += ring * local_wear * rim_scale * (1.0 - erosion * 0.18)
+        layers["outer_wall"] += outer_wall * local_wear * rim_scale * (0.20 + rim_vault * 0.22) * (1.0 - erosion * 0.18)
+        layers["terrace"] += terrace * local_wear * wall_terracing * 0.55 * (1.0 - erosion * 0.48)
+        layers["central_peak"] += center_peak * local_wear * central_peak_strength * 0.34 * (1.0 - erosion * 0.55)
+        layers["shadow"] += (inner_wall * 0.54 + floor_mask * 0.20 + outer_wall * 0.16) * local_wear * shadow_strength
+        layers["floor_dust"] += floor_mask * local_wear * floor_dust_fill * (0.20 + erosion * 0.58)
+        layers["rim_tone"] += tone_mask * crater_tone
+        layers["rim_tone_weight"] += tone_mask
+        layers["ejecta"] += ejecta * local_wear * (0.45 if layer_kind == "small" else 0.90) * (1.0 - erosion * 0.18)
+
+        if ray_strength > 0.0 and layer_kind == "medium" and index % 4 == 0:
             ray_count = int(rng.integers(9, 18))
-            phase = float(rng.random() * math.tau)
+            ray_phase = float(rng.random() * math.tau)
             spoke = np.power(np.clip(0.5 + 0.5 * np.cos(angle * ray_count + phase), 0.0, 1.0), 8.0)
-            ray_falloff = smoothstep(1.02, 1.18, radial) * (1.0 - smoothstep(1.22, 3.25, radial))
+            spoke *= np.power(np.clip(0.5 + 0.5 * np.cos(angle * (ray_count + 3) + ray_phase), 0.0, 1.0), 1.4)
+            ray_falloff = smoothstep(1.02, 1.18, profile_radial) * (1.0 - smoothstep(1.22, 3.25, profile_radial))
             layers["rays"] += spoke * ray_falloff * local_wear * ray_strength * 0.95
 
 
@@ -3122,7 +3374,10 @@ def build_crater_field(cfg, x, y, z, land):
     medium_density = float(np.clip(cfg.crater_medium_density, 0.0, 1.0))
     basin_density = float(np.clip(cfg.crater_large_basin_density, 0.0, 1.0))
     micro_strength = float(np.clip(cfg.crater_micro_pitting, 0.0, 1.0))
-    if max(legacy_density, small_density, medium_density, basin_density, micro_strength) <= 0.0:
+    ancient_bombardment = float(np.clip(cfg.crater_ancient_bombardment, 0.0, 1.0))
+    middle_bombardment = float(np.clip(cfg.crater_middle_bombardment, 0.0, 1.0))
+    fresh_bombardment = float(np.clip(cfg.crater_fresh_bombardment, 0.0, 1.0))
+    if max(legacy_density, small_density, medium_density, basin_density, micro_strength, ancient_bombardment, middle_bombardment, fresh_bombardment) <= 0.0:
         return blank_crater_layers(x.shape)
 
     min_radius = max(0.001, float(cfg.crater_min_radius))
@@ -3179,6 +3434,125 @@ def build_crater_field(cfg, x, y, z, land):
         307,
     )
 
+    def add_bombardment_era(
+        strength,
+        erosion,
+        basin_multiplier,
+        medium_multiplier,
+        small_multiplier,
+        radius_scale,
+        seed_offset,
+        ray_scale,
+        floor_fill_scale,
+    ):
+        if strength <= 0.0:
+            return
+        era_layers = blank_crater_layers(x.shape)
+        erosion = float(np.clip(erosion, 0.0, 1.0))
+        era_basin_count = int(round(strength * basin_multiplier))
+        era_medium_count = int(round(strength * medium_multiplier))
+        era_small_count = int(round(strength * small_multiplier))
+        softened_target = target * (0.86 + strength * 0.14)
+        accumulate_crater_layer(
+            era_layers,
+            cfg,
+            x,
+            y,
+            z,
+            rng,
+            era_basin_count,
+            max(max_radius * 0.95 * radius_scale, 0.065),
+            max(max_radius * 2.20 * radius_scale, 0.150),
+            softened_target,
+            "basin",
+            seed_offset,
+            erosion_override=erosion,
+            ray_strength_override=0.0,
+            breakup_scale=1.10,
+            terrace_scale=1.15,
+            central_peak_scale=1.10,
+            shadow_scale=1.0,
+            floor_dust_scale=floor_fill_scale,
+        )
+        accumulate_crater_layer(
+            era_layers,
+            cfg,
+            x,
+            y,
+            z,
+            rng,
+            era_medium_count,
+            max(min_radius * 0.85 * radius_scale, 0.0035),
+            max(max_radius * 0.95 * radius_scale, min_radius * 2.5),
+            softened_target,
+            "medium",
+            seed_offset + 17,
+            erosion_override=erosion,
+            ray_strength_override=cfg.crater_ray_strength * ray_scale,
+            breakup_scale=1.0,
+            terrace_scale=1.0,
+            central_peak_scale=1.0,
+            shadow_scale=1.0,
+            floor_dust_scale=floor_fill_scale,
+        )
+        accumulate_crater_layer(
+            era_layers,
+            cfg,
+            x,
+            y,
+            z,
+            rng,
+            era_small_count,
+            max(0.0012, min_radius * 0.28),
+            max(min_radius * 1.55 * radius_scale, 0.008),
+            softened_target,
+            "small",
+            seed_offset + 31,
+            erosion_override=erosion,
+            ray_strength_override=0.0,
+            breakup_scale=0.72,
+            terrace_scale=0.0,
+            central_peak_scale=0.0,
+            shadow_scale=0.85,
+            floor_dust_scale=floor_fill_scale * 0.55,
+        )
+        soften_crater_layers(era_layers, erosion, cfg.crater_erosion_cycles)
+        merge_crater_layers(layers, era_layers)
+
+    add_bombardment_era(
+        ancient_bombardment,
+        cfg.crater_ancient_erosion,
+        8.0,
+        52.0,
+        34.0,
+        1.25,
+        401,
+        0.0,
+        1.25,
+    )
+    add_bombardment_era(
+        middle_bombardment,
+        cfg.crater_middle_erosion,
+        3.0,
+        58.0,
+        68.0,
+        0.92,
+        503,
+        0.34,
+        0.92,
+    )
+    add_bombardment_era(
+        fresh_bombardment,
+        cfg.crater_fresh_erosion,
+        1.0,
+        34.0,
+        112.0,
+        0.62,
+        607,
+        1.0,
+        0.38,
+    )
+
     if micro_strength > 0.0:
         fine = fbm_3d(x, y, z, 95.0, 4, 0.54, cfg.seed + 7433)
         finer = fbm_3d(x, y, z, 180.0, 3, 0.50, cfg.seed + 7529)
@@ -3186,7 +3560,10 @@ def build_crater_field(cfg, x, y, z, land):
         layers["micro"] = np.clip((pitting * 0.74 + layers["floor"] * 0.35) * micro_strength * target, 0.0, 1.0)
 
     for key, value in layers.items():
-        layers[key] = np.clip(value, 0.0, 1.0).astype(np.float32)
+        if key == "rim_tone":
+            layers[key] = np.clip(value, -1.0, 1.0).astype(np.float32)
+        else:
+            layers[key] = np.clip(value, 0.0, 1.0).astype(np.float32)
     return layers
 
 
@@ -4243,24 +4620,59 @@ def build_maps_from_vectors(
         if crater_layers is not None and cfg.crater_color_strength > 0.0:
             crater_color_strength = float(np.clip(cfg.crater_color_strength, 0.0, 1.0))
             floor = crater_layers["floor"]
+            inner_wall = crater_layers["inner_wall"]
             rim = crater_layers["rim"]
+            outer_wall = crater_layers["outer_wall"]
             ejecta = crater_layers["ejecta"]
             rays = crater_layers["rays"]
             basin = crater_layers["basin"]
             micro = crater_layers["micro"]
+            terrace = crater_layers["terrace"]
+            central_peak = crater_layers["central_peak"]
+            crater_shadow_mask = crater_layers["shadow"]
+            floor_dust = crater_layers["floor_dust"]
+            rim_tone = np.divide(
+                crater_layers["rim_tone"],
+                np.maximum(crater_layers["rim_tone_weight"], 1e-6),
+            )
+            rim_color_shift = float(np.clip(cfg.crater_rim_color_shift, -1.0, 1.0))
+            rim_color_variation = float(np.clip(cfg.crater_rim_color_variation, 0.0, 1.0))
+            rim_tone_adjust = np.clip(rim_color_shift + rim_tone * rim_color_variation, -1.0, 1.0)
+            rim_neutral = np.array([205, 190, 160], dtype=np.float32)
+            rim_cool = np.array([150, 168, 180], dtype=np.float32)
+            rim_warm = np.array([230, 164, 92], dtype=np.float32)
+            rim_accent = lerp(rim_neutral, rim_warm, np.clip(rim_tone_adjust, 0.0, 1.0)[..., None])
+            rim_accent = lerp(rim_accent, rim_cool, np.clip(-rim_tone_adjust, 0.0, 1.0)[..., None])
             floor_darkening = float(np.clip(cfg.crater_floor_darkening, 0.0, 1.0))
             crater_shadow = color * 0.52
-            crater_highlight = color * 0.60 + np.array([205, 190, 160], dtype=np.float32) * 0.40
+            wall_shadow = color * 0.68
+            crater_highlight = color * 0.58 + rim_accent * 0.42
             ray_highlight = color * 0.48 + np.array([225, 218, 194], dtype=np.float32) * 0.52
             basin_shadow = color * 0.42 + np.array([28, 28, 28], dtype=np.float32) * 0.58
-            floor_tint = np.clip(floor * crater_color_strength * (0.62 + floor_darkening * 0.58), 0.0, 0.86)
-            rim_tint = np.clip((rim * 1.08 + ejecta * 0.46) * crater_color_strength, 0.0, 0.82)
+            cavity_shadow = color * 0.42 + np.array([46, 24, 14], dtype=np.float32) * 0.42
+            floor_dust_color = color * 0.58 + np.array([190, 150, 98], dtype=np.float32) * 0.42
+            central_peak_relief = np.clip(central_peak * (0.55 + cfg.crater_central_peak_strength * 0.45), 0.0, 1.0)
+            central_peak_color = color * 0.52 + rim_accent * 0.28 + np.array([176, 158, 126], dtype=np.float32) * 0.20
+            floor_tint = np.clip(
+                floor * (1.0 - central_peak_relief * 0.68) * crater_color_strength * (0.62 + floor_darkening * 0.58),
+                0.0,
+                0.86,
+            )
+            wall_tint = np.clip(inner_wall * crater_color_strength * 0.22, 0.0, 0.36)
+            rim_tint = np.clip((rim * 0.98 + outer_wall * 0.24 + terrace * 0.32 + ejecta * 0.38) * crater_color_strength, 0.0, 0.82)
+            central_peak_tint = np.clip(central_peak_relief * crater_color_strength * 0.62, 0.0, 0.72)
+            crater_shadow_tint = np.clip(crater_shadow_mask * crater_color_strength * (0.30 + floor_darkening * 0.34), 0.0, 0.72)
+            floor_dust_tint = np.clip(floor_dust * crater_color_strength * (0.28 + cfg.crater_floor_dust_fill * 0.42), 0.0, 0.64)
             ray_tint = np.clip(rays * crater_color_strength, 0.0, 0.84)
             basin_tint = np.clip(basin * crater_color_strength * (0.46 + floor_darkening * 0.50), 0.0, 0.82)
             micro_tint = np.clip(micro * crater_color_strength * floor_darkening * 0.20, 0.0, 0.24)
             color = color_blend(color, basin_shadow, basin_tint)
             color = color_blend(color, crater_shadow, floor_tint)
+            color = color_blend(color, floor_dust_color, floor_dust_tint)
+            color = color_blend(color, wall_shadow, wall_tint)
+            color = color_blend(color, cavity_shadow, crater_shadow_tint)
             color = color_blend(color, crater_highlight, rim_tint)
+            color = color_blend(color, central_peak_color, central_peak_tint)
             color = color_blend(color, ray_highlight, ray_tint)
             color = color_blend(color, color * 0.82, micro_tint)
 
@@ -4296,19 +4708,37 @@ def build_maps_from_vectors(
         if crater_layers is not None:
             crater_depth = float(np.clip(cfg.crater_depth, 0.0, 1.0))
             crater_rim_height = float(np.clip(cfg.crater_rim_height, 0.0, 1.0))
+            crater_rim_vault = float(np.clip(cfg.crater_rim_vault, 0.0, 1.0))
             floor = crater_layers["floor"]
+            inner_wall = crater_layers["inner_wall"]
             rim = crater_layers["rim"]
+            outer_wall = crater_layers["outer_wall"]
             ejecta = crater_layers["ejecta"]
             basin = crater_layers["basin"]
             micro = crater_layers["micro"]
+            terrace = crater_layers["terrace"]
+            central_peak = crater_layers["central_peak"]
+            floor_dust = crater_layers["floor_dust"]
+            central_peak_relief = np.clip(central_peak * (0.55 + cfg.crater_central_peak_strength * 0.45), 0.0, 1.0)
             crater_floor_level = np.where(land, 0.30 + base_land_height * 0.025, height - ocean_depth * 0.06)
-            crater_flatten = np.clip((floor * 0.92 + basin * 0.42) * (0.48 + crater_depth * 0.48), 0.0, 0.98)
+            crater_flatten = np.clip(
+                (floor * 0.92 + basin * 0.42 + floor_dust * 0.28)
+                * (1.0 - central_peak_relief * 0.58)
+                * (0.48 + crater_depth * 0.48),
+                0.0,
+                0.98,
+            )
             height = lerp(height, crater_floor_level, crater_flatten)
-            height -= floor * crater_depth * 0.52
-            height -= basin * crater_depth * 0.20
+            height -= floor * (1.0 - central_peak_relief * 0.72) * crater_depth * np.clip(0.52 - floor_dust * 0.24, 0.22, 0.52)
+            height -= basin * crater_depth * np.clip(0.20 - floor_dust * 0.08, 0.08, 0.20)
             height -= micro * crater_depth * 0.035
-            height += rim * crater_rim_height * 0.44
-            height += ejecta * crater_rim_height * 0.14
+            height += floor_dust * crater_depth * 0.10
+            height += inner_wall * crater_rim_height * (0.07 + crater_rim_vault * 0.08)
+            height += rim * crater_rim_height * (0.30 + crater_rim_vault * 0.20)
+            height += outer_wall * crater_rim_height * (0.06 + crater_rim_vault * 0.10)
+            height += terrace * crater_rim_height * 0.07
+            height += central_peak * crater_rim_height * (0.34 + crater_rim_vault * 0.08)
+            height += ejecta * crater_rim_height * 0.12
         raw_height = height
         normal_height = raw_height
         height = normalize01(raw_height, height_range)
@@ -4339,11 +4769,17 @@ def build_maps_from_vectors(
         if crater_layers is not None:
             roughness = (
                 roughness
+                + crater_layers["inner_wall"] * 0.10
                 + crater_layers["rim"] * 0.22
+                + crater_layers["outer_wall"] * 0.08
+                + crater_layers["terrace"] * 0.16
+                + crater_layers["central_peak"] * 0.20
+                + crater_layers["shadow"] * 0.08
                 + crater_layers["ejecta"] * 0.12
                 + crater_layers["rays"] * 0.08
                 + crater_layers["micro"] * 0.16
                 - crater_layers["floor"] * 0.05
+                - crater_layers["floor_dust"] * 0.12
                 - crater_layers["basin"] * 0.06
             )
         roughness = np.clip(roughness, 0.0, 1.0)
