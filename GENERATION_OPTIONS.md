@@ -165,6 +165,8 @@ These V2 controls bias the generator toward broader rocky-body families without 
 | --- | ---: | --- |
 | `--land-coverage` | `0.46` | Approximate fraction of the planet covered by land. Higher values create more land. Set to `1.0` for an all-land planet with no oceans, lakes, shelves, shoreline mask, or ocean-depth mask. |
 | `--continent-scale` | `1.55` | Size of major continent forms. Lower values create broader continents; higher values create smaller, busier continents. |
+| `--continent-domain-warp` | `0.20` | Distorts continent sampling coordinates to make landmasses less mechanically smooth. `0.0` uses the faster unwarped continent path. |
+| `--continent-macro-shape` | `0.20` | Blends broad continent-scale forms back into the land field. Higher values make large land blobs more dominant; `0.0` skips this extra macro layer. |
 | `--continent-detail` | `7` | Number of noise octaves used for continent shape. Higher values add finer detail. |
 | `--continent-roughness` | `0.58` | How strongly continent detail persists across octaves. Higher values make more rugged coastlines. |
 | `--continent-contrast` | `0.19` | Height transition range around land. Higher values broaden elevation variation. |
@@ -481,6 +483,8 @@ The table below lists the original ocean/rocky presets. The `moon` preset is int
 | --- | ---: | ---: | ---: | ---: | ---: |
 | `land_coverage` | `0.46` | `0.32` | `0.58` | `0.68` | `0.28` |
 | `continent_scale` | `1.55` | `2.75` | `0.95` | `1.35` | `1.85` |
+| `continent_domain_warp` | `0.20` | `0.20` | `0.20` | `0.20` | `0.20` |
+| `continent_macro_shape` | `0.20` | `0.20` | `0.20` | `0.20` | `0.20` |
 | `continent_detail` | `7` | `8` | `7` | `8` | `6` |
 | `continent_roughness` | `0.58` | `0.66` | `0.52` | `0.64` | `0.50` |
 | `continent_contrast` | `0.19` | `0.15` | `0.23` | `0.20` | `0.18` |

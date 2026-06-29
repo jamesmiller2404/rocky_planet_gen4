@@ -46,10 +46,13 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import numpy as np
+from numba import njit, prange, set_num_threads
 from PIL import Image
 from scipy import ndimage
 
 Image.MAX_IMAGE_PIXELS = None
+
+USE_FUSED_FBM = os.environ.get("PLANET_USE_FUSED_FBM", "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 PLANET_FAMILIES = {
@@ -1156,6 +1159,10 @@ PRESETS["carbon_world"].update(plate_boundary_strength=0.84, peak_prominence=0.7
 PRESETS["clouded_greenhouse"].update(plate_boundary_strength=0.52, peak_prominence=0.46, erosion_strength=0.60)
 PRESETS["tidally_locked_rocky"].update(plate_boundary_strength=0.78, peak_prominence=0.68, erosion_strength=0.30)
 
+for values in PRESETS.values():
+    values.setdefault("continent_domain_warp", 0.20)
+    values.setdefault("continent_macro_shape", 0.20)
+
 
 OCEAN_COLORS = {
     "deep_ocean": np.array([4, 20, 66], dtype=np.float32),
@@ -1826,6 +1833,8 @@ class PlanetConfig:
     lava_activity: float
     land_coverage: float
     continent_scale: float
+    continent_domain_warp: float
+    continent_macro_shape: float
     continent_detail: int
     continent_roughness: float
     continent_contrast: float
@@ -2486,6 +2495,65 @@ def build_land_water_layers(cfg, x, y, z, land_threshold=None):
         cfg.continent_roughness,
         cfg.seed,
     )
+    warp_strength = float(np.clip(cfg.continent_domain_warp, 0.0, 0.45))
+    if warp_strength > 0.0:
+        warp_strength_f = np.float32(warp_strength)
+        warp_scale = cfg.continent_scale * 0.8
+        wx = fbm_3d(
+            x + np.float32(1.7),
+            y + np.float32(9.2),
+            z + np.float32(3.4),
+            warp_scale,
+            4,
+            0.55,
+            cfg.seed + 4447,
+            lacunarity=1.87,
+        )
+        wy = fbm_3d(
+            x + np.float32(8.3),
+            y + np.float32(2.1),
+            z + np.float32(6.8),
+            warp_scale,
+            4,
+            0.55,
+            cfg.seed + 5531,
+            lacunarity=1.87,
+        )
+        wz = fbm_3d(
+            x + np.float32(4.9),
+            y + np.float32(5.6),
+            z + np.float32(1.2),
+            warp_scale,
+            4,
+            0.55,
+            cfg.seed + 6619,
+            lacunarity=1.87,
+        )
+        continent_warped = fbm_3d(
+            x + wx * warp_strength_f,
+            y + wy * warp_strength_f,
+            z + wz * warp_strength_f,
+            cfg.continent_scale,
+            cfg.continent_detail,
+            cfg.continent_roughness,
+            cfg.seed,
+        )
+        continent = continent * np.float32(0.55) + continent_warped * np.float32(0.45)
+
+    macro_weight = float(np.clip(cfg.continent_macro_shape, 0.0, 0.40))
+    if macro_weight > 0.0:
+        macro_shape = fbm_3d(
+            x,
+            y,
+            z,
+            cfg.continent_scale * 0.25,
+            3,
+            0.70,
+            cfg.seed + 9371,
+            lacunarity=1.87,
+        )
+        macro_weight_f = np.float32(macro_weight)
+        continent = continent * (np.float32(1.0) - macro_weight_f) + macro_shape * macro_weight_f
     coast_detail = fbm_3d(
         x,
         y,
@@ -3616,52 +3684,198 @@ def hash_noise(ix, iy, iz, seed):
     return n.astype(np.float32) / np.float32(0xFFFFFFFF)
 
 
+@njit(fastmath=True, cache=True, inline="always")
+def _value_noise_hash_corner(px, py, pz, seed32):
+    h = np.uint32(px * np.uint32(374761393) + py * np.uint32(668265263) + pz * np.uint32(2147483647) + seed32)
+    h = np.uint32((h ^ (h >> np.uint32(13))) * np.uint32(1274126177))
+    h = np.uint32(h ^ (h >> np.uint32(16)))
+    return np.float32(h) * np.float32(1.0 / 4294967295.0)
+
+
+@njit(parallel=True, fastmath=True, cache=True)
+def _value_noise_3d_flat(x, y, z, scale, seed):
+    n = len(x)
+    out = np.empty(n, np.float32)
+
+    seed32 = np.uint32(int(seed) * 1442695041 & 0xFFFFFFFF)
+    off = np.float32(100.0)
+    sc = np.float32(scale)
+
+    for i in prange(n):
+        sx = x[i] * sc + off
+        sy = y[i] * sc + off
+        sz = z[i] * sc + off
+
+        ix = np.int32(np.floor(sx))
+        iy = np.int32(np.floor(sy))
+        iz = np.int32(np.floor(sz))
+
+        xf = sx - np.float32(ix)
+        yf = sy - np.float32(iy)
+        zf = sz - np.float32(iz)
+
+        u = xf * xf * xf * (xf * (xf * np.float32(6.0) - np.float32(15.0)) + np.float32(10.0))
+        v = yf * yf * yf * (yf * (yf * np.float32(6.0) - np.float32(15.0)) + np.float32(10.0))
+        w = zf * zf * zf * (zf * (zf * np.float32(6.0) - np.float32(15.0)) + np.float32(10.0))
+
+        x0 = np.uint32(ix)
+        x1 = np.uint32(ix + 1)
+        y0 = np.uint32(iy)
+        y1 = np.uint32(iy + 1)
+        z0 = np.uint32(iz)
+        z1 = np.uint32(iz + 1)
+
+        c000 = _value_noise_hash_corner(x0, y0, z0, seed32)
+        c100 = _value_noise_hash_corner(x1, y0, z0, seed32)
+        c010 = _value_noise_hash_corner(x0, y1, z0, seed32)
+        c110 = _value_noise_hash_corner(x1, y1, z0, seed32)
+        c001 = _value_noise_hash_corner(x0, y0, z1, seed32)
+        c101 = _value_noise_hash_corner(x1, y0, z1, seed32)
+        c011 = _value_noise_hash_corner(x0, y1, z1, seed32)
+        c111 = _value_noise_hash_corner(x1, y1, z1, seed32)
+
+        c00 = c000 + u * (c100 - c000)
+        c01 = c001 + u * (c101 - c001)
+        c10 = c010 + u * (c110 - c010)
+        c11 = c011 + u * (c111 - c011)
+        c0 = c00 + v * (c10 - c00)
+        c1 = c01 + v * (c11 - c01)
+        out[i] = c0 + w * (c1 - c0)
+
+    return out
+
+
 def value_noise_3d(x, y, z, scale, seed):
-    sx = x * scale + 100.0
-    sy = y * scale + 100.0
-    sz = z * scale + 100.0
-    x0f = np.floor(sx)
-    y0f = np.floor(sy)
-    z0f = np.floor(sz)
-    x0 = x0f.astype(np.int32)
-    y0 = y0f.astype(np.int32)
-    z0 = z0f.astype(np.int32)
-    xf = sx - x0f
-    yf = sy - y0f
-    zf = sz - z0f
-    u = xf * xf * xf * (xf * (xf * 6.0 - 15.0) + 10.0)
-    v = yf * yf * yf * (yf * (yf * 6.0 - 15.0) + 10.0)
-    w = zf * zf * zf * (zf * (zf * 6.0 - 15.0) + 10.0)
+    shape = x.shape
+    x_flat = np.ascontiguousarray(x.ravel(), dtype=np.float32)
+    y_flat = np.ascontiguousarray(y.ravel(), dtype=np.float32)
+    z_flat = np.ascontiguousarray(z.ravel(), dtype=np.float32)
+    return _value_noise_3d_flat(x_flat, y_flat, z_flat, np.float32(scale), int(seed)).reshape(shape)
 
-    c000 = hash_noise(x0, y0, z0, seed)
-    c100 = hash_noise(x0 + 1, y0, z0, seed)
-    c010 = hash_noise(x0, y0 + 1, z0, seed)
-    c110 = hash_noise(x0 + 1, y0 + 1, z0, seed)
-    c001 = hash_noise(x0, y0, z0 + 1, seed)
-    c101 = hash_noise(x0 + 1, y0, z0 + 1, seed)
-    c011 = hash_noise(x0, y0 + 1, z0 + 1, seed)
-    c111 = hash_noise(x0 + 1, y0 + 1, z0 + 1, seed)
 
-    x00 = lerp(c000, c100, u)
-    x10 = lerp(c010, c110, u)
-    x01 = lerp(c001, c101, u)
-    x11 = lerp(c011, c111, u)
-    y0v = lerp(x00, x10, v)
-    y1v = lerp(x01, x11, v)
-    return lerp(y0v, y1v, w)
+@njit(parallel=True, fastmath=True, cache=True)
+def _fbm_3d_flat(x, y, z, scale, octaves, roughness, seed, lacunarity):
+    n = len(x)
+    out = np.empty(n, np.float32)
+
+    n_oct = max(1, int(octaves))
+    freqs = np.empty(n_oct, np.float32)
+    amps = np.empty(n_oct, np.float32)
+    seeds = np.empty(n_oct, np.uint32)
+
+    freq = np.float32(scale)
+    amp = np.float32(1.0)
+    amp_sum = np.float32(0.0)
+    for octave in range(n_oct):
+        freqs[octave] = freq
+        amps[octave] = amp
+        seeds[octave] = np.uint32(int(seed + octave * 1013) * 1442695041 & 0xFFFFFFFF)
+        amp_sum += amp
+        amp *= np.float32(roughness)
+        freq *= np.float32(lacunarity)
+    if amp_sum < np.float32(1e-6):
+        amp_sum = np.float32(1e-6)
+
+    off = np.float32(100.0)
+    for i in prange(n):
+        xi = x[i]
+        yi = y[i]
+        zi = z[i]
+        total = np.float32(0.0)
+
+        for octave in range(n_oct):
+            sx = xi * freqs[octave] + off
+            sy = yi * freqs[octave] + off
+            sz = zi * freqs[octave] + off
+
+            ix = np.int32(np.floor(sx))
+            iy = np.int32(np.floor(sy))
+            iz = np.int32(np.floor(sz))
+
+            xf = sx - np.float32(ix)
+            yf = sy - np.float32(iy)
+            zf = sz - np.float32(iz)
+
+            u = xf * xf * xf * (xf * (xf * np.float32(6.0) - np.float32(15.0)) + np.float32(10.0))
+            v = yf * yf * yf * (yf * (yf * np.float32(6.0) - np.float32(15.0)) + np.float32(10.0))
+            w = zf * zf * zf * (zf * (zf * np.float32(6.0) - np.float32(15.0)) + np.float32(10.0))
+
+            x0 = np.uint32(ix)
+            x1 = np.uint32(ix + 1)
+            y0 = np.uint32(iy)
+            y1 = np.uint32(iy + 1)
+            z0 = np.uint32(iz)
+            z1 = np.uint32(iz + 1)
+            seed32 = seeds[octave]
+
+            c000 = _value_noise_hash_corner(x0, y0, z0, seed32)
+            c100 = _value_noise_hash_corner(x1, y0, z0, seed32)
+            c010 = _value_noise_hash_corner(x0, y1, z0, seed32)
+            c110 = _value_noise_hash_corner(x1, y1, z0, seed32)
+            c001 = _value_noise_hash_corner(x0, y0, z1, seed32)
+            c101 = _value_noise_hash_corner(x1, y0, z1, seed32)
+            c011 = _value_noise_hash_corner(x0, y1, z1, seed32)
+            c111 = _value_noise_hash_corner(x1, y1, z1, seed32)
+
+            c00 = c000 + u * (c100 - c000)
+            c01 = c001 + u * (c101 - c001)
+            c10 = c010 + u * (c110 - c010)
+            c11 = c011 + u * (c111 - c011)
+            c0 = c00 + v * (c10 - c00)
+            c1 = c01 + v * (c11 - c01)
+            total += (c0 + w * (c1 - c0)) * amps[octave]
+
+        out[i] = total / amp_sum
+
+    return out
+
+
+def warmup_numba():
+    import time
+
+    dummy = np.zeros(64, dtype=np.float32)
+    t0 = time.perf_counter()
+    if USE_FUSED_FBM:
+        _fbm_3d_flat(dummy, dummy, dummy, np.float32(1.0), 4, np.float32(0.5), 0, np.float32(2.03))
+    else:
+        _value_noise_3d_flat(dummy, dummy, dummy, np.float32(1.0), 0)
+    elapsed = time.perf_counter() - t0
+    print(f"[numba warmup] {elapsed:.2f}s  ({'compiled' if elapsed > 1.0 else 'cache hit'})")
+
+
+def init_quad_sphere_worker():
+    set_num_threads(1)
+    warmup_numba()
 
 
 def fbm_3d(x, y, z, scale, octaves, roughness, seed, lacunarity=2.03):
-    total = np.zeros_like(x, dtype=np.float32)
-    amp = 1.0
-    amp_sum = 0.0
-    freq = scale
-    for octave in range(max(1, int(octaves))):
-        total += value_noise_3d(x, y, z, freq, seed + octave * 1013) * amp
-        amp_sum += amp
-        amp *= roughness
-        freq *= lacunarity
-    return total / max(amp_sum, 1e-6)
+    if not USE_FUSED_FBM:
+        total = np.zeros_like(x, dtype=np.float32)
+        amp = 1.0
+        amp_sum = 0.0
+        freq = scale
+        for octave in range(max(1, int(octaves))):
+            total += value_noise_3d(x, y, z, freq, seed + octave * 1013) * amp
+            amp_sum += amp
+            amp *= roughness
+            freq *= lacunarity
+        return total / max(amp_sum, 1e-6)
+
+    shape = x.shape
+    x_flat = np.ascontiguousarray(x.ravel(), dtype=np.float32)
+    y_flat = np.ascontiguousarray(y.ravel(), dtype=np.float32)
+    z_flat = np.ascontiguousarray(z.ravel(), dtype=np.float32)
+    return _fbm_3d_flat(
+        x_flat,
+        y_flat,
+        z_flat,
+        np.float32(scale),
+        int(octaves),
+        np.float32(roughness),
+        int(seed),
+        np.float32(lacunarity),
+    ).reshape(shape)
+
 
 
 def build_polar_ice_formation(cfg, x, y, z, lat, lon):
@@ -4909,7 +5123,7 @@ def build_quad_sphere_face_pass(
     ]
     if worker_count == 1:
         return dict(build_quad_sphere_face_worker(job) for job in jobs)
-    with ProcessPoolExecutor(max_workers=worker_count) as executor:
+    with ProcessPoolExecutor(max_workers=worker_count, initializer=init_quad_sphere_worker) as executor:
         return dict(executor.map(build_quad_sphere_face_worker, jobs))
 
 
@@ -4946,7 +5160,7 @@ def iter_quad_sphere_face_pass(
         for job in jobs:
             yield build_quad_sphere_face_worker(job)
         return
-    with ProcessPoolExecutor(max_workers=worker_count) as executor:
+    with ProcessPoolExecutor(max_workers=worker_count, initializer=init_quad_sphere_worker) as executor:
         yield from executor.map(build_quad_sphere_face_worker, jobs)
 
 
@@ -5154,7 +5368,19 @@ QUAD_SPHERE_EDGE_PAIRS = (
 )
 
 QUAD_SPHERE_SCALAR_SEAM_MAPS = {"cloud_mask", "cloud_shadow", "nebula_alpha", "nebula_stars", "atmosphere_haze", "emissive_heat"}
+QUAD_SPHERE_SCALAR_SEAM_WIDTH = 8
 CUBEMAP_CROSS_BLEED_PIXELS = 8
+
+QUAD_SPHERE_CORNER_GROUPS = (
+    (("px", "top_left"), ("py", "bottom_right"), ("pz", "top_right")),
+    (("px", "top_right"), ("py", "top_right"), ("nz", "top_left")),
+    (("px", "bottom_left"), ("ny", "top_right"), ("pz", "bottom_right")),
+    (("px", "bottom_right"), ("ny", "bottom_right"), ("nz", "bottom_left")),
+    (("nx", "top_right"), ("py", "bottom_left"), ("pz", "top_left")),
+    (("nx", "top_left"), ("py", "top_left"), ("nz", "top_right")),
+    (("nx", "bottom_right"), ("ny", "top_left"), ("pz", "bottom_left")),
+    (("nx", "bottom_left"), ("ny", "bottom_left"), ("nz", "bottom_right")),
+)
 
 
 def quad_sphere_edge_view(arr, edge, offset=0):
@@ -5182,7 +5408,61 @@ def set_quad_sphere_edge(arr, edge, values, offset=0):
         raise ValueError(f"Unknown quad-sphere edge: {edge}")
 
 
-def reconcile_quad_sphere_scalar_seams_from_files(out_dir, map_names, seam_width=2):
+def quad_sphere_corner_index(arr, corner):
+    if corner == "top_left":
+        return 0, 0
+    if corner == "top_right":
+        return 0, arr.shape[1] - 1
+    if corner == "bottom_left":
+        return arr.shape[0] - 1, 0
+    if corner == "bottom_right":
+        return arr.shape[0] - 1, arr.shape[1] - 1
+    raise ValueError(f"Unknown quad-sphere corner: {corner}")
+
+
+def quad_sphere_corner_patch(arr, corner, width):
+    if corner == "top_left":
+        return arr[:width, :width]
+    if corner == "top_right":
+        return arr[:width, arr.shape[1] - width : arr.shape[1]][:, ::-1]
+    if corner == "bottom_left":
+        return arr[arr.shape[0] - width : arr.shape[0], :width][::-1, :]
+    if corner == "bottom_right":
+        return arr[arr.shape[0] - width : arr.shape[0], arr.shape[1] - width : arr.shape[1]][::-1, ::-1]
+    raise ValueError(f"Unknown quad-sphere corner: {corner}")
+
+
+def set_quad_sphere_corner_patch(arr, corner, patch):
+    height, width = patch.shape[:2]
+    if corner == "top_left":
+        arr[:height, :width] = patch
+    elif corner == "top_right":
+        arr[:height, arr.shape[1] - width : arr.shape[1]] = patch[:, ::-1]
+    elif corner == "bottom_left":
+        arr[arr.shape[0] - height : arr.shape[0], :width] = patch[::-1, :]
+    elif corner == "bottom_right":
+        arr[arr.shape[0] - height : arr.shape[0], arr.shape[1] - width : arr.shape[1]] = patch[::-1, ::-1]
+    else:
+        raise ValueError(f"Unknown quad-sphere corner: {corner}")
+
+
+def reconcile_quad_sphere_scalar_corners(face_arrays, corner_width=1):
+    corner_width = max(1, int(corner_width))
+    for group in QUAD_SPHERE_CORNER_GROUPS:
+        width = min(corner_width, *(min(face_arrays[face].shape[:2]) for face, _ in group))
+        patches = [quad_sphere_corner_patch(face_arrays[face], corner, width) for face, corner in group]
+        averaged = np.mean(np.stack(patches, axis=0), axis=0)
+        for face, corner in group:
+            set_quad_sphere_corner_patch(face_arrays[face], corner, averaged)
+
+
+def quad_sphere_scalar_seam_blend(offset, seam_width):
+    if seam_width <= 1:
+        return 1.0
+    return 1.0 - (float(offset) / float(seam_width))
+
+
+def reconcile_quad_sphere_scalar_seams_from_files(out_dir, map_names, seam_width=QUAD_SPHERE_SCALAR_SEAM_WIDTH):
     selected = set(selected_texture_maps(map_names)) & QUAD_SPHERE_SCALAR_SEAM_MAPS
     if not selected:
         return
@@ -5204,8 +5484,8 @@ def reconcile_quad_sphere_scalar_seams_from_files(out_dir, map_names, seam_width
             continue
 
         max_width = max(1, min(int(seam_width), min(arr.shape[0] for arr in face_arrays.values()) // 2))
-        for offset in range(max_width):
-            blend = 1.0 if offset == 0 else 0.42 / float(offset + 1)
+        for offset in range(max_width - 1, -1, -1):
+            blend = quad_sphere_scalar_seam_blend(offset, max_width)
             for (face_a, edge_a), (face_b, edge_b), reverse_b in QUAD_SPHERE_EDGE_PAIRS:
                 edge_values_a = quad_sphere_edge_view(face_arrays[face_a], edge_a, offset).copy()
                 edge_values_b = quad_sphere_edge_view(face_arrays[face_b], edge_b, offset).copy()
@@ -5215,6 +5495,7 @@ def reconcile_quad_sphere_scalar_seams_from_files(out_dir, map_names, seam_width
                 new_b = edge_values_b * (1.0 - blend) + (averaged[::-1] if reverse_b else averaged) * blend
                 set_quad_sphere_edge(face_arrays[face_a], edge_a, new_a, offset)
                 set_quad_sphere_edge(face_arrays[face_b], edge_b, new_b, offset)
+        reconcile_quad_sphere_scalar_corners(face_arrays)
 
         for face, arr in face_arrays.items():
             if bit_depth == 16:
@@ -5223,7 +5504,7 @@ def reconcile_quad_sphere_scalar_seams_from_files(out_dir, map_names, seam_width
                 Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8), "L").save(out_dir / face / f"{map_name}.png")
 
 
-def reconcile_quad_sphere_scalar_seams(faces, map_names, seam_width=2):
+def reconcile_quad_sphere_scalar_seams(faces, map_names, seam_width=QUAD_SPHERE_SCALAR_SEAM_WIDTH):
     selected = set(selected_texture_maps(map_names)) & QUAD_SPHERE_SCALAR_SEAM_MAPS
     if not selected:
         return faces
@@ -5235,8 +5516,8 @@ def reconcile_quad_sphere_scalar_seams(faces, map_names, seam_width=2):
             1,
             min(int(seam_width), min(faces[face][map_name].shape[0] for face in QUAD_SPHERE_FACES) // 2),
         )
-        for offset in range(max_width):
-            blend = 1.0 if offset == 0 else 0.42 / float(offset + 1)
+        for offset in range(max_width - 1, -1, -1):
+            blend = quad_sphere_scalar_seam_blend(offset, max_width)
             for (face_a, edge_a), (face_b, edge_b), reverse_b in QUAD_SPHERE_EDGE_PAIRS:
                 edge_values_a = quad_sphere_edge_view(faces[face_a][map_name], edge_a, offset).copy()
                 edge_values_b = quad_sphere_edge_view(faces[face_b][map_name], edge_b, offset).copy()
@@ -5246,6 +5527,7 @@ def reconcile_quad_sphere_scalar_seams(faces, map_names, seam_width=2):
                 new_b = edge_values_b * (1.0 - blend) + (averaged[::-1] if reverse_b else averaged) * blend
                 set_quad_sphere_edge(faces[face_a][map_name], edge_a, new_a, offset)
                 set_quad_sphere_edge(faces[face_b][map_name], edge_b, new_b, offset)
+        reconcile_quad_sphere_scalar_corners({face: faces[face][map_name] for face in QUAD_SPHERE_FACES})
     return faces
 
 
@@ -5887,6 +6169,7 @@ def main():
     out_dir = args.out
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    warmup_numba()
     if args.profile:
         run_profiled(
             lambda: generate_planet_output(cfg, out_dir, args.quad_sphere, face_size, args.texture_maps, args.quad_workers),

@@ -42,6 +42,7 @@ from rocky_planet_gen import (
     save_quad_sphere_maps_low_memory,
     write_html_preview,
     write_quad_sphere_manifest,
+    warmup_numba,
 )
 
 
@@ -72,6 +73,8 @@ PARAM_GROUPS = [
         "params": [
             ("land_coverage", 0.05, 1.00, 0.01),
             ("continent_scale", 0.25, 5.00, 0.05),
+            ("continent_domain_warp", 0.00, 0.45, 0.01),
+            ("continent_macro_shape", 0.00, 0.40, 0.01),
             ("continent_detail", 1, 10, 1),
             ("continent_roughness", 0.20, 0.90, 0.01),
             ("continent_contrast", 0.05, 0.45, 0.01),
@@ -560,6 +563,8 @@ PARAM_LABELS = {
     "volatile_ice_strength": "Volatile ice strength",
     "tidal_lock_strength": "Tidal locking",
     "lava_activity": "Lava activity",
+    "continent_domain_warp": "Continent warp",
+    "continent_macro_shape": "Macro land shape",
     "crater_small_density": "Small crater density",
     "crater_medium_density": "Medium crater density",
     "crater_large_basin_density": "Large basin density",
@@ -2993,6 +2998,7 @@ boot().catch(error => setStatus(error.message, "error"));
 
 
 def main() -> None:
+    warmup_numba()
     server = ThreadingHTTPServer((HOST, PORT), PlanetUiHandler)
     print(f"Rocky Planet Texture UI running at http://{HOST}:{PORT}")
     print(f"Quad-sphere worker processes: {QUAD_WORKERS}")
