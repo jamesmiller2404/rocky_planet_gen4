@@ -1371,7 +1371,7 @@ img {
 }
 .texture-toolbar {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(150px, 220px) auto;
+  grid-template-columns: auto minmax(150px, 220px) auto minmax(190px, 280px);
   gap: 10px;
   align-items: center;
   padding: 8px;
@@ -1398,9 +1398,46 @@ img {
   height: 15px;
   margin: 0;
 }
-.texture-figure img {
+.texture-zoom-controls {
+  display: grid;
+  grid-template-columns: auto minmax(86px, 1fr) 42px 44px;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+}
+.texture-zoom-controls input {
+  min-width: 0;
+}
+.texture-zoom-controls span {
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.texture-zoom-controls button {
+  min-height: 30px;
+  padding: 4px 8px;
+}
+.texture-preview-frame {
+  --texture-zoom: 1;
   min-height: 180px;
+  max-height: calc(100vh - 190px);
+  overflow: auto;
+  background:
+    linear-gradient(45deg, rgba(255,255,255,0.025) 25%, transparent 25% 75%, rgba(255,255,255,0.025) 75%),
+    linear-gradient(45deg, rgba(255,255,255,0.025) 25%, transparent 25% 75%, rgba(255,255,255,0.025) 75%),
+    #040506;
+  background-position: 0 0, 10px 10px;
+  background-size: 20px 20px;
+}
+.texture-preview-frame img {
+  display: block;
+  width: calc(var(--texture-zoom) * 100%);
+  max-width: none;
+  min-height: 0;
+  height: auto;
   object-fit: contain;
+  transform-origin: 0 0;
 }
 .globe-figure {
   display: grid;
@@ -1707,6 +1744,8 @@ img {
   main { grid-template-columns: 1fr; }
   aside { max-height: none; border-right: 0; border-bottom: 1px solid var(--line); }
   .image-grid { grid-template-columns: 1fr; }
+  .texture-toolbar { grid-template-columns: auto minmax(0, 1fr); }
+  .texture-zoom-controls { grid-column: 1 / -1; }
   .map-options { grid-template-columns: 1fr; }
   .report-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
@@ -1839,8 +1878,16 @@ img {
             <input id="textureCloudLayerToggle" type="checkbox" checked>
             Cloud layer
           </label>
+          <div class="texture-zoom-controls">
+            <label for="textureZoom">Zoom</label>
+            <input id="textureZoom" type="range" min="1" max="8" step="0.25" value="1">
+            <span id="textureZoomValue">1x</span>
+            <button id="textureZoomReset" type="button">Fit</button>
+          </div>
         </div>
-        <img id="colorPreview" alt="Texture map preview">
+        <div class="texture-preview-frame" id="texturePreviewFrame">
+          <img id="colorPreview" alt="Texture map preview">
+        </div>
         <figcaption id="texturePreviewCaption">texture map preview</figcaption>
       </figure>
       <figure class="globe-figure">
@@ -1897,10 +1944,14 @@ const els = {
   faceSize: document.getElementById("faceSize"),
   outputName: document.getElementById("outputName"),
   status: document.getElementById("status"),
+  texturePreviewFrame: document.getElementById("texturePreviewFrame"),
   colorPreview: document.getElementById("colorPreview"),
   previewMapSelect: document.getElementById("previewMapSelect"),
   texturePreviewCaption: document.getElementById("texturePreviewCaption"),
   textureCloudLayerToggle: document.getElementById("textureCloudLayerToggle"),
+  textureZoom: document.getElementById("textureZoom"),
+  textureZoomValue: document.getElementById("textureZoomValue"),
+  textureZoomReset: document.getElementById("textureZoomReset"),
   globeCanvas: document.getElementById("globeCanvas"),
   globePlayPause: document.getElementById("globePlayPause"),
   globeViewMode: document.getElementById("globeViewMode"),
@@ -2382,6 +2433,55 @@ function syncCloudLayerToggles(checked) {
   els.globeCloudLayerToggle.checked = checked;
   setTexturePreviewMap(els.previewMapSelect.value);
   drawGlobe();
+}
+
+function formatTextureZoom(value) {
+  return `${value.toFixed(value % 1 ? 2 : 0).replace(/0$/, "").replace(/\.$/, "")}x`;
+}
+
+function syncTextureZoom(preserveCenter = true) {
+  const frame = els.texturePreviewFrame;
+  const previousCenterX = frame.scrollWidth > 0
+    ? (frame.scrollLeft + frame.clientWidth / 2) / frame.scrollWidth
+    : 0.5;
+  const previousCenterY = frame.scrollHeight > 0
+    ? (frame.scrollTop + frame.clientHeight / 2) / frame.scrollHeight
+    : 0.5;
+  const zoom = Math.max(1, Math.min(8, parseFloat(els.textureZoom.value) || 1));
+  els.textureZoom.value = String(zoom);
+  els.textureZoomValue.textContent = formatTextureZoom(zoom);
+  frame.style.setProperty("--texture-zoom", String(zoom));
+  if (!preserveCenter) {
+    frame.scrollLeft = 0;
+    frame.scrollTop = 0;
+    return;
+  }
+  requestAnimationFrame(() => {
+    frame.scrollLeft = frame.scrollWidth * previousCenterX - frame.clientWidth / 2;
+    frame.scrollTop = frame.scrollHeight * previousCenterY - frame.clientHeight / 2;
+  });
+}
+
+function setTextureZoom(value, preserveCenter = true) {
+  els.textureZoom.value = String(Math.max(1, Math.min(8, value)));
+  syncTextureZoom(preserveCenter);
+}
+
+function bindTexturePreviewControls() {
+  syncTextureZoom(false);
+  els.textureZoom.addEventListener("input", () => syncTextureZoom(true));
+  els.textureZoomReset.addEventListener("click", () => setTextureZoom(1, false));
+  els.texturePreviewFrame.addEventListener("dblclick", () => {
+    const current = parseFloat(els.textureZoom.value) || 1;
+    setTextureZoom(current > 1 ? 1 : 3, true);
+  });
+  els.texturePreviewFrame.addEventListener("wheel", (event) => {
+    if (!event.ctrlKey && !event.metaKey) return;
+    event.preventDefault();
+    const current = parseFloat(els.textureZoom.value) || 1;
+    const direction = event.deltaY > 0 ? -0.25 : 0.25;
+    setTextureZoom(current + direction, true);
+  }, {passive: false});
 }
 
 function loadPreviewImage(src) {
@@ -2955,6 +3055,7 @@ async function boot() {
   schema = await response.json();
   renderControls();
   renderTextureMapOptions();
+  bindTexturePreviewControls();
   bindGlobeControls();
   bindTabs();
 
