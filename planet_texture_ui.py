@@ -40,6 +40,8 @@ from rocky_planet_gen import (
     selected_texture_maps,
     save_map_set,
     save_quad_sphere_maps_low_memory,
+    sanitized_asset_name,
+    texture_map_path,
     write_html_preview,
     write_quad_sphere_manifest,
     warmup_numba,
@@ -638,11 +640,13 @@ def metadata_for_config(
     texture_maps: tuple[str, ...] | None = None,
     ui_state: dict | None = None,
     output_kind: str = "texture_output",
+    planet_name: str | None = None,
 ) -> dict:
     metadata = asdict(cfg)
     metadata["output_projection"] = projection
     metadata["output_texture_maps"] = list(texture_maps or TEXTURE_MAP_NAMES)
     metadata["output_kind"] = output_kind
+    metadata["planet_name"] = planet_name
     if face_size is not None:
         metadata["quad_sphere_face_size"] = face_size
     if ui_state is not None:
@@ -671,6 +675,7 @@ def ui_state_from_payload(
         params[key] = source_params.get(key, getattr(cfg, key, defaults[key]))
     return {
         "version": UI_STATE_VERSION,
+        "planet_name": str(payload.get("planet_name", "")).strip(),
         "preset": cfg.preset,
         "seed": cfg.seed,
         "width": cfg.width,
@@ -690,7 +695,8 @@ def metadata_from_payload(payload: dict, output_kind: str = "texture_output") ->
     face_size = int(payload.get("face_size") or min(cfg.width, cfg.height))
     ui_state = ui_state_from_payload(payload, cfg, projection, face_size, texture_maps)
     metadata_face_size = face_size if projection == "quad_sphere" else None
-    return metadata_for_config(cfg, projection, metadata_face_size, texture_maps, ui_state, output_kind)
+    planet_name = sanitized_asset_name(str(payload.get("planet_name", "")).strip(), "")
+    return metadata_for_config(cfg, projection, metadata_face_size, texture_maps, ui_state, output_kind, planet_name or None)
 
 
 def image_file_summary(path: Path) -> dict:
@@ -738,12 +744,12 @@ def timed_stage(report: dict, name: str, label: str, fn):
         )
 
 
-def save_map_set_with_report(out_dir: Path, maps: dict, texture_maps: tuple[str, ...], report: dict) -> None:
+def save_map_set_with_report(out_dir: Path, maps: dict, texture_maps: tuple[str, ...], report: dict, planet_name: str | None = None) -> None:
     for name in texture_maps:
         started = time.perf_counter()
-        save_map_set(out_dir, maps, (name,))
+        paths = save_map_set(out_dir, maps, (name,), planet_name=planet_name)
         write_seconds = time.perf_counter() - started
-        path = out_dir / f"{name}.png"
+        path = paths.get(name, texture_map_path(out_dir, name, "equirect", maps[name].shape[1], maps[name].shape[0], planet_name=planet_name))
         entry = {
             "name": name,
             "projection": "equirectangular",
@@ -753,17 +759,17 @@ def save_map_set_with_report(out_dir: Path, maps: dict, texture_maps: tuple[str,
         report["maps"].append(entry)
 
 
-def summarize_quad_sphere_maps(quad_dir: Path, face_dirs: list[str], texture_maps: tuple[str, ...]) -> list[dict]:
+def summarize_quad_sphere_maps(quad_dir: Path, face_dirs: list[str], texture_maps: tuple[str, ...], planet_name: str | None = None, face_size: int | None = None) -> list[dict]:
     entries = []
     for name in texture_maps:
         face_files = []
         for face in face_dirs:
-            path = quad_dir / face / f"{name}.png"
+            path = texture_map_path(quad_dir / face, name, "cubemap", face_size, face_size, planet_name=planet_name, face_id=face)
             if path.exists():
                 info = image_file_summary(path)
                 info["face"] = face
                 face_files.append(info)
-        stitched_path = quad_dir / f"{name}_cubemap_cross.png"
+        stitched_path = texture_map_path(quad_dir, name, "cubemap_cross", face_size * 3 if face_size else None, face_size * 4 if face_size else None, planet_name=planet_name)
         stitched = image_file_summary(stitched_path) if stitched_path.exists() else None
         entries.append(
             {
@@ -786,12 +792,14 @@ def save_planet_output(payload: dict) -> tuple[Path, dict]:
         str(payload.get("output_name", "")),
         f"{cfg.preset}_{cfg.seed}_{time.strftime('%Y%m%d_%H%M%S')}",
     )
+    planet_name = sanitized_asset_name(str(payload.get("planet_name", "")).strip(), output_name)
     out_dir = unique_output_dir(output_name)
     out_dir.mkdir(parents=True, exist_ok=False)
     report = {
         "preset": cfg.preset,
         "seed": cfg.seed,
         "projection": projection,
+        "planet_name": planet_name,
         "texture_maps": list(texture_maps),
         "requested_size": {"width": cfg.width, "height": cfg.height},
         "started_at": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -812,18 +820,18 @@ def save_planet_output(payload: dict) -> tuple[Path, dict]:
             report,
             "quad_sphere_maps",
             "Generate and write quad-sphere faces",
-            lambda: save_quad_sphere_maps_low_memory(quad_dir, cfg, face_size, texture_maps, quad_workers=QUAD_WORKERS),
+            lambda: save_quad_sphere_maps_low_memory(quad_dir, cfg, face_size, texture_maps, quad_workers=QUAD_WORKERS, planet_name=planet_name),
         )
         timed_stage(
             report,
             "quad_sphere_manifest",
             "Write quad-sphere manifest",
-            lambda: write_quad_sphere_manifest(out_dir, face_size, texture_maps),
+            lambda: write_quad_sphere_manifest(out_dir, face_size, texture_maps, planet_name=planet_name),
         )
         ui_state = ui_state_from_payload(payload, cfg, "quad_sphere", face_size, texture_maps)
-        metadata = metadata_for_config(cfg, "quad_sphere", face_size, texture_maps, ui_state)
+        metadata = metadata_for_config(cfg, "quad_sphere", face_size, texture_maps, ui_state, planet_name=planet_name)
         face_dirs = sorted(path.name for path in quad_dir.iterdir() if path.is_dir())
-        report["maps"] = summarize_quad_sphere_maps(quad_dir, face_dirs, texture_maps)
+        report["maps"] = summarize_quad_sphere_maps(quad_dir, face_dirs, texture_maps, planet_name=planet_name, face_size=face_size)
         report["face_count"] = len(face_dirs)
     else:
         maps = timed_stage(
@@ -836,7 +844,7 @@ def save_planet_output(payload: dict) -> tuple[Path, dict]:
             report,
             "write_maps",
             "Write selected texture maps",
-            lambda: save_map_set_with_report(out_dir, maps, texture_maps, report),
+            lambda: save_map_set_with_report(out_dir, maps, texture_maps, report, planet_name=planet_name),
         )
         if "color" in texture_maps:
             timed_stage(
@@ -845,11 +853,11 @@ def save_planet_output(payload: dict) -> tuple[Path, dict]:
                 "Write preview assets",
                 lambda: (
                     render_globe_preview(maps["color"], maps["height"], out_dir / "preview.png"),
-                    write_html_preview(out_dir, f"{cfg.preset} planet preview", texture_maps),
+                    write_html_preview(out_dir, f"{planet_name} planet preview", texture_maps, planet_name=planet_name, width=cfg.width, height=cfg.height),
                 ),
             )
         ui_state = ui_state_from_payload(payload, cfg, "equirectangular", int(payload.get("face_size") or min(cfg.width, cfg.height)), texture_maps)
-        metadata = metadata_for_config(cfg, "equirectangular", texture_maps=texture_maps, ui_state=ui_state)
+        metadata = metadata_for_config(cfg, "equirectangular", texture_maps=texture_maps, ui_state=ui_state, planet_name=planet_name)
 
     timed_stage(
         report,
@@ -890,15 +898,27 @@ def unique_config_dir(name: str) -> Path:
 
 def output_summary(out_dir: Path, report: dict | None = None) -> dict:
     quad_dir = out_dir / "quad_sphere"
-    stitched = sorted(path.name for path in quad_dir.glob("*_cubemap_cross.png")) if quad_dir.exists() else []
-    face_dirs = sorted(path.name for path in quad_dir.iterdir() if path.is_dir()) if quad_dir.exists() else []
-    generated_maps = [f"{name}.png" for name in TEXTURE_MAP_NAMES if (out_dir / f"{name}.png").exists()]
+    stitched = []
     if quad_dir.exists():
-        generated_maps = [
-            f"{name}.png"
-            for name in TEXTURE_MAP_NAMES
-            if any((quad_dir / face / f"{name}.png").exists() for face in face_dirs)
-        ]
+        stitched = sorted(
+            path.name
+            for path in quad_dir.glob("*.png")
+            if "_cubemap_cross_" in path.name or path.name.endswith("_cubemap_cross.png")
+        )
+    face_dirs = sorted(path.name for path in quad_dir.iterdir() if path.is_dir()) if quad_dir.exists() else []
+    generated_maps = []
+    if report is not None:
+        for entry in report.get("maps", []):
+            for file_info in entry.get("files", []):
+                generated_maps.append(file_info.get("file", ""))
+            atlas = entry.get("stitched_atlas")
+            if atlas:
+                generated_maps.append(atlas.get("file", ""))
+        generated_maps = [name for name in generated_maps if name]
+    elif quad_dir.exists():
+        generated_maps = sorted(path.name for face in face_dirs for path in (quad_dir / face).glob("*.png"))
+    else:
+        generated_maps = sorted(path.name for path in out_dir.glob("*.png") if path.name != "preview.png")
     summary = {
         "output_dir": str(out_dir.resolve()),
         "quad_sphere_faces": face_dirs,
@@ -932,6 +952,7 @@ def normalize_ui_state(data: dict) -> dict:
             params["land_palette"] = ui_preset_defaults()[preset].get("land_palette", "natural_earth")
         return {
             "version": int(state.get("version", UI_STATE_VERSION)),
+            "planet_name": str(state.get("planet_name", data.get("planet_name", "")) or ""),
             "preset": preset,
             "seed": int(state.get("seed", data.get("seed", 42))),
             "width": max(64, int(state.get("width", data.get("width", 2048)))),
@@ -956,6 +977,7 @@ def normalize_ui_state(data: dict) -> dict:
     height = max(32, int(data.get("height", 1024)))
     return {
         "version": 0,
+        "planet_name": str(data.get("planet_name", "") or ""),
         "preset": preset,
         "seed": int(data.get("seed", 42)),
         "width": width,
@@ -1815,7 +1837,7 @@ img {
           <option value="quad_sphere">Quad-sphere faces</option>
         </select>
       </div>
-      <p class="hint" id="projectionHint">Quad-sphere saves six face folders and streamed stitched *_cubemap_cross.png atlases.</p>
+      <p class="hint" id="projectionHint">Quad-sphere saves six face folders and streamed stitched cubemap_cross atlases using the planet filename prefix.</p>
       <div class="map-header">
         <label>Texture maps</label>
         <div class="map-actions" aria-label="Texture map selection actions">
@@ -1857,6 +1879,10 @@ img {
       <div class="row">
         <label for="faceSize">Quad face size</label>
         <input id="faceSize" type="number" min="32" step="32" value="1024">
+      </div>
+      <div class="row">
+        <label for="planetName">Planet name / designation</label>
+        <input id="planetName" type="text" placeholder="Verdaxis">
       </div>
       <div class="row">
         <label for="outputName">Folder name</label>
@@ -1959,6 +1985,7 @@ const els = {
   projection: document.getElementById("projection"),
   faceSizePreset: document.getElementById("faceSizePreset"),
   faceSize: document.getElementById("faceSize"),
+  planetName: document.getElementById("planetName"),
   outputName: document.getElementById("outputName"),
   status: document.getElementById("status"),
   texturePreviewFrame: document.getElementById("texturePreviewFrame"),
@@ -2594,6 +2621,7 @@ function getPayload() {
     height: parseInt(els.height.value, 10),
     projection: els.projection.value,
     face_size: parseInt(els.faceSize.value, 10),
+    planet_name: els.planetName.value,
     output_name: els.outputName.value,
     texture_maps: getSelectedTextureMaps(),
     params: getParams(),
@@ -3025,6 +3053,7 @@ function applyLoadedState(data) {
   els.height.value = data.height;
   els.projection.value = data.projection === "quad_sphere" ? "quad_sphere" : "equirectangular";
   els.faceSize.value = data.face_size;
+  els.planetName.value = data.planet_name || "";
   els.outputName.value = "";
   if (data.params.land_palette) {
     els.landPalette.value = data.params.land_palette;

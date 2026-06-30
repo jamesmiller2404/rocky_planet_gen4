@@ -6,15 +6,15 @@ This app does not use Blender. It generates baked texture maps and previews:
     python rocky_planet_gen.py --preset earthlike --seed 42 --width 2048 --height 1024 --out output/earthlike
 
 Outputs:
-    color.png
-    height.png
-    normal.png
-    roughness.png
-    land_mask.png
-    shoreline_mask.png
-    ocean_depth.png
-    cloud_mask.png
-    city_lights.png
+    <planet>_color_equirect_2048x1024_8bit.png
+    <planet>_height_equirect_2048x1024_16bit.png
+    <planet>_normal_equirect_2048x1024_16bit.png
+    <planet>_roughness_equirect_2048x1024_8bit.png
+    <planet>_land_mask_equirect_2048x1024_8bit.png
+    <planet>_shoreline_mask_equirect_2048x1024_8bit.png
+    <planet>_ocean_depth_equirect_2048x1024_8bit.png
+    <planet>_cloud_mask_equirect_2048x1024_16bit.png
+    <planet>_city_lights_equirect_2048x1024_8bit.png
     preview.png
     preview.html
     preset.json
@@ -25,9 +25,9 @@ Quad-sphere output:
     Writes six face folders under quad_sphere/:
         px, nx, py, ny, pz, nz
 
-    Also writes transparent 3x4 cubemap-cross atlases under quad_sphere/,
+    With --planet-name, writes transparent 3x4 cubemap-cross atlases under quad_sphere/,
     rotated 90 degrees clockwise from the original 4x3 layout:
-        color_cubemap_cross.png, height_cubemap_cross.png, ...
+        <planet>_color_cubemap_cross_3072x4096_8bit.png, ...
 """
 
 from __future__ import annotations
@@ -5360,6 +5360,35 @@ def png_bit_depth_for_map(map_name):
     return 16 if map_name in PNG_16BIT_MAPS else 8
 
 
+def sanitized_asset_name(value, fallback="planet"):
+    text = str(value or "").strip()
+    clean = "".join(ch if ch.isascii() and (ch.isalnum() or ch in "._-") else "_" for ch in text).strip("._-")
+    return clean or fallback
+
+
+def texture_map_filename(map_name, map_type="equirect", width=None, height=None, bit_depth=None, planet_name=None, face_id=None):
+    if not planet_name:
+        if map_type == "cubemap_cross":
+            return f"{map_name}_cubemap_cross.png"
+        return f"{map_name}.png"
+    if width is None or height is None:
+        raise ValueError("Named texture-map filenames require width and height.")
+    resolved_bit_depth = png_bit_depth_for_map(map_name) if bit_depth is None else int(bit_depth)
+    parts = [
+        sanitized_asset_name(planet_name),
+        str(map_name),
+        str(map_type),
+    ]
+    if face_id:
+        parts.append(str(face_id))
+    parts.extend([f"{int(width)}x{int(height)}", f"{resolved_bit_depth}bit"])
+    return "_".join(parts) + ".png"
+
+
+def texture_map_path(out_dir, map_name, map_type="equirect", width=None, height=None, bit_depth=None, planet_name=None, face_id=None):
+    return out_dir / texture_map_filename(map_name, map_type, width, height, bit_depth, planet_name, face_id)
+
+
 def selected_texture_maps(map_names=None):
     if map_names is None:
         return TEXTURE_MAP_NAMES
@@ -5383,38 +5412,61 @@ def resolve_quad_workers(value=None):
     return min(workers, len(QUAD_SPHERE_FACES))
 
 
-def save_map_set(out_dir, maps, map_names=None):
+def save_map_set(out_dir, maps, map_names=None, planet_name=None, map_type="equirect", face_id=None):
     selected = selected_texture_maps(map_names)
+    saved = {}
+
+    def path_for(map_name):
+        arr = maps[map_name]
+        height, width = arr.shape[:2]
+        return texture_map_path(out_dir, map_name, map_type, width, height, planet_name=planet_name, face_id=face_id)
+
     if "color" in selected:
-        save_rgb(out_dir / "color.png", maps["color"])
+        saved["color"] = path_for("color")
+        save_rgb(saved["color"], maps["color"])
     if "height" in selected:
-        save_gray16(out_dir / "height.png", maps["height"])
+        saved["height"] = path_for("height")
+        save_gray16(saved["height"], maps["height"])
     if "normal" in selected:
-        save_rgb16(out_dir / "normal.png", maps["normal"])
+        saved["normal"] = path_for("normal")
+        save_rgb16(saved["normal"], maps["normal"])
     if "roughness" in selected:
-        save_gray(out_dir / "roughness.png", maps["roughness"])
+        saved["roughness"] = path_for("roughness")
+        save_gray(saved["roughness"], maps["roughness"])
     if "land_mask" in selected:
-        save_gray(out_dir / "land_mask.png", maps["land_mask"])
+        saved["land_mask"] = path_for("land_mask")
+        save_gray(saved["land_mask"], maps["land_mask"])
     if "shoreline_mask" in selected:
-        save_gray(out_dir / "shoreline_mask.png", maps["shoreline_mask"])
+        saved["shoreline_mask"] = path_for("shoreline_mask")
+        save_gray(saved["shoreline_mask"], maps["shoreline_mask"])
     if "ocean_depth" in selected:
-        save_gray(out_dir / "ocean_depth.png", maps["ocean_depth"])
+        saved["ocean_depth"] = path_for("ocean_depth")
+        save_gray(saved["ocean_depth"], maps["ocean_depth"])
     if "cloud_mask" in selected:
-        save_gray16(out_dir / "cloud_mask.png", maps["cloud_mask"])
+        saved["cloud_mask"] = path_for("cloud_mask")
+        save_gray16(saved["cloud_mask"], maps["cloud_mask"])
     if "cloud_shadow" in selected:
-        save_gray16(out_dir / "cloud_shadow.png", maps["cloud_shadow"])
+        saved["cloud_shadow"] = path_for("cloud_shadow")
+        save_gray16(saved["cloud_shadow"], maps["cloud_shadow"])
     if "nebula_color" in selected:
-        save_rgb(out_dir / "nebula_color.png", maps["nebula_color"])
+        saved["nebula_color"] = path_for("nebula_color")
+        save_rgb(saved["nebula_color"], maps["nebula_color"])
     if "nebula_alpha" in selected:
-        save_gray16(out_dir / "nebula_alpha.png", maps["nebula_alpha"])
+        saved["nebula_alpha"] = path_for("nebula_alpha")
+        save_gray16(saved["nebula_alpha"], maps["nebula_alpha"])
     if "nebula_stars" in selected:
-        save_gray16(out_dir / "nebula_stars.png", maps["nebula_stars"])
+        saved["nebula_stars"] = path_for("nebula_stars")
+        save_gray16(saved["nebula_stars"], maps["nebula_stars"])
     if "city_lights" in selected:
-        save_rgb(out_dir / "city_lights.png", maps["city_lights"])
+        saved["city_lights"] = path_for("city_lights")
+        save_rgb(saved["city_lights"], maps["city_lights"])
     if "atmosphere_haze" in selected:
-        save_gray16(out_dir / "atmosphere_haze.png", maps["atmosphere_haze"])
+        saved["atmosphere_haze"] = path_for("atmosphere_haze")
+        save_gray16(saved["atmosphere_haze"], maps["atmosphere_haze"])
     if "emissive_heat" in selected:
-        save_gray16(out_dir / "emissive_heat.png", maps["emissive_heat"])
+        saved["emissive_heat"] = path_for("emissive_heat")
+        save_gray16(saved["emissive_heat"], maps["emissive_heat"])
+    return saved
 
 
 CUBEMAP_CROSS_LAYOUT = {
@@ -5536,7 +5588,7 @@ def quad_sphere_scalar_seam_blend(offset, seam_width):
     return 1.0 - (float(offset) / float(seam_width))
 
 
-def reconcile_quad_sphere_scalar_seams_from_files(out_dir, map_names, seam_width=QUAD_SPHERE_SCALAR_SEAM_WIDTH):
+def reconcile_quad_sphere_scalar_seams_from_files(out_dir, map_names, seam_width=QUAD_SPHERE_SCALAR_SEAM_WIDTH, planet_name=None, face_size=None):
     selected = set(selected_texture_maps(map_names)) & QUAD_SPHERE_SCALAR_SEAM_MAPS
     if not selected:
         return
@@ -5545,7 +5597,7 @@ def reconcile_quad_sphere_scalar_seams_from_files(out_dir, map_names, seam_width
         bit_depth = 16 if map_name in CLOUD_16BIT_MAPS else 8
         face_arrays = {}
         for face in QUAD_SPHERE_FACES:
-            path = out_dir / face / f"{map_name}.png"
+            path = texture_map_path(out_dir / face, map_name, "cubemap", face_size, face_size, planet_name=planet_name, face_id=face)
             if not path.exists():
                 face_arrays = {}
                 break
@@ -5572,10 +5624,11 @@ def reconcile_quad_sphere_scalar_seams_from_files(out_dir, map_names, seam_width
         reconcile_quad_sphere_scalar_corners(face_arrays)
 
         for face, arr in face_arrays.items():
+            path = texture_map_path(out_dir / face, map_name, "cubemap", face_size, face_size, planet_name=planet_name, face_id=face)
             if bit_depth == 16:
-                Image.fromarray(np.clip(arr, 0, 65535).astype(np.uint16)).save(out_dir / face / f"{map_name}.png")
+                Image.fromarray(np.clip(arr, 0, 65535).astype(np.uint16)).save(path)
             else:
-                Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8), "L").save(out_dir / face / f"{map_name}.png")
+                Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8), "L").save(path)
 
 
 def reconcile_quad_sphere_scalar_seams(faces, map_names, seam_width=QUAD_SPHERE_SCALAR_SEAM_WIDTH):
@@ -5674,10 +5727,17 @@ def bleed_cubemap_cross_empty_cells(cross, face_size, bleed_pixels=CUBEMAP_CROSS
     return cross
 
 
-def save_quad_sphere_cubemap_crosses(out_dir, faces, face_size, map_names=None):
+def save_quad_sphere_cubemap_crosses(out_dir, faces, face_size, map_names=None, planet_name=None):
     for map_name in selected_texture_maps(map_names):
         cross = build_cubemap_cross(faces, map_name, face_size)
-        path = out_dir / f"{map_name}_cubemap_cross.png"
+        path = texture_map_path(
+            out_dir,
+            map_name,
+            "cubemap_cross",
+            face_size * 3,
+            face_size * 4,
+            planet_name=planet_name,
+        )
         if cross.shape[2] == 4 and map_name == "normal":
             save_rgba16(path, cross)
         elif cross.shape[2] == 4:
@@ -5688,16 +5748,16 @@ def save_quad_sphere_cubemap_crosses(out_dir, faces, face_size, map_names=None):
             save_luminance_alpha(path, cross)
 
 
-def save_quad_sphere_cubemap_crosses_from_files(out_dir, face_size, map_names=None):
+def save_quad_sphere_cubemap_crosses_from_files(out_dir, face_size, map_names=None, planet_name=None):
     for map_name in selected_texture_maps(map_names):
-        face_path = out_dir / "px" / f"{map_name}.png"
+        face_path = texture_map_path(out_dir / "px", map_name, "cubemap", face_size, face_size, planet_name=planet_name, face_id="px")
         with Image.open(face_path) as sample_image:
             is_scalar = sample_image.mode in {"L", "I", "I;16", "I;16B", "I;16L"}
             bit_depth = png_bit_depth_for_map(map_name)
-        save_quad_sphere_cubemap_cross_streamed(out_dir, map_name, face_size, is_scalar, bit_depth=bit_depth)
+        save_quad_sphere_cubemap_cross_streamed(out_dir, map_name, face_size, is_scalar, bit_depth=bit_depth, planet_name=planet_name)
 
 
-def save_quad_sphere_cubemap_cross_streamed(out_dir, map_name, face_size, is_scalar, bit_depth=8):
+def save_quad_sphere_cubemap_cross_streamed(out_dir, map_name, face_size, is_scalar, bit_depth=8, planet_name=None):
     face_size = int(face_size)
     cell_to_face = {cell: face for face, cell in CUBEMAP_CROSS_LAYOUT.items()}
     channels = 2 if is_scalar else 4
@@ -5719,7 +5779,7 @@ def save_quad_sphere_cubemap_cross_streamed(out_dir, map_name, face_size, is_sca
         empty = np.zeros((face_size, channels), dtype=np.uint8)
 
     def load_face_array(face):
-        path = out_dir / face / f"{map_name}.png"
+        path = texture_map_path(out_dir / face, map_name, "cubemap", face_size, face_size, planet_name=planet_name, face_id=face)
         with Image.open(path) as image:
             if is_scalar:
                 if bit_depth == 16:
@@ -5809,7 +5869,7 @@ def save_quad_sphere_cubemap_cross_streamed(out_dir, map_name, face_size, is_sca
             del arrays
 
     write_streamed_png(
-        out_dir / f"{map_name}_cubemap_cross.png",
+        texture_map_path(out_dir, map_name, "cubemap_cross", face_size * 3, face_size * 4, bit_depth=bit_depth, planet_name=planet_name),
         face_size * 3,
         face_size * 4,
         color_type,
@@ -5913,7 +5973,7 @@ def compute_quad_sphere_color_stats_tiled(cfg, face_size, tile_rows=None):
     return land_threshold, moisture_range
 
 
-def save_quad_sphere_color_faces_tiled(out_dir, cfg, face_size, tile_rows=None):
+def save_quad_sphere_color_faces_tiled(out_dir, cfg, face_size, tile_rows=None, planet_name=None):
     tile_rows = resolve_quad_tile_rows(face_size) if tile_rows is None else int(tile_rows)
     land_threshold, moisture_range = compute_quad_sphere_color_stats_tiled(cfg, face_size, tile_rows)
     for face in QUAD_SPHERE_FACES:
@@ -5937,19 +5997,19 @@ def save_quad_sphere_color_faces_tiled(out_dir, cfg, face_size, tile_rows=None):
             image.paste(tile, (0, row_start))
             tile.close()
             del maps, x, y, z, lat, lon
-        image.save(face_dir / "color.png")
+        image.save(texture_map_path(face_dir, "color", "cubemap", face_size, face_size, planet_name=planet_name, face_id=face))
         image.close()
 
 
-def save_quad_sphere_maps_low_memory(out_dir, cfg, face_size, map_names=None, quad_workers=1, write_cubemap_crosses=None):
+def save_quad_sphere_maps_low_memory(out_dir, cfg, face_size, map_names=None, quad_workers=1, write_cubemap_crosses=None, planet_name=None):
     selected_maps = selected_texture_maps(map_names)
     resolved_quad_workers = resolve_quad_workers(quad_workers)
     if selected_maps == ("color",) and resolved_quad_workers == 1:
-        save_quad_sphere_color_faces_tiled(out_dir, cfg, face_size)
+        save_quad_sphere_color_faces_tiled(out_dir, cfg, face_size, planet_name=planet_name)
         if write_cubemap_crosses is None:
             write_cubemap_crosses = should_write_quad_sphere_crosses(face_size)
         if write_cubemap_crosses:
-            save_quad_sphere_cubemap_crosses_from_files(out_dir, face_size, selected_maps)
+            save_quad_sphere_cubemap_crosses_from_files(out_dir, face_size, selected_maps, planet_name=planet_name)
         return
 
     land_threshold, cloud_threshold, moisture_range, height_range = compute_quad_sphere_global_stats(
@@ -5971,25 +6031,41 @@ def save_quad_sphere_maps_low_memory(out_dir, cfg, face_size, map_names=None, qu
         ):
             face_dir = out_dir / face
             face_dir.mkdir(parents=True, exist_ok=True)
-            save_map_set(face_dir, maps, group)
+            save_map_set(face_dir, maps, group, planet_name=planet_name, map_type="cubemap", face_id=face)
             del maps
-    reconcile_quad_sphere_scalar_seams_from_files(out_dir, selected_maps)
+    reconcile_quad_sphere_scalar_seams_from_files(out_dir, selected_maps, planet_name=planet_name, face_size=face_size)
     if write_cubemap_crosses is None:
         write_cubemap_crosses = should_write_quad_sphere_crosses(face_size)
     if write_cubemap_crosses:
-        save_quad_sphere_cubemap_crosses_from_files(out_dir, face_size, selected_maps)
+        save_quad_sphere_cubemap_crosses_from_files(out_dir, face_size, selected_maps, planet_name=planet_name)
 
 
-def write_quad_sphere_manifest(out_dir, face_size, map_names=None, write_cubemap_crosses=None):
+def write_quad_sphere_manifest(out_dir, face_size, map_names=None, write_cubemap_crosses=None, planet_name=None):
     selected = selected_texture_maps(map_names)
     if write_cubemap_crosses is None:
         write_cubemap_crosses = should_write_quad_sphere_crosses(face_size)
     manifest = {
         "layout": "quad_sphere_cubemap_faces",
+        "planet_name": sanitized_asset_name(planet_name) if planet_name else None,
         "face_size": face_size,
         "faces": ["px", "nx", "py", "ny", "pz", "nz"],
-        "maps": [f"{name}.png" for name in selected],
-        "map_bit_depths": {f"{name}.png": png_bit_depth_for_map(name) for name in selected},
+        "map_roles": list(selected),
+        "maps": [
+            texture_map_filename(name, "cubemap", face_size, face_size, planet_name=planet_name, face_id="{face}")
+            for name in selected
+        ],
+        "face_maps": {
+            face: [
+                f"quad_sphere/{face}/{texture_map_filename(name, 'cubemap', face_size, face_size, planet_name=planet_name, face_id=face)}"
+                for name in selected
+            ]
+            for face in QUAD_SPHERE_FACES
+        },
+        "map_bit_depths": {
+            texture_map_filename(name, "cubemap", face_size, face_size, planet_name=planet_name, face_id="{face}"): png_bit_depth_for_map(name)
+            for name in selected
+        },
+        "map_role_bit_depths": {name: png_bit_depth_for_map(name) for name in selected},
         "cubemap_cross": {
             "layout": "horizontal_cross_4x3_rotated_clockwise",
             "size": {
@@ -6004,7 +6080,12 @@ def write_quad_sphere_manifest(out_dir, face_size, map_names=None, write_cubemap
                 "nz": {"column": 1, "row": 3},
                 "ny": {"column": 0, "row": 1},
             },
-            "maps": [f"quad_sphere/{name}_cubemap_cross.png" for name in selected] if write_cubemap_crosses else [],
+            "maps": [
+                f"quad_sphere/{texture_map_filename(name, 'cubemap_cross', face_size * 3, face_size * 4, planet_name=planet_name)}"
+                for name in selected
+            ]
+            if write_cubemap_crosses
+            else [],
             "written": bool(write_cubemap_crosses),
             "skip_reason": None
             if write_cubemap_crosses
@@ -6040,10 +6121,16 @@ def write_quad_sphere_manifest(out_dir, face_size, map_names=None, write_cubemap
     (out_dir / "quad_sphere_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
 
-def write_html_preview(out_dir, title, map_names=None):
+def write_html_preview(out_dir, title, map_names=None, planet_name=None, width=None, height=None):
+    selected = selected_texture_maps(map_names)
+    map_files = {
+        name: texture_map_filename(name, "equirect", width, height, planet_name=planet_name)
+        for name in selected
+    }
+    color_file = map_files.get("color", "color.png")
     map_figures = "\n".join(
-        f'    <figure><img src="{name}.png"><figcaption>{name}.png</figcaption></figure>'
-        for name in selected_texture_maps(map_names)
+        f'    <figure><img src="{filename}"><figcaption>{filename}</figcaption></figure>'
+        for filename in map_files.values()
     )
     html = f"""<!doctype html>
 <html lang="en">
@@ -6064,7 +6151,7 @@ figcaption {{ margin: 6px 0 14px; color: #b9bcc6; }}
 <main>
   <section>
     <canvas id="globe" width="720" height="720"></canvas>
-    <figcaption>Interactive rotating globe preview from color.png</figcaption>
+    <figcaption>Interactive rotating globe preview from {color_file}</figcaption>
   </section>
   <section class="maps">
     <figure><img src="preview.png"><figcaption>preview.png</figcaption></figure>
@@ -6075,7 +6162,7 @@ figcaption {{ margin: 6px 0 14px; color: #b9bcc6; }}
 const canvas = document.getElementById('globe');
 const ctx = canvas.getContext('2d');
 const texture = new Image();
-texture.src = 'color.png';
+texture.src = {json.dumps(color_file)};
 let texCanvas = document.createElement('canvas');
 let texCtx = texCanvas.getContext('2d');
 let texData = null;
@@ -6164,6 +6251,7 @@ def build_arg_parser():
     parser.add_argument("--face-size", type=int, default=None, help="Quad-sphere face size in pixels. Defaults to min(width, height).")
     parser.add_argument("--quad-workers", default=None, help="Worker processes for quad-sphere face generation. Defaults to PLANET_QUAD_WORKERS or auto.")
     parser.add_argument("--out", type=Path, default=Path("planet_output"))
+    parser.add_argument("--planet-name", default=None, help="Planet name/designation used in texture-map filenames.")
     parser.add_argument(
         "--texture-maps",
         nargs="+",
@@ -6200,24 +6288,26 @@ def build_arg_parser():
     return parser
 
 
-def generate_planet_output(cfg, out_dir, quad_sphere=False, face_size=None, texture_maps=None, quad_workers=1):
+def generate_planet_output(cfg, out_dir, quad_sphere=False, face_size=None, texture_maps=None, quad_workers=1, planet_name=None):
     selected_maps = selected_texture_maps(texture_maps)
+    asset_planet_name = sanitized_asset_name(planet_name, out_dir.name) if planet_name else None
     if quad_sphere:
         resolved_quad_workers = resolve_quad_workers(quad_workers)
         quad_dir = out_dir / "quad_sphere"
         quad_dir.mkdir(parents=True, exist_ok=True)
-        save_quad_sphere_maps_low_memory(quad_dir, cfg, face_size, selected_maps, quad_workers=resolved_quad_workers)
-        write_quad_sphere_manifest(out_dir, face_size, selected_maps)
+        save_quad_sphere_maps_low_memory(quad_dir, cfg, face_size, selected_maps, quad_workers=resolved_quad_workers, planet_name=asset_planet_name)
+        write_quad_sphere_manifest(out_dir, face_size, selected_maps, planet_name=asset_planet_name)
     else:
         maps = build_maps(cfg, selected_maps)
-        save_map_set(out_dir, maps, selected_maps)
+        save_map_set(out_dir, maps, selected_maps, planet_name=asset_planet_name)
         if "color" in selected_maps:
             render_globe_preview(maps["color"], maps["height"], out_dir / "preview.png")
-            write_html_preview(out_dir, f"{cfg.preset} planet preview", selected_maps)
+            write_html_preview(out_dir, f"{cfg.preset} planet preview", selected_maps, planet_name=asset_planet_name, width=cfg.width, height=cfg.height)
 
     metadata = asdict(cfg)
     metadata["output_projection"] = "quad_sphere" if quad_sphere else "equirectangular"
     metadata["output_texture_maps"] = list(selected_maps)
+    metadata["planet_name"] = asset_planet_name
     if quad_sphere:
         metadata["quad_sphere_face_size"] = face_size
     resolved_palette = resolve_planet_colors(cfg)
@@ -6259,12 +6349,12 @@ def main():
     warmup_numba()
     if args.profile:
         run_profiled(
-            lambda: generate_planet_output(cfg, out_dir, args.quad_sphere, face_size, args.texture_maps, args.quad_workers),
+            lambda: generate_planet_output(cfg, out_dir, args.quad_sphere, face_size, args.texture_maps, args.quad_workers, args.planet_name),
             limit=args.profile_limit,
             profile_out=args.profile_out,
         )
     else:
-        generate_planet_output(cfg, out_dir, args.quad_sphere, face_size, args.texture_maps, args.quad_workers)
+        generate_planet_output(cfg, out_dir, args.quad_sphere, face_size, args.texture_maps, args.quad_workers, args.planet_name)
     print(f"Wrote planet maps to {out_dir.resolve()}")
 
 

@@ -26,6 +26,7 @@ Example:
 | `--width` | `2048` | Equirectangular output width in pixels. Minimum `64`. |
 | `--height` | `1024` | Equirectangular output height in pixels. Minimum `32`. |
 | `--out` | `planet_output` | Output directory. Created if it does not exist. |
+| `--planet-name` | unset | Optional planet name/designation used as the first segment of texture-map filenames, for example `Verdaxis_color_equirect_2048x1024_8bit.png`. The browser UI always uses the Planet name / designation field, falling back to the save folder name when that field is blank. |
 | `--quad-sphere` | off | Writes six cube/quad-sphere face folders instead of only equirectangular maps. |
 | `--face-size` | `min(width, height)` | Quad-sphere face size in pixels. Minimum `32` when `--quad-sphere` is used. |
 | `--quad-workers` | `PLANET_QUAD_WORKERS` or `auto` | Worker processes for quad-sphere face generation. Auto uses up to the six quad-sphere faces; use `1` for serial generation. |
@@ -90,27 +91,43 @@ To save raw profile data for a viewer such as SnakeViz:
 
 ## Outputs
 
+Texture-map PNGs saved from the browser UI use this filename format:
+
+```text
+<planet>_<map-role>_<map-type>_<face-id-if-any>_<resolution>_<bit-depth>.png
+```
+
+Examples:
+
+```text
+Verdaxis_color_equirect_2048x1024_8bit.png
+Verdaxis_height_cubemap_cross_3072x4096_16bit.png
+Verdaxis_normal_cubemap_nx_1024x1024_16bit.png
+```
+
+The command-line generator uses the same convention when `--planet-name` is supplied. Without `--planet-name`, the CLI keeps the older short filenames such as `color.png` for quick local runs.
+
 For normal equirectangular output:
 
 | File | Description |
 | --- | --- |
-| `color.png` | Main color/albedo texture. |
-| `height.png` | 16-bit grayscale normalized height map. |
-| `normal.png` | 16-bit RGB normal map derived from height. |
-| `roughness.png` | Roughness map. Land is rougher; water is smoother. |
-| `land_mask.png` | White land, black ocean. |
-| `shoreline_mask.png` | Shoreline/beach influence mask. |
-| `ocean_depth.png` | Ocean depth mask. |
-| `cloud_mask.png` | Separate 16-bit grayscale cloud opacity mask based on softened land-form-style weather math. |
-| `cloud_shadow.png` | Separate 16-bit grayscale surface-darkening mask derived from the cloud layer for Blender cloud shadows. |
-| `nebula_color.png` | Separate RGB emission-color layer for nebula compositing. |
-| `nebula_alpha.png` | Separate 16-bit grayscale nebula density/opacity mask for soft Photoshop compositing. |
-| `nebula_stars.png` | Separate 16-bit grayscale star/speckle layer. |
-| `city_lights.png` | Separate RGB emission texture for night-side artificial lights. |
-| `atmosphere_haze.png` | Separate 16-bit grayscale atmosphere/haze influence map, strongest for dense-atmosphere families. |
-| `emissive_heat.png` | Separate 16-bit grayscale lava/geologic heat map for volcanic worlds. |
+| `<planet>_color_equirect_<width>x<height>_8bit.png` | Main color/albedo texture. |
+| `<planet>_height_equirect_<width>x<height>_16bit.png` | 16-bit grayscale normalized height map. |
+| `<planet>_normal_equirect_<width>x<height>_16bit.png` | 16-bit RGB normal map derived from height. |
+| `<planet>_roughness_equirect_<width>x<height>_8bit.png` | Roughness map. Land is rougher; water is smoother. |
+| `<planet>_land_mask_equirect_<width>x<height>_8bit.png` | White land, black ocean. |
+| `<planet>_shoreline_mask_equirect_<width>x<height>_8bit.png` | Shoreline/beach influence mask. |
+| `<planet>_ocean_depth_equirect_<width>x<height>_8bit.png` | Ocean depth mask. |
+| `<planet>_cloud_mask_equirect_<width>x<height>_16bit.png` | Separate 16-bit grayscale cloud opacity mask based on softened land-form-style weather math. |
+| `<planet>_cloud_shadow_equirect_<width>x<height>_16bit.png` | Separate 16-bit grayscale surface-darkening mask derived from the cloud layer for Blender cloud shadows. |
+| `<planet>_nebula_color_equirect_<width>x<height>_8bit.png` | Separate RGB emission-color layer for nebula compositing. |
+| `<planet>_nebula_alpha_equirect_<width>x<height>_16bit.png` | Separate 16-bit grayscale nebula density/opacity mask for soft Photoshop compositing. |
+| `<planet>_nebula_stars_equirect_<width>x<height>_16bit.png` | Separate 16-bit grayscale star/speckle layer. |
+| `<planet>_city_lights_equirect_<width>x<height>_8bit.png` | Separate RGB emission texture for night-side artificial lights. |
+| `<planet>_atmosphere_haze_equirect_<width>x<height>_16bit.png` | Separate 16-bit grayscale atmosphere/haze influence map, strongest for dense-atmosphere families. |
+| `<planet>_emissive_heat_equirect_<width>x<height>_16bit.png` | Separate 16-bit grayscale lava/geologic heat map for volcanic worlds. |
 | `preview.png` | Rendered globe preview. |
-| `preview.html` | Interactive rotating globe preview using `color.png`. |
+| `preview.html` | Interactive rotating globe preview using the saved color texture. |
 | `preset.json` | Resolved config, output projection, and seed-varied palette. |
 
 For quad-sphere output, the generator writes face folders under `quad_sphere/`:
@@ -124,7 +141,7 @@ quad_sphere/pz
 quad_sphere/nz
 ```
 
-It also writes cubemap-cross atlases such as `quad_sphere/color_cubemap_cross.png`. Large stitched atlases are streamed from the saved face PNGs instead of assembled as one giant in-memory array. Cloud cubemap-cross atlases include copied edge bleed in otherwise empty cells so filtered sampling does not blend face borders into transparent black. Color-only quad-sphere saves are tiled internally to reduce peak memory. Set `PLANET_QUAD_TILE_ROWS` to a smaller value such as `64` if the computer still runs out of memory. Set `PLANET_WRITE_STITCHED_CROSSES=0` before running the CLI or web UI only if you want to skip stitched atlas output.
+It also writes cubemap-cross atlases such as `quad_sphere/Verdaxis_color_cubemap_cross_3072x4096_8bit.png` and face maps such as `quad_sphere/nx/Verdaxis_normal_cubemap_nx_1024x1024_16bit.png`. Large stitched atlases are streamed from the saved face PNGs instead of assembled as one giant in-memory array. Cloud cubemap-cross atlases include copied edge bleed in otherwise empty cells so filtered sampling does not blend face borders into transparent black. Color-only quad-sphere saves are tiled internally to reduce peak memory. Set `PLANET_QUAD_TILE_ROWS` to a smaller value such as `64` if the computer still runs out of memory. Set `PLANET_WRITE_STITCHED_CROSSES=0` before running the CLI or web UI only if you want to skip stitched atlas output.
 
 ## Presets
 
