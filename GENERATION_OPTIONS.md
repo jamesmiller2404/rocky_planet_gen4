@@ -95,8 +95,8 @@ For normal equirectangular output:
 | File | Description |
 | --- | --- |
 | `color.png` | Main color/albedo texture. |
-| `height.png` | Normalized height map. |
-| `normal.png` | Normal map derived from height. |
+| `height.png` | 16-bit grayscale normalized height map. |
+| `normal.png` | 16-bit RGB normal map derived from height. |
 | `roughness.png` | Roughness map. Land is rougher; water is smoother. |
 | `land_mask.png` | White land, black ocean. |
 | `shoreline_mask.png` | Shoreline/beach influence mask. |

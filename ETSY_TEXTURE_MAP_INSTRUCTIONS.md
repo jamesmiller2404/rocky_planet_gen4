@@ -74,8 +74,8 @@ Depending on the exact product variation, the following maps may be included.
 | File | What It Contains | Typical Use | Color/Data Setting |
 | --- | --- | --- | --- |
 | `color.png` | Main visible planet surface color | Base Color / Albedo | sRGB / Color |
-| `height.png` | Grayscale elevation | Bump, displacement, parallax | Non-Color / Linear |
-| `normal.png` | RGB normal map derived from terrain | Surface detail normals | Non-Color / Normal Map |
+| `height.png` | 16-bit grayscale elevation | Bump, displacement, parallax | Non-Color / Linear |
+| `normal.png` | 16-bit RGB normal map derived from terrain | Surface detail normals | Non-Color / Normal Map |
 | `roughness.png` | Grayscale material roughness | Controls shine/gloss | Non-Color / Linear |
 | `land_mask.png` | White land, black ocean | Land/ocean material blending | Non-Color / Linear |
 | `shoreline_mask.png` | Shoreline and beach influence | Beach tint, wet sand, foam, coastal detail | Non-Color / Linear |

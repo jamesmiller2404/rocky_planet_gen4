@@ -4285,9 +4285,33 @@ def save_gray16(path, arr):
     Image.fromarray(arr).save(path)
 
 
+def save_rgb16(path, arr):
+    arr = np.rint(np.clip(arr, 0, 255) * (65535.0 / 255.0)).astype(np.uint16)
+    write_streamed_png(
+        path,
+        arr.shape[1],
+        arr.shape[0],
+        2,
+        (row.astype(">u2", copy=False).tobytes() for row in arr),
+        bit_depth=16,
+    )
+
+
 def save_rgba(path, arr):
     arr = np.clip(arr, 0, 255).astype(np.uint8)
     Image.fromarray(arr, "RGBA").save(path)
+
+
+def save_rgba16(path, arr):
+    arr = np.rint(np.clip(arr, 0, 255) * (65535.0 / 255.0)).astype(np.uint16)
+    write_streamed_png(
+        path,
+        arr.shape[1],
+        arr.shape[0],
+        6,
+        (row.astype(">u2", copy=False).tobytes() for row in arr),
+        bit_depth=16,
+    )
 
 
 def save_luminance_alpha(path, arr):
@@ -4332,6 +4356,51 @@ def write_streamed_png(path, width, height, color_type, row_iter, bit_depth=8):
         if pending:
             write_png_chunk(handle, b"IDAT", bytes(pending))
         write_png_chunk(handle, b"IEND", b"")
+
+
+def read_unfiltered_png16(path):
+    with Path(path).open("rb") as handle:
+        if handle.read(8) != b"\x89PNG\r\n\x1a\n":
+            raise ValueError(f"{path} is not a PNG file.")
+        width = height = bit_depth = color_type = None
+        idat_chunks = []
+        while True:
+            length_data = handle.read(4)
+            if not length_data:
+                break
+            length = struct.unpack(">I", length_data)[0]
+            chunk_type = handle.read(4)
+            data = handle.read(length)
+            handle.read(4)
+            if chunk_type == b"IHDR":
+                width, height, bit_depth, color_type, compression, filter_method, interlace = struct.unpack(">IIBBBBB", data)
+                if compression != 0 or filter_method != 0 or interlace != 0:
+                    raise ValueError(f"{path} uses unsupported PNG encoding options.")
+            elif chunk_type == b"IDAT":
+                idat_chunks.append(data)
+            elif chunk_type == b"IEND":
+                break
+
+    channels_by_color_type = {0: 1, 2: 3, 4: 2, 6: 4}
+    channels = channels_by_color_type.get(color_type)
+    if bit_depth != 16 or channels is None:
+        raise ValueError(f"{path} is not a supported 16-bit PNG.")
+
+    raw = zlib.decompress(b"".join(idat_chunks))
+    row_bytes = int(width) * channels * 2
+    arr = np.empty((int(height), int(width), channels), dtype=np.uint16)
+    offset = 0
+    for row_index in range(int(height)):
+        filter_type = raw[offset]
+        if filter_type != 0:
+            raise ValueError(f"{path} uses unsupported PNG row filter {filter_type}.")
+        offset += 1
+        row = raw[offset : offset + row_bytes]
+        offset += row_bytes
+        arr[row_index] = np.frombuffer(row, dtype=">u2").reshape((int(width), channels))
+    if channels == 1:
+        return arr[:, :, 0]
+    return arr
 
 
 def normal_from_height(height, strength=5.0, wrap_x=True):
@@ -5284,6 +5353,11 @@ TEXTURE_MAP_NAMES = (
 QUAD_SPHERE_MAP_NAMES = TEXTURE_MAP_NAMES
 
 CLOUD_16BIT_MAPS = {"cloud_mask", "cloud_shadow", "nebula_alpha", "nebula_stars", "atmosphere_haze", "emissive_heat"}
+PNG_16BIT_MAPS = CLOUD_16BIT_MAPS | {"height", "normal"}
+
+
+def png_bit_depth_for_map(map_name):
+    return 16 if map_name in PNG_16BIT_MAPS else 8
 
 
 def selected_texture_maps(map_names=None):
@@ -5314,9 +5388,9 @@ def save_map_set(out_dir, maps, map_names=None):
     if "color" in selected:
         save_rgb(out_dir / "color.png", maps["color"])
     if "height" in selected:
-        save_gray(out_dir / "height.png", maps["height"])
+        save_gray16(out_dir / "height.png", maps["height"])
     if "normal" in selected:
-        save_rgb(out_dir / "normal.png", maps["normal"])
+        save_rgb16(out_dir / "normal.png", maps["normal"])
     if "roughness" in selected:
         save_gray(out_dir / "roughness.png", maps["roughness"])
     if "land_mask" in selected:
@@ -5604,9 +5678,11 @@ def save_quad_sphere_cubemap_crosses(out_dir, faces, face_size, map_names=None):
     for map_name in selected_texture_maps(map_names):
         cross = build_cubemap_cross(faces, map_name, face_size)
         path = out_dir / f"{map_name}_cubemap_cross.png"
-        if cross.shape[2] == 4:
+        if cross.shape[2] == 4 and map_name == "normal":
+            save_rgba16(path, cross)
+        elif cross.shape[2] == 4:
             save_rgba(path, cross)
-        elif map_name in CLOUD_16BIT_MAPS:
+        elif map_name in PNG_16BIT_MAPS:
             save_luminance_alpha16(path, cross)
         else:
             save_luminance_alpha(path, cross)
@@ -5617,7 +5693,7 @@ def save_quad_sphere_cubemap_crosses_from_files(out_dir, face_size, map_names=No
         face_path = out_dir / "px" / f"{map_name}.png"
         with Image.open(face_path) as sample_image:
             is_scalar = sample_image.mode in {"L", "I", "I;16", "I;16B", "I;16L"}
-            bit_depth = 16 if map_name in CLOUD_16BIT_MAPS else 8
+            bit_depth = png_bit_depth_for_map(map_name)
         save_quad_sphere_cubemap_cross_streamed(out_dir, map_name, face_size, is_scalar, bit_depth=bit_depth)
 
 
@@ -5633,10 +5709,12 @@ def save_quad_sphere_cubemap_cross_streamed(out_dir, map_name, face_size, is_sca
         empty = np.zeros((face_size, channels), dtype=dtype)
         empty[:, 1] = 0
     elif map_name == "normal":
-        empty = np.zeros((face_size, channels), dtype=np.uint8)
-        empty[:, 0] = 128
-        empty[:, 1] = 128
-        empty[:, 2] = 255
+        dtype = np.uint16 if bit_depth == 16 else np.uint8
+        channel_scale = 257 if bit_depth == 16 else 1
+        empty = np.zeros((face_size, channels), dtype=dtype)
+        empty[:, 0] = 128 * channel_scale
+        empty[:, 1] = 128 * channel_scale
+        empty[:, 2] = 255 * channel_scale
     else:
         empty = np.zeros((face_size, channels), dtype=np.uint8)
 
@@ -5650,6 +5728,14 @@ def save_quad_sphere_cubemap_cross_streamed(out_dir, map_name, face_size, is_sca
                     lum = np.asarray(image.convert("L"), dtype=np.uint8)
                 alpha = np.full(lum.shape, alpha_value, dtype=lum.dtype)
                 return np.stack((lum, alpha), axis=-1)
+            if bit_depth == 16:
+                rgb = read_unfiltered_png16(path)
+                if rgb.ndim == 2:
+                    rgb = np.repeat(rgb[:, :, None], 3, axis=2)
+                if rgb.shape[2] == 4:
+                    return rgb
+                alpha = np.full(rgb.shape[:2], 65535, dtype=rgb.dtype)
+                return np.dstack((rgb[:, :, :3], alpha))
             return np.asarray(image.convert("RGBA"), dtype=np.uint8)
 
     def load_bleed_edges():
@@ -5903,6 +5989,7 @@ def write_quad_sphere_manifest(out_dir, face_size, map_names=None, write_cubemap
         "face_size": face_size,
         "faces": ["px", "nx", "py", "ny", "pz", "nz"],
         "maps": [f"{name}.png" for name in selected],
+        "map_bit_depths": {f"{name}.png": png_bit_depth_for_map(name) for name in selected},
         "cubemap_cross": {
             "layout": "horizontal_cross_4x3_rotated_clockwise",
             "size": {
@@ -5946,7 +6033,7 @@ def write_quad_sphere_manifest(out_dir, face_size, map_names=None, write_cubemap
         },
         "normal_map": {
             "space": "per-face tangent space",
-            "channels": "RGB = XYZ remapped from -1..1 to 0..255",
+            "channels": "16-bit RGB = XYZ remapped from -1..1 to 0..65535",
             "green_channel": "positive Y points toward lower image rows",
         },
     }

@@ -697,14 +697,31 @@ def image_file_summary(path: Path) -> dict:
     with Image.open(path) as image:
         width, height = image.size
         mode = image.mode
+    bit_depth = png_bit_depth(path)
     return {
         "path": str(path.resolve()),
         "file": path.name,
         "width": width,
         "height": height,
         "mode": mode,
+        "bit_depth": bit_depth,
         "bytes": path.stat().st_size,
     }
+
+
+def png_bit_depth(path: Path) -> int | None:
+    try:
+        with path.open("rb") as handle:
+            if handle.read(8) != b"\x89PNG\r\n\x1a\n":
+                return None
+            length = int.from_bytes(handle.read(4), "big")
+            chunk_type = handle.read(4)
+            if chunk_type != b"IHDR" or length < 13:
+                return None
+            data = handle.read(length)
+            return int(data[8])
+    except OSError:
+        return None
 
 
 def timed_stage(report: dict, name: str, label: str, fn):
@@ -2077,9 +2094,15 @@ function summarizeMapDimensions(entry) {
 }
 
 function summarizeMapModes(entry) {
-  const modes = new Set((entry.files || []).map(file => file.mode).filter(Boolean));
-  if (entry.stitched_atlas && entry.stitched_atlas.mode) modes.add(entry.stitched_atlas.mode);
+  const modes = new Set((entry.files || []).map(formatFileMode).filter(Boolean));
+  if (entry.stitched_atlas) modes.add(formatFileMode(entry.stitched_atlas));
   return modes.size ? Array.from(modes).join(", ") : "n/a";
+}
+
+function formatFileMode(file) {
+  if (!file) return "";
+  const mode = file.mode || "PNG";
+  return file.bit_depth ? `${file.bit_depth}-bit ${mode}` : mode;
 }
 
 function summarizeMapBytes(entry) {
