@@ -21,7 +21,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from io import BytesIO
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 import numpy as np
 from PIL import Image
@@ -1043,6 +1043,71 @@ def list_saved_configs() -> dict:
     return {"items": entries}
 
 
+def path_for_browser(path: Path) -> str:
+    resolved = path.resolve()
+    try:
+        return str(resolved.relative_to(Path.cwd().resolve()))
+    except ValueError:
+        return str(resolved)
+
+
+def file_browser_directory(path_text: str) -> Path:
+    OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
+    output_root = OUTPUT_ROOT.resolve()
+    path = Path(path_text) if path_text else output_root
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    path = path.resolve()
+    if path.is_file() and path.name == "preset.json":
+        path = path.parent
+    if not path.exists() or not path.is_dir():
+        raise ValueError("Choose an existing folder.")
+    if not path.is_relative_to(output_root):
+        raise ValueError("File browser is limited to the output folder.")
+    return path
+
+
+def file_browser_listing(path_text: str = "") -> dict:
+    current = file_browser_directory(path_text)
+    output_root = OUTPUT_ROOT.resolve()
+    folders = []
+    presets = []
+    for child in current.iterdir():
+        try:
+            stat = child.stat()
+            if child.is_dir():
+                folders.append(
+                    {
+                        "name": child.name,
+                        "path": path_for_browser(child),
+                        "kind": "folder",
+                        "created": stat.st_ctime,
+                        "modified": stat.st_mtime,
+                        "has_preset": (child / "preset.json").is_file(),
+                    }
+                )
+            elif child.is_file() and child.name == "preset.json":
+                presets.append(
+                    {
+                        "name": child.name,
+                        "path": path_for_browser(child),
+                        "kind": "preset",
+                        "created": stat.st_ctime,
+                        "modified": stat.st_mtime,
+                    }
+                )
+        except OSError:
+            continue
+    folders.sort(key=lambda item: item["name"].lower())
+    presets.sort(key=lambda item: item["name"].lower())
+    return {
+        "root": path_for_browser(output_root),
+        "current_path": path_for_browser(current),
+        "parent_path": path_for_browser(current.parent) if current != output_root else "",
+        "items": folders + presets,
+    }
+
+
 def deletable_saved_folder(path_text: str) -> Path:
     path = Path(path_text)
     if not path.is_absolute():
@@ -1144,14 +1209,20 @@ class PlanetUiHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
-        if parsed.path == "/":
-            self.write_text(UI_HTML, "text/html")
-        elif parsed.path == "/api/defaults":
-            self.write_json(default_payload())
-        elif parsed.path == "/api/config/list":
-            self.write_json(list_saved_configs())
-        else:
-            self.send_error(HTTPStatus.NOT_FOUND)
+        try:
+            if parsed.path == "/":
+                self.write_text(UI_HTML, "text/html")
+            elif parsed.path == "/api/defaults":
+                self.write_json(default_payload())
+            elif parsed.path == "/api/config/list":
+                self.write_json(list_saved_configs())
+            elif parsed.path == "/api/file/browse":
+                query = parse_qs(parsed.query)
+                self.write_json(file_browser_listing(query.get("path", [""])[0]))
+            else:
+                self.send_error(HTTPStatus.NOT_FOUND)
+        except Exception as exc:
+            self.write_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
@@ -1543,7 +1614,7 @@ img {
 .status.busy { color: var(--warn); }
 .load-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 76px;
+  grid-template-columns: minmax(0, 1fr) 76px 82px;
   gap: 8px;
   margin-top: 8px;
 }
@@ -1779,6 +1850,95 @@ img {
   color: var(--muted);
   font-size: 12px;
 }
+.file-browser-modal {
+  width: min(760px, 100%);
+  max-height: min(720px, calc(100vh - 36px));
+  display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: 0 18px 70px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+}
+.file-browser-path {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.file-browser-toolbar,
+.file-browser-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.file-browser-toolbar {
+  position: relative;
+  z-index: 1;
+  background: var(--panel);
+}
+.file-browser-actions {
+  justify-content: flex-end;
+  border-top: 1px solid var(--line);
+  border-bottom: 0;
+}
+.file-browser-toolbar button,
+.file-browser-actions button {
+  width: auto;
+  min-height: 30px;
+  padding: 5px 10px;
+}
+.file-browser-sort {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.file-browser-sort select {
+  min-width: 132px;
+  min-height: 30px;
+  padding: 4px 8px;
+}
+.file-browser-list {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-height: 220px;
+  overflow: auto;
+  padding: 12px 14px;
+}
+.file-browser-row {
+  display: grid;
+  grid-template-columns: 82px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  min-height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #11151d;
+  color: var(--text);
+  padding: 7px 9px;
+  text-align: left;
+}
+.file-browser-row:hover,
+.file-browser-row.selected {
+  border-color: var(--accent);
+}
+.file-browser-kind,
+.file-browser-meta {
+  color: var(--muted);
+  font-size: 12px;
+}
+.file-browser-name {
+  overflow-wrap: anywhere;
+}
 @media (max-width: 900px) {
   main { grid-template-columns: 1fr; }
   aside { max-height: none; border-right: 0; border-bottom: 1px solid var(--line); }
@@ -1787,6 +1947,10 @@ img {
   .texture-zoom-controls { grid-column: 1 / -1; }
   .map-options { grid-template-columns: 1fr; }
   .report-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .load-row { grid-template-columns: 1fr; }
+  .file-browser-toolbar { align-items: stretch; flex-direction: column; }
+  .file-browser-row { grid-template-columns: 70px minmax(0, 1fr); }
+  .file-browser-meta { grid-column: 2; }
 }
 </style>
 </head>
@@ -1905,6 +2069,7 @@ img {
       <div class="load-row">
         <input id="loadPath" type="text" placeholder="output/example/preset.json">
         <button id="loadBtn">Load</button>
+        <button id="browsePresetBtn" type="button">Browse</button>
       </div>
     </details>
       </div>
@@ -1966,6 +2131,30 @@ img {
     <div class="report-body" id="generationReportBody"></div>
   </section>
 </div>
+<div class="modal-backdrop" id="fileBrowserModal" hidden>
+  <section class="file-browser-modal" role="dialog" aria-modal="true" aria-labelledby="fileBrowserTitle">
+    <header class="report-head">
+      <h2 id="fileBrowserTitle">Choose preset.json</h2>
+      <button class="report-close" id="fileBrowserClose" type="button" aria-label="Close file browser">&times;</button>
+    </header>
+    <div class="file-browser-path" id="fileBrowserPath">output</div>
+    <div class="file-browser-toolbar">
+      <button id="fileBrowserUp" type="button">Up Folder</button>
+      <label class="file-browser-sort" for="fileBrowserSort">
+        Sort
+        <select id="fileBrowserSort">
+          <option value="name">Name</option>
+          <option value="created">Date created</option>
+        </select>
+      </label>
+    </div>
+    <div class="file-browser-list" id="fileBrowserList"></div>
+    <div class="file-browser-actions">
+      <button id="fileBrowserCancel" type="button">Cancel</button>
+      <button id="fileBrowserLoad" class="primary" type="button" disabled>Load Selected</button>
+    </div>
+  </section>
+</div>
 <script>
 let schema = null;
 let debounceTimer = null;
@@ -1973,6 +2162,7 @@ let inFlight = false;
 let previewMaps = {};
 let texturePreviewToken = 0;
 let loadedPlanet = null;
+let fileBrowserState = {currentPath: "", parentPath: "", selectedPath: "", items: []};
 
 const els = {
   preset: document.getElementById("preset"),
@@ -2013,6 +2203,15 @@ const els = {
   refreshSavedBtn: document.getElementById("refreshSavedBtn"),
   savedPlanets: document.getElementById("savedPlanets"),
   loadPath: document.getElementById("loadPath"),
+  browsePresetBtn: document.getElementById("browsePresetBtn"),
+  fileBrowserModal: document.getElementById("fileBrowserModal"),
+  fileBrowserClose: document.getElementById("fileBrowserClose"),
+  fileBrowserPath: document.getElementById("fileBrowserPath"),
+  fileBrowserUp: document.getElementById("fileBrowserUp"),
+  fileBrowserSort: document.getElementById("fileBrowserSort"),
+  fileBrowserList: document.getElementById("fileBrowserList"),
+  fileBrowserCancel: document.getElementById("fileBrowserCancel"),
+  fileBrowserLoad: document.getElementById("fileBrowserLoad"),
   generationReportModal: document.getElementById("generationReportModal"),
   generationReportClose: document.getElementById("generationReportClose"),
   generationReportBody: document.getElementById("generationReportBody"),
@@ -2650,6 +2849,114 @@ async function getJson(path) {
   return data;
 }
 
+function closeFileBrowser() {
+  els.fileBrowserModal.hidden = true;
+}
+
+async function openFileBrowser() {
+  els.fileBrowserModal.hidden = false;
+  await browsePresetFiles(els.loadPath.value || "");
+}
+
+async function browsePresetFiles(path = "") {
+  setStatus("Browsing saved planet files...", "busy");
+  try {
+    const data = await getJson(`/api/file/browse?path=${encodeURIComponent(path || "")}`);
+    renderFileBrowser(data);
+    setStatus("Choose a preset.json file to load.", "ok");
+  } catch (error) {
+    renderFileBrowser({current_path: "output", parent_path: "", items: []});
+    setStatus(error.message, "error");
+  }
+}
+
+function renderFileBrowser(data) {
+  fileBrowserState = {
+    currentPath: data.current_path || "",
+    parentPath: data.parent_path || "",
+    selectedPath: "",
+    items: data.items || [],
+  };
+  els.fileBrowserPath.textContent = fileBrowserState.currentPath || "output";
+  els.fileBrowserUp.disabled = !fileBrowserState.parentPath;
+  els.fileBrowserLoad.disabled = true;
+  renderFileBrowserItems();
+}
+
+function sortedFileBrowserItems() {
+  const items = [...fileBrowserState.items];
+  const sortMode = els.fileBrowserSort.value || "name";
+  if (sortMode === "created") {
+    items.sort((left, right) => {
+      const createdDelta = (right.created || 0) - (left.created || 0);
+      if (createdDelta !== 0) return createdDelta;
+      return String(left.name || "").localeCompare(String(right.name || ""), undefined, {sensitivity: "base"});
+    });
+  } else {
+    items.sort((left, right) => {
+      const kindDelta = (left.kind === "folder" ? 0 : 1) - (right.kind === "folder" ? 0 : 1);
+      if (kindDelta !== 0) return kindDelta;
+      return String(left.name || "").localeCompare(String(right.name || ""), undefined, {sensitivity: "base"});
+    });
+  }
+  return items;
+}
+
+function renderFileBrowserItems() {
+  fileBrowserState.selectedPath = "";
+  els.fileBrowserLoad.disabled = true;
+  els.fileBrowserList.replaceChildren();
+
+  const items = sortedFileBrowserItems();
+  if (!items.length) {
+    els.fileBrowserList.appendChild(makeEl("p", "hint", "No folders or preset.json files found here."));
+    return;
+  }
+  for (const item of items) {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "file-browser-row";
+    row.dataset.path = item.path;
+    row.dataset.kind = item.kind;
+    row.appendChild(makeEl("span", "file-browser-kind", item.kind === "folder" ? "Folder" : "Preset"));
+    row.appendChild(makeEl("span", "file-browser-name", item.name));
+    const created = item.created ? new Date(item.created * 1000).toLocaleString() : "unknown";
+    const meta = item.kind === "folder" && item.has_preset
+      ? `preset.json folder; created ${created}`
+      : `created ${created}`;
+    row.appendChild(makeEl("span", "file-browser-meta", meta));
+    row.addEventListener("click", () => {
+      if (item.kind === "folder") {
+        browsePresetFiles(item.path);
+      } else {
+        selectPresetFile(row, item.path);
+      }
+    });
+    row.addEventListener("dblclick", () => {
+      if (item.kind === "preset") {
+        selectPresetFile(row, item.path);
+        loadSelectedPresetJson();
+      }
+    });
+    els.fileBrowserList.appendChild(row);
+  }
+}
+
+function selectPresetFile(row, path) {
+  for (const item of els.fileBrowserList.querySelectorAll(".file-browser-row")) {
+    item.classList.toggle("selected", item === row);
+  }
+  fileBrowserState.selectedPath = path;
+  els.fileBrowserLoad.disabled = false;
+}
+
+async function loadSelectedPresetJson() {
+  if (!fileBrowserState.selectedPath) return;
+  els.loadPath.value = fileBrowserState.selectedPath;
+  closeFileBrowser();
+  await loadPresetJson();
+}
+
 function setGlobeTextures(surfaceSrc, cloudSrc) {
   let remaining = cloudSrc ? 2 : 1;
   const finish = () => {
@@ -2896,7 +3203,7 @@ async function renderPreview() {
 }
 
 function setButtons(disabled) {
-  for (const id of ["previewBtn", "saveBtn", "saveConfigBtn", "resetBtn", "randomSeedBtn", "loadBtn", "refreshSavedBtn"]) {
+  for (const id of ["previewBtn", "saveBtn", "saveConfigBtn", "resetBtn", "randomSeedBtn", "loadBtn", "browsePresetBtn", "refreshSavedBtn"]) {
     document.getElementById(id).disabled = disabled;
   }
 }
@@ -3133,11 +3440,21 @@ async function boot() {
   });
   document.getElementById("refreshSavedBtn").addEventListener("click", () => refreshSavedPlanets(true));
   document.getElementById("loadBtn").addEventListener("click", loadPresetJson);
+  els.browsePresetBtn.addEventListener("click", openFileBrowser);
+  els.fileBrowserUp.addEventListener("click", () => browsePresetFiles(fileBrowserState.parentPath));
+  els.fileBrowserSort.addEventListener("change", renderFileBrowserItems);
+  els.fileBrowserLoad.addEventListener("click", loadSelectedPresetJson);
+  els.fileBrowserCancel.addEventListener("click", closeFileBrowser);
+  els.fileBrowserClose.addEventListener("click", closeFileBrowser);
+  els.fileBrowserModal.addEventListener("click", event => {
+    if (event.target === els.fileBrowserModal) closeFileBrowser();
+  });
   els.generationReportClose.addEventListener("click", closeGenerationReport);
   els.generationReportModal.addEventListener("click", event => {
     if (event.target === els.generationReportModal) closeGenerationReport();
   });
   document.addEventListener("keydown", event => {
+    if (event.key === "Escape" && !els.fileBrowserModal.hidden) closeFileBrowser();
     if (event.key === "Escape" && !els.generationReportModal.hidden) closeGenerationReport();
   });
   refreshSavedPlanets(false);
