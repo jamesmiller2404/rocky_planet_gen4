@@ -493,6 +493,16 @@ def unique_output_dir(name: str) -> Path:
     return candidate
 
 
+def resolved_save_names(payload: dict, fallback_name: str) -> tuple[str, str]:
+    requested_folder = str(payload.get("output_name", "")).strip()
+    requested_planet = str(payload.get("planet_name", "")).strip()
+    planet_name = sanitized_asset_name(requested_planet, "")
+    folder_fallback = planet_name or fallback_name
+    output_name = sanitized_name(requested_folder, folder_fallback)
+    planet_name = planet_name or sanitized_asset_name(output_name, fallback_name)
+    return output_name, planet_name
+
+
 def config_from_payload(payload: dict, preview: bool) -> PlanetConfig:
     preset = str(payload.get("preset", "earthlike"))
     if preset not in PRESETS:
@@ -788,11 +798,8 @@ def save_planet_output(payload: dict) -> tuple[Path, dict]:
     cfg = config_from_payload(payload, preview=False)
     projection = str(payload.get("projection", "equirectangular"))
     texture_maps = texture_maps_from_payload(payload)
-    output_name = sanitized_name(
-        str(payload.get("output_name", "")),
-        f"{cfg.preset}_{cfg.seed}_{time.strftime('%Y%m%d_%H%M%S')}",
-    )
-    planet_name = sanitized_asset_name(str(payload.get("planet_name", "")).strip(), output_name)
+    fallback_name = f"{cfg.preset}_{cfg.seed}_{time.strftime('%Y%m%d_%H%M%S')}"
+    output_name, planet_name = resolved_save_names(payload, fallback_name)
     out_dir = unique_output_dir(output_name)
     out_dir.mkdir(parents=True, exist_ok=False)
     report = {
@@ -875,7 +882,9 @@ def save_config_only(payload: dict) -> Path:
     metadata = metadata_from_payload(payload, "config")
     ui_state = metadata["ui_state"]
     fallback_name = f"{ui_state['preset']}_{ui_state['seed']}_{time.strftime('%Y%m%d_%H%M%S')}"
-    output_name = sanitized_name(str(payload.get("output_name", "")), fallback_name)
+    output_name, planet_name = resolved_save_names(payload, fallback_name)
+    metadata["planet_name"] = planet_name
+    metadata["ui_state"]["planet_name"] = planet_name
     SAVED_CONFIG_ROOT.mkdir(parents=True, exist_ok=True)
     out_dir = unique_config_dir(output_name)
     out_dir.mkdir(parents=True, exist_ok=False)

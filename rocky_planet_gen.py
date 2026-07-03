@@ -4412,8 +4412,10 @@ def normal_from_height(height, strength=5.0, wrap_x=True):
 
     padded_y = np.pad(height, ((1, 1), (0, 0)), mode="edge")
     dy = padded_y[2:, :] - padded_y[:-2, :]
-    nx = -dx * strength
-    ny = -dy * strength
+    # Rotate the height-gradient tangent frame clockwise so normal-map relief
+    # lights in the same direction as the planet's terminator.
+    nx = dy * strength
+    ny = dx * strength
     nz = np.ones_like(height)
     length = np.sqrt(nx * nx + ny * ny + nz * nz)
     normal = np.stack((nx / length, ny / length, nz / length), axis=2)
@@ -5920,6 +5922,26 @@ def resolve_quad_tile_rows(face_size):
     return min(rows, int(face_size))
 
 
+def resolve_quad_raw_height_cache_max_face_size():
+    value = os.environ.get("PLANET_QUAD_RAW_HEIGHT_CACHE_MAX_FACE_SIZE")
+    if value is None:
+        return 4096
+    text = value.strip().lower()
+    if text in {"", "auto", "default"}:
+        return 4096
+    if text in {"0", "false", "no", "off"}:
+        return 0
+    try:
+        limit = int(value)
+    except ValueError as exc:
+        raise ValueError("PLANET_QUAD_RAW_HEIGHT_CACHE_MAX_FACE_SIZE must be an integer.") from exc
+    return max(0, limit)
+
+
+def should_cache_quad_sphere_raw_height(face_size):
+    return int(face_size) <= resolve_quad_raw_height_cache_max_face_size()
+
+
 def iter_quad_sphere_face_tiles(face, face_size, tile_rows):
     for row_start in range(0, int(face_size), int(tile_rows)):
         row_stop = min(int(face_size), row_start + int(tile_rows))
@@ -6001,11 +6023,74 @@ def save_quad_sphere_color_faces_tiled(out_dir, cfg, face_size, tile_rows=None, 
         image.close()
 
 
+def compute_quad_sphere_land_threshold(cfg, face_size, selected_maps, quad_workers=1):
+    land_hist = np.zeros(4096, dtype=np.int64)
+    for _, maps in iter_quad_sphere_face_pass(
+        cfg,
+        face_size,
+        selected_maps,
+        quad_workers=quad_workers,
+        return_raw_stats=True,
+        stat_fields=("land",),
+    ):
+        update_histogram(land_hist, maps["_land_field"])
+    return histogram_quantile(land_hist, land_threshold_quantile(cfg))
+
+
+def save_quad_sphere_height_normal_faces_cached(out_dir, cfg, face_size, selected_maps, quad_workers=1, planet_name=None):
+    land_threshold = compute_quad_sphere_land_threshold(cfg, face_size, selected_maps, quad_workers=quad_workers)
+    raw_heights = {}
+    height_min = math.inf
+    height_max = -math.inf
+    for face, maps in iter_quad_sphere_face_pass(
+        cfg,
+        face_size,
+        selected_maps,
+        quad_workers=quad_workers,
+        land_threshold=land_threshold,
+        return_raw_stats=True,
+        stat_fields=("height",),
+    ):
+        raw_height = maps["_raw_height"].astype(np.float32, copy=False)
+        raw_heights[face] = raw_height
+        height_min = min(height_min, float(np.min(raw_height)))
+        height_max = max(height_max, float(np.max(raw_height)))
+        del maps
+    height_range = (height_min, height_max) if math.isfinite(height_min) else None
+
+    for face in QUAD_SPHERE_FACES:
+        face_dir = out_dir / face
+        face_dir.mkdir(parents=True, exist_ok=True)
+        raw_height = raw_heights[face]
+        maps = {}
+        if "height" in selected_maps:
+            maps["height"] = normalize01(raw_height, height_range)
+        if "normal" in selected_maps:
+            maps["normal"] = normal_from_height(raw_height, strength=7.5, wrap_x=False)
+        save_map_set(face_dir, maps, selected_maps, planet_name=planet_name, map_type="cubemap", face_id=face)
+        del maps
+    raw_heights.clear()
+
+
 def save_quad_sphere_maps_low_memory(out_dir, cfg, face_size, map_names=None, quad_workers=1, write_cubemap_crosses=None, planet_name=None):
     selected_maps = selected_texture_maps(map_names)
     resolved_quad_workers = resolve_quad_workers(quad_workers)
     if selected_maps == ("color",) and resolved_quad_workers == 1:
         save_quad_sphere_color_faces_tiled(out_dir, cfg, face_size, planet_name=planet_name)
+        if write_cubemap_crosses is None:
+            write_cubemap_crosses = should_write_quad_sphere_crosses(face_size)
+        if write_cubemap_crosses:
+            save_quad_sphere_cubemap_crosses_from_files(out_dir, face_size, selected_maps, planet_name=planet_name)
+        return
+    if set(selected_maps) <= {"height", "normal"} and should_cache_quad_sphere_raw_height(face_size):
+        save_quad_sphere_height_normal_faces_cached(
+            out_dir,
+            cfg,
+            face_size,
+            selected_maps,
+            quad_workers=resolved_quad_workers,
+            planet_name=planet_name,
+        )
         if write_cubemap_crosses is None:
             write_cubemap_crosses = should_write_quad_sphere_crosses(face_size)
         if write_cubemap_crosses:
@@ -6044,27 +6129,32 @@ def write_quad_sphere_manifest(out_dir, face_size, map_names=None, write_cubemap
     selected = selected_texture_maps(map_names)
     if write_cubemap_crosses is None:
         write_cubemap_crosses = should_write_quad_sphere_crosses(face_size)
+    face_maps = {
+        face: [
+            f"quad_sphere/{face}/{texture_map_filename(name, 'cubemap', face_size, face_size, planet_name=planet_name, face_id=face)}"
+            for name in selected
+        ]
+        for face in QUAD_SPHERE_FACES
+    }
+    flat_face_maps = [
+        file_name
+        for face in QUAD_SPHERE_FACES
+        for file_name in face_maps[face]
+    ]
+    map_bit_depths = {
+        f"quad_sphere/{face}/{texture_map_filename(name, 'cubemap', face_size, face_size, planet_name=planet_name, face_id=face)}": png_bit_depth_for_map(name)
+        for face in QUAD_SPHERE_FACES
+        for name in selected
+    }
     manifest = {
         "layout": "quad_sphere_cubemap_faces",
         "planet_name": sanitized_asset_name(planet_name) if planet_name else None,
         "face_size": face_size,
         "faces": ["px", "nx", "py", "ny", "pz", "nz"],
         "map_roles": list(selected),
-        "maps": [
-            texture_map_filename(name, "cubemap", face_size, face_size, planet_name=planet_name, face_id="{face}")
-            for name in selected
-        ],
-        "face_maps": {
-            face: [
-                f"quad_sphere/{face}/{texture_map_filename(name, 'cubemap', face_size, face_size, planet_name=planet_name, face_id=face)}"
-                for name in selected
-            ]
-            for face in QUAD_SPHERE_FACES
-        },
-        "map_bit_depths": {
-            texture_map_filename(name, "cubemap", face_size, face_size, planet_name=planet_name, face_id="{face}"): png_bit_depth_for_map(name)
-            for name in selected
-        },
+        "maps": flat_face_maps,
+        "face_maps": face_maps,
+        "map_bit_depths": map_bit_depths,
         "map_role_bit_depths": {name: png_bit_depth_for_map(name) for name in selected},
         "cubemap_cross": {
             "layout": "horizontal_cross_4x3_rotated_clockwise",
@@ -6115,7 +6205,8 @@ def write_quad_sphere_manifest(out_dir, face_size, map_names=None, write_cubemap
         "normal_map": {
             "space": "per-face tangent space",
             "channels": "16-bit RGB = XYZ remapped from -1..1 to 0..65535",
-            "green_channel": "positive Y points toward lower image rows",
+            "green_channel": "OpenGL / green-up in the planet tangent frame",
+            "tangent_frame": "height-gradient XY channels are rotated clockwise to align relief shadows with the planet terminator",
         },
     }
     (out_dir / "quad_sphere_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")

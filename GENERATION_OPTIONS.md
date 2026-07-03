@@ -67,7 +67,7 @@ Parallel quad-sphere generation:
 .\.venv\Scripts\python.exe rocky_planet_gen.py --preset earthlike --seed 42 --quad-sphere --face-size 512 --out output/color_quad_parallel --texture-maps color --quad-workers 6
 ```
 
-For large faces, each worker holds its own arrays and temporary noise fields. If RAM usage is too high, set `--quad-workers 2`, `--quad-workers 3`, or `--quad-workers 1`. The browser UI uses the same setting through the `PLANET_QUAD_WORKERS` environment variable, and defaults to auto when the variable is unset.
+For large faces, each worker holds its own arrays and temporary noise fields. If RAM usage is too high, set `--quad-workers 2`, `--quad-workers 3`, or `--quad-workers 1`. The browser UI uses the same setting through the `PLANET_QUAD_WORKERS` environment variable, and defaults to auto when the variable is unset. Height-only and normal-only quad-sphere saves cache raw height faces up to `PLANET_QUAD_RAW_HEIGHT_CACHE_MAX_FACE_SIZE=4096` so crater-heavy height fields are not regenerated after the global height range is known; set it to `0` to force the older lowest-memory path.
 
 ## Profiling
 
@@ -113,7 +113,7 @@ For normal equirectangular output:
 | --- | --- |
 | `<planet>_color_equirect_<width>x<height>_8bit.png` | Main color/albedo texture. |
 | `<planet>_height_equirect_<width>x<height>_16bit.png` | 16-bit grayscale normalized height map. |
-| `<planet>_normal_equirect_<width>x<height>_16bit.png` | 16-bit RGB normal map derived from height. |
+| `<planet>_normal_equirect_<width>x<height>_16bit.png` | 16-bit RGB OpenGL-style green-up normal map derived from height, with tangent axes aligned so relief shadows follow the planet terminator. |
 | `<planet>_roughness_equirect_<width>x<height>_8bit.png` | Roughness map. Land is rougher; water is smoother. |
 | `<planet>_land_mask_equirect_<width>x<height>_8bit.png` | White land, black ocean. |
 | `<planet>_shoreline_mask_equirect_<width>x<height>_8bit.png` | Shoreline/beach influence mask. |
