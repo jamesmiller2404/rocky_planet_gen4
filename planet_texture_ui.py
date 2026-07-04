@@ -97,8 +97,24 @@ PARAM_GROUPS = [
             ("shoreline_noise_scale", 2.00, 60.00, 0.50),
             ("shoreline_detail", 1, 10, 1),
             ("shoreline_erosion", 0.00, 0.70, 0.01),
-            ("beach_width", 0.005, 0.120, 0.005),
-            ("shelf_width", 0.02, 0.35, 0.01),
+        ],
+    },
+    {
+        "name": "Ocean Geometry",
+        "params": [
+            ("beach_width", 0.00, 0.120, 0.005),
+            ("shelf_width", 0.00, 0.35, 0.01),
+            ("ocean_smoothness", 0.00, 1.00, 0.01),
+            ("ocean_wind_wave_strength", 0.00, 1.00, 0.01),
+            ("ocean_swell_scale", 0.25, 4.00, 0.05),
+            ("ocean_chop_sharpness", 0.00, 1.00, 0.01),
+            ("ocean_foam_whitecap_amount", 0.00, 1.00, 0.01),
+            ("ocean_current_streak_strength", 0.00, 1.00, 0.01),
+            ("ocean_coastal_breaker_strength", 0.00, 1.00, 0.01),
+            ("ocean_ripple_strength", 0.00, 1.00, 0.01),
+            ("ocean_ripple_scale", 8.00, 260.00, 1.00),
+            ("ocean_ripple_detail", 1, 6, 1),
+            ("ocean_ripple_roughness", 0.25, 0.85, 0.01),
         ],
     },
     {
@@ -242,16 +258,11 @@ PARAM_GROUPS = [
             ("land_beach_color", "#000000", "#ffffff", "color"),
             ("land_snow_color", "#000000", "#ffffff", "color"),
             ("land_ice_color", "#000000", "#ffffff", "color"),
-            ("ocean_base_color", "#000000", "#ffffff", "color"),
-            ("ocean_flat_color_strength", 0.00, 1.00, 0.01),
-            ("ocean_shelf_color", "#000000", "#ffffff", "color"),
-            ("ocean_shelf_color_strength", 0.00, 1.00, 0.01),
         ],
     },
     {
         "name": "Color Variation",
         "params": [
-            ("ocean_current_strength", 0.00, 0.60, 0.01),
             ("land_color_variation", 0.00, 0.70, 0.01),
             ("continent_color_variation", 0.00, 0.80, 0.01),
             ("continent_color_scale", 0.50, 8.00, 0.05),
@@ -263,6 +274,22 @@ PARAM_GROUPS = [
             ("color_contrast", 0.50, 2.00, 0.01),
             ("color_saturation", 0.00, 3.00, 0.01),
             ("color_hue_shift", -0.50, 0.50, 0.01),
+            ("mineral_tint_strength", 0.00, 0.80, 0.01),
+            ("wetland_tint_strength", 0.00, 0.60, 0.01),
+            ("iron_oxide_tint_strength", 0.00, 0.80, 0.01),
+            ("basalt_tint_strength", 0.00, 0.80, 0.01),
+            ("salt_flat_tint_strength", 0.00, 0.80, 0.01),
+            ("clay_tint_strength", 0.00, 0.80, 0.01),
+        ],
+    },
+    {
+        "name": "Ocean Color",
+        "params": [
+            ("ocean_base_color", "#000000", "#ffffff", "color"),
+            ("ocean_flat_color_strength", 0.00, 1.00, 0.01),
+            ("ocean_shelf_color", "#000000", "#ffffff", "color"),
+            ("ocean_shelf_color_strength", 0.00, 1.00, 0.01),
+            ("ocean_current_strength", 0.00, 0.60, 0.01),
             ("ocean_color_variation", 0.00, 0.70, 0.01),
             ("ocean_shallow_tint_strength", 0.00, 1.00, 0.01),
             ("ocean_shelf_brightness", -0.50, 0.50, 0.01),
@@ -277,16 +304,6 @@ PARAM_GROUPS = [
             ("ocean_saturation", 0.00, 3.00, 0.01),
             ("ocean_colorizer_hue", 0.00, 1.00, 0.01),
             ("ocean_colorizer_strength", 0.00, 1.00, 0.01),
-            ("ocean_ripple_strength", 0.00, 1.00, 0.01),
-            ("ocean_ripple_scale", 8.00, 260.00, 1.00),
-            ("ocean_ripple_detail", 1, 6, 1),
-            ("ocean_ripple_roughness", 0.25, 0.85, 0.01),
-            ("mineral_tint_strength", 0.00, 0.80, 0.01),
-            ("wetland_tint_strength", 0.00, 0.60, 0.01),
-            ("iron_oxide_tint_strength", 0.00, 0.80, 0.01),
-            ("basalt_tint_strength", 0.00, 0.80, 0.01),
-            ("salt_flat_tint_strength", 0.00, 0.80, 0.01),
-            ("clay_tint_strength", 0.00, 0.80, 0.01),
         ],
     },
     {
@@ -558,7 +575,8 @@ TEXTURE_MAP_LABELS = {
     "height": "Height",
     "normal": "Normal",
     "roughness": "Roughness",
-    "land_mask": "Land mask",
+    "land_ocean_mask": "Land/ocean mask",
+    "land_mask": "Land/ocean mask",
     "shoreline_mask": "Shoreline mask",
     "ocean_depth": "Ocean depth",
     "cloud_mask": "Cloud mask",
@@ -645,10 +663,17 @@ PARAM_LABELS = {
     "color_contrast": "Final contrast",
     "color_saturation": "Final saturation",
     "color_hue_shift": "Final hue shift",
-    "ocean_ripple_strength": "Ocean ripple strength",
-    "ocean_ripple_scale": "Ocean ripple scale",
-    "ocean_ripple_detail": "Ocean ripple detail",
-    "ocean_ripple_roughness": "Ocean ripple roughness",
+    "ocean_smoothness": "Smoothness",
+    "ocean_wind_wave_strength": "Wind-wave strength",
+    "ocean_swell_scale": "Swell scale",
+    "ocean_chop_sharpness": "Chop sharpness",
+    "ocean_foam_whitecap_amount": "Foam / whitecap amount",
+    "ocean_current_streak_strength": "Current streak strength",
+    "ocean_coastal_breaker_strength": "Coastal breaker strength",
+    "ocean_ripple_strength": "Legacy ripple strength",
+    "ocean_ripple_scale": "Wind-wave scale",
+    "ocean_ripple_detail": "Wave breakup detail",
+    "ocean_ripple_roughness": "Wave breakup roughness",
 }
 
 
@@ -2008,12 +2033,14 @@ img {
     </section>
     <nav class="control-tabs" aria-label="Control sections">
       <button class="tab-button active" type="button" data-tab="terrainTab">Terrain</button>
+      <button class="tab-button" type="button" data-tab="oceanTab">Ocean</button>
       <button class="tab-button" type="button" data-tab="colorTab">Color</button>
       <button class="tab-button" type="button" data-tab="effectsTab">Effects</button>
       <button class="tab-button" type="button" data-tab="saveTab">Save</button>
     </nav>
     <div class="tab-panels">
       <div id="terrainTab" class="tab-panel active"></div>
+      <div id="oceanTab" class="tab-panel"></div>
       <div id="colorTab" class="tab-panel"></div>
       <div id="effectsTab" class="tab-panel"></div>
       <div id="saveTab" class="tab-panel">
@@ -2218,6 +2245,7 @@ const els = {
   globeSpeed: document.getElementById("globeSpeed"),
   globeSpeedValue: document.getElementById("globeSpeedValue"),
   terrainTab: document.getElementById("terrainTab"),
+  oceanTab: document.getElementById("oceanTab"),
   colorTab: document.getElementById("colorTab"),
   effectsTab: document.getElementById("effectsTab"),
   tabButtons: Array.from(document.querySelectorAll(".tab-button")),
@@ -2481,6 +2509,9 @@ function getDefaults() {
 }
 
 function tabForGroup(name) {
+  if (["Ocean Geometry", "Ocean Color"].includes(name)) {
+    return els.oceanTab;
+  }
   if (["Palette Colors", "Color Variation", "Advanced Land Tints"].includes(name)) {
     return els.colorTab;
   }
@@ -2522,6 +2553,7 @@ function renderControls() {
   }
 
   els.terrainTab.innerHTML = "";
+  els.oceanTab.innerHTML = "";
   els.colorTab.innerHTML = "";
   els.effectsTab.innerHTML = "";
   for (const group of schema.param_groups) {

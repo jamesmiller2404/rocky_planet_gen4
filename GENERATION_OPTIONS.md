@@ -30,7 +30,7 @@ Example:
 | `--quad-sphere` | off | Writes six cube/quad-sphere face folders instead of only equirectangular maps. |
 | `--face-size` | `min(width, height)` | Quad-sphere face size in pixels. Minimum `32` when `--quad-sphere` is used. |
 | `--quad-workers` | `PLANET_QUAD_WORKERS` or `auto` | Worker processes for quad-sphere face generation. Auto uses up to the six quad-sphere faces; use `1` for serial generation. |
-| `--texture-maps` | all maps | One or more texture maps to save: `color`, `height`, `normal`, `roughness`, `land_mask`, `shoreline_mask`, `ocean_depth`, `cloud_mask`, `cloud_shadow`, `nebula_color`, `nebula_alpha`, `nebula_stars`, `city_lights`, `atmosphere_haze`, `emissive_heat`. |
+| `--texture-maps` | all maps | One or more texture maps to save: `color`, `height`, `normal`, `roughness`, `land_ocean_mask`, `shoreline_mask`, `ocean_depth`, `cloud_mask`, `cloud_shadow`, `nebula_color`, `nebula_alpha`, `nebula_stars`, `city_lights`, `atmosphere_haze`, `emissive_heat`. The old `land_mask` name is still accepted as an alias and writes `land_ocean_mask` files. |
 | `--profile` | off | Prints `cProfile` timing for generation, saving, preview, and metadata writes. |
 | `--profile-limit` | `40` | Number of timing rows to print when `--profile` is enabled. |
 | `--profile-out` | unset | Optional raw `.prof` output path for external profile viewers. |
@@ -115,7 +115,7 @@ For normal equirectangular output:
 | `<planet>_height_equirect_<width>x<height>_16bit.png` | 16-bit grayscale normalized height map with smoothed sea-level transitions for displacement. |
 | `<planet>_normal_equirect_<width>x<height>_16bit.png` | 16-bit RGB OpenGL-style green-up normal map derived from height, using the standard image tangent basis: red follows horizontal texture slope and green follows vertical texture slope. |
 | `<planet>_roughness_equirect_<width>x<height>_8bit.png` | Roughness map. Land is rougher; water is smoother. |
-| `<planet>_land_mask_equirect_<width>x<height>_8bit.png` | White land, black ocean. |
+| `<planet>_land_ocean_mask_equirect_<width>x<height>_8bit.png` | Land/ocean separation mask. White land, black ocean. |
 | `<planet>_shoreline_mask_equirect_<width>x<height>_8bit.png` | Shoreline/beach influence mask. |
 | `<planet>_ocean_depth_equirect_<width>x<height>_8bit.png` | Ocean depth mask. |
 | `<planet>_cloud_mask_equirect_<width>x<height>_16bit.png` | Separate 16-bit grayscale cloud opacity mask based on softened land-form-style weather math. |
@@ -383,13 +383,51 @@ city_lights.png * night_side_mask * emission_strength -> Emission Strength
 
 Use `city_lights.png` as an emission/light map, not as base color. For realistic renders, start with emission strength around `2` to `6`; use higher values only for stylized orbital shots.
 
+## Ocean Geometry And Color
+
+These controls affect ocean surface geometry, ocean color, `normal.png`, and `roughness.png` depending on the option. They do not change land shape, cloud masks, or city lights.
+
+| Option | Earthlike Default | Description |
+| --- | ---: | --- |
+| `--beach-width` | `0.045` | Width of the beach/shoreline color band on land. |
+| `--shelf-width` | `0.14` | Width of shallow ocean shelves around land. Affects shallow-water color and ocean depth. |
+| `--ocean-smoothness` | `0.20` | Calms open water by flattening ocean color, reducing ocean roughness, and damping wind-wave normal detail. Higher values move toward glassier water. |
+| `--ocean-wind-wave-strength` | `0.00` | Water-only wind-wave strength for `normal.png`, with matching roughness modulation. This is the visible app control that replaces the older ripple-strength slider. |
+| `--ocean-swell-scale` | `1.00` | Size of long swell bands. Higher values create broader, more widely spaced swell geometry. |
+| `--ocean-chop-sharpness` | `0.20` | Sharpens short wave peaks and increases roughness contrast for choppier seas. |
+| `--ocean-foam-whitecap-amount` | `0.00` | Adds whitecap and foam flecks to ocean color and roughness where wave crests, current streaks, and breakers are strongest. |
+| `--ocean-current-streak-strength` | `0.18` | Adds long current/slick streaks to ocean color and roughness. |
+| `--ocean-coastal-breaker-strength` | `0.00` | Adds brighter surf/breaker bands near shelves and shorelines. |
+| `--ocean-ripple-strength` | `0.00` | Legacy backing control for water ripple strength. Existing presets still work; the UI now exposes `--ocean-wind-wave-strength` instead. |
+| `--ocean-ripple-scale` | `95.00` | Spatial frequency of the wind-wave texture. Higher values create tighter, finer surface texture. |
+| `--ocean-ripple-detail` | `3` | Number of procedural breakup octaves in the wave field. Higher values add finer irregularity. |
+| `--ocean-ripple-roughness` | `0.52` | Persistence of wave breakup detail across octaves. Higher values make the water texture less even. |
+| `--ocean-current-strength` | `0.18` | Existing broad ocean color variation between deep and mid ocean colors. |
+| `--ocean-base-color` | `#074876` | Base hex color for the ocean layer. The generator derives deep and shallow water shades from this color before applying shelf, depth, latitude, productivity, brightness, contrast, and final hue controls. |
+| `--ocean-flat-color-strength` | `0.00` | Final blend strength toward `--ocean-base-color` for every ocean color pixel. `0.0` keeps procedural ocean modeling; `1.0` forces a single flat ocean color after shelf, depth, current, tint, and ocean-ice color effects. |
+| `--ocean-shelf-color` | `#44cdbc` | Hex color for the separate final shelf overlay. Use with `--ocean-shelf-color-strength` to keep a visible shelf band while flattening the open ocean. |
+| `--ocean-shelf-color-strength` | `0.00` | Final shelf overlay strength. `0.0` disables the separate overlay; `1.0` paints the shelf band with `--ocean-shelf-color` using the `--shelf-width` mask. |
+| `--ocean-color-variation` | `0.18` | Legacy overall ocean tint multiplier. It still contributes to shallow, depth, and latitude tinting. |
+| `--ocean-shallow-tint-strength` | `0.38` | Warm cyan/teal shallow-water tint on shelves, strongest in lower latitudes. |
+| `--ocean-shelf-brightness` | `0.00` | Brightness offset applied to rendered shallow-shelf water, separate from whole-ocean brightness. |
+| `--ocean-shelf-contrast` | `1.00` | Contrast multiplier applied to rendered shallow-shelf water, separate from whole-ocean contrast. |
+| `--ocean-depth-tint-strength` | `0.34` | Darker blue tint for deeper open ocean basins. |
+| `--ocean-latitude-tint-strength` | `0.30` | Cold blue-gray tint for deeper polar and high-latitude water. |
+| `--ocean-productivity-strength` | `0.28` | Teal/green biological-productivity tint tied to shelves, broad upwelling, and latitude. |
+| `--ocean-sediment-strength` | `0.22` | Muted tan-green sediment tint near coastlines and shallow shelves. |
+| `--ocean-brightness` | `0.00` | Overall ocean-layer brightness offset. Negative values darken water; positive values brighten water. |
+| `--ocean-contrast` | `1.00` | Overall ocean-layer contrast multiplier around mid gray. Values below `1.0` flatten water; values above `1.0` deepen contrast. |
+| `--ocean-hue-shift` | `0.00` | Final hue rotation for rendered ocean pixels. `-0.50` and `0.50` represent a half color-wheel turn. |
+| `--ocean-saturation` | `1.00` | Final ocean saturation multiplier. `0.0` removes ocean color; values above `1.0` intensify it. |
+| `--ocean-colorizer-hue` | `0.55` | Target hue used by the ocean colorizer. `0.0` is red, about `0.33` green, about `0.55` cyan-blue, and about `0.66` blue. |
+| `--ocean-colorizer-strength` | `0.00` | Blend strength toward the colorizer hue after normal ocean tinting. |
+
 ## Color Variation
 
 These controls affect `color.png` only. They do not change land shape, height, normal, masks, cloud mask, or roughness.
 
 | Option | Earthlike Default | Description |
 | --- | ---: | --- |
-| `--ocean-current-strength` | `0.18` | Existing broad ocean color variation between deep and mid ocean colors. |
 | `--land-palette` | `natural_earth` | Source color set for land biomes, continent color provinces, and contextual geologic tints. |
 | `--land-color-count` | `9` | Number of base land color roles allowed into `color.png`. Lower values remap disabled biome colors to the nearest active colors for a simpler texture. |
 | `--region-tint-count` | `6` | Number of broad continent/province tint colors layered over land. Use `0` to disable those broad regional tint colors. |
@@ -413,28 +451,6 @@ These controls affect `color.png` only. They do not change land shape, height, n
 | `--color-contrast` | `1.00` | Final whole-color-texture contrast multiplier around mid gray. Values below `1.0` flatten the full color map; values above `1.0` deepen contrast. |
 | `--color-saturation` | `1.00` | Final whole-color-texture saturation multiplier. `0.0` removes color; values above `1.0` intensify the full color map. |
 | `--color-hue-shift` | `0.00` | Final hue rotation for the whole color texture. `-0.50` and `0.50` represent a half color-wheel turn. |
-| `--ocean-base-color` | `#074876` | Base hex color for the ocean layer. The generator derives deep and shallow water shades from this color before applying shelf, depth, latitude, productivity, brightness, contrast, and final hue controls. |
-| `--ocean-flat-color-strength` | `0.00` | Final blend strength toward `--ocean-base-color` for every ocean color pixel. `0.0` keeps procedural ocean modeling; `1.0` forces a single flat ocean color after shelf, depth, current, tint, and ocean-ice color effects. |
-| `--ocean-shelf-color` | `#44cdbc` | Hex color for the separate final shelf overlay. Use with `--ocean-shelf-color-strength` to keep a visible shelf band while flattening the open ocean. |
-| `--ocean-shelf-color-strength` | `0.00` | Final shelf overlay strength. `0.0` disables the separate overlay; `1.0` paints the shelf band with `--ocean-shelf-color` using the `--shelf-width` mask. |
-| `--ocean-ripple-strength` | `0.00` | Water-only micro-ripple strength for `normal.png`, with a subtle matching modulation in `roughness.png`. `0.0` keeps ocean normals flat except for existing basin and ice shaping. |
-| `--ocean-ripple-scale` | `95.00` | Spatial frequency of the ocean ripple waves. Higher values create tighter, finer surface texture. |
-| `--ocean-ripple-detail` | `3` | Number of procedural breakup octaves in the ripple field. Higher values add finer irregularity. |
-| `--ocean-ripple-roughness` | `0.52` | Persistence of ripple breakup detail across octaves. Higher values make the water texture less even. |
-| `--ocean-color-variation` | `0.18` | Legacy overall ocean tint multiplier. It still contributes to shallow, depth, and latitude tinting. |
-| `--ocean-shallow-tint-strength` | `0.38` | Warm cyan/teal shallow-water tint on shelves, strongest in lower latitudes. |
-| `--ocean-shelf-brightness` | `0.00` | Brightness offset applied to rendered shallow-shelf water, separate from whole-ocean brightness. |
-| `--ocean-shelf-contrast` | `1.00` | Contrast multiplier applied to rendered shallow-shelf water, separate from whole-ocean contrast. |
-| `--ocean-depth-tint-strength` | `0.34` | Darker blue tint for deeper open ocean basins. |
-| `--ocean-latitude-tint-strength` | `0.30` | Cold blue-gray tint for deeper polar and high-latitude water. |
-| `--ocean-productivity-strength` | `0.28` | Teal/green biological-productivity tint tied to shelves, broad upwelling, and latitude. |
-| `--ocean-sediment-strength` | `0.22` | Muted tan-green sediment tint near coastlines and shallow shelves. |
-| `--ocean-brightness` | `0.00` | Overall ocean-layer brightness offset. Negative values darken water; positive values brighten water. |
-| `--ocean-contrast` | `1.00` | Overall ocean-layer contrast multiplier around mid gray. Values below `1.0` flatten water; values above `1.0` deepen contrast. |
-| `--ocean-hue-shift` | `0.00` | Final hue rotation for rendered ocean pixels. `-0.50` and `0.50` represent a half color-wheel turn. |
-| `--ocean-saturation` | `1.00` | Final ocean saturation multiplier. `0.0` removes ocean color; values above `1.0` intensify it. |
-| `--ocean-colorizer-hue` | `0.55` | Target hue used by the ocean colorizer. `0.0` is red, about `0.33` green, about `0.55` cyan-blue, and about `0.66` blue. |
-| `--ocean-colorizer-strength` | `0.00` | Blend strength toward the colorizer hue after normal ocean tinting. |
 | `--mineral-tint-strength` | `0.26` | Rust/mineral tint on dry mountainous terrain. |
 | `--wetland-tint-strength` | `0.16` | Darker wet lowland tint in moist regions. |
 | `--iron-oxide-tint-strength` | `0.12` | Red-brown oxidized staining on dry exposed terrain. |
@@ -628,6 +644,13 @@ The table below lists the original ocean/rocky presets. The `moon` preset is int
 | `ocean_shelf_color` | `#44cdbc` | `#44cdbc` | `#44cdbc` | `#44cdbc` | `#44cdbc` |
 | `ocean_shelf_color_strength` | `0.0` | `0.0` | `0.0` | `0.0` | `0.0` |
 | `ocean_ripple_strength` | `0.0` | `0.0` | `0.0` | `0.0` | `0.0` |
+| `ocean_smoothness` | `0.20` | `0.20` | `0.20` | `0.20` | `0.20` |
+| `ocean_wind_wave_strength` | `0.0` | `0.0` | `0.0` | `0.0` | `0.0` |
+| `ocean_swell_scale` | `1.0` | `1.0` | `1.0` | `1.0` | `1.0` |
+| `ocean_chop_sharpness` | `0.20` | `0.20` | `0.20` | `0.20` | `0.20` |
+| `ocean_foam_whitecap_amount` | `0.0` | `0.0` | `0.0` | `0.0` | `0.0` |
+| `ocean_current_streak_strength` | `0.18` | `0.18` | `0.18` | `0.18` | `0.18` |
+| `ocean_coastal_breaker_strength` | `0.0` | `0.0` | `0.0` | `0.0` | `0.0` |
 | `ocean_ripple_scale` | `95.0` | `95.0` | `95.0` | `95.0` | `95.0` |
 | `ocean_ripple_detail` | `3` | `3` | `3` | `3` | `3` |
 | `ocean_ripple_roughness` | `0.52` | `0.52` | `0.52` | `0.52` | `0.52` |

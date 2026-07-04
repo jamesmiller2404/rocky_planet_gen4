@@ -33,7 +33,7 @@ Depending on the selected planet set, maps may include:
 - Height map
 - Normal map
 - Roughness map
-- Land mask
+- Land/ocean separation mask
 - Shoreline mask
 - Ocean depth mask
 - Cloud opacity mask

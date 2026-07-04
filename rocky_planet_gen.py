@@ -10,7 +10,7 @@ Outputs:
     <planet>_height_equirect_2048x1024_16bit.png
     <planet>_normal_equirect_2048x1024_16bit.png
     <planet>_roughness_equirect_2048x1024_8bit.png
-    <planet>_land_mask_equirect_2048x1024_8bit.png
+    <planet>_land_ocean_mask_equirect_2048x1024_8bit.png
     <planet>_shoreline_mask_equirect_2048x1024_8bit.png
     <planet>_ocean_depth_equirect_2048x1024_8bit.png
     <planet>_cloud_mask_equirect_2048x1024_16bit.png
@@ -1167,6 +1167,13 @@ for values in PRESETS.values():
     values.setdefault("color_saturation", 1.00)
     values.setdefault("color_hue_shift", 0.00)
     values.setdefault("ocean_ripple_strength", 0.00)
+    values.setdefault("ocean_smoothness", 0.20)
+    values.setdefault("ocean_wind_wave_strength", values.get("ocean_ripple_strength", 0.00))
+    values.setdefault("ocean_swell_scale", 1.00)
+    values.setdefault("ocean_chop_sharpness", 0.20)
+    values.setdefault("ocean_foam_whitecap_amount", 0.00)
+    values.setdefault("ocean_current_streak_strength", 0.18)
+    values.setdefault("ocean_coastal_breaker_strength", 0.00)
     values.setdefault("ocean_ripple_scale", 95.00)
     values.setdefault("ocean_ripple_detail", 3)
     values.setdefault("ocean_ripple_roughness", 0.52)
@@ -1945,6 +1952,13 @@ class PlanetConfig:
     ocean_shelf_color: str
     ocean_shelf_color_strength: float
     ocean_ripple_strength: float
+    ocean_smoothness: float
+    ocean_wind_wave_strength: float
+    ocean_swell_scale: float
+    ocean_chop_sharpness: float
+    ocean_foam_whitecap_amount: float
+    ocean_current_streak_strength: float
+    ocean_coastal_breaker_strength: float
     ocean_ripple_scale: float
     ocean_ripple_detail: int
     ocean_ripple_roughness: float
@@ -4461,14 +4475,35 @@ def normal_from_height(height, strength=5.0, wrap_x=True):
 OCEAN_RIPPLE_HEIGHT_AMPLITUDE = 0.018
 
 
-def build_ocean_ripple_field(cfg, x, y, z, land, ocean_depth, polar_ice):
-    strength = float(np.clip(cfg.ocean_ripple_strength, 0.0, 1.0))
-    if strength <= 0.0 or not np.any(~land):
-        return np.zeros_like(ocean_depth, dtype=np.float32)
+def effective_ocean_wind_wave_strength(cfg) -> float:
+    return float(
+        np.clip(
+            max(
+                getattr(cfg, "ocean_wind_wave_strength", 0.0),
+                getattr(cfg, "ocean_ripple_strength", 0.0),
+            ),
+            0.0,
+            1.0,
+        )
+    )
+
+
+def build_ocean_geometry_fields(cfg, x, y, z, land, ocean_depth, polar_ice, shoreline=None, shelf=None):
+    wind_strength = effective_ocean_wind_wave_strength(cfg)
+    smoothness = float(np.clip(getattr(cfg, "ocean_smoothness", 0.0), 0.0, 1.0))
+    chop = float(np.clip(getattr(cfg, "ocean_chop_sharpness", 0.0), 0.0, 1.0))
+    current_strength = float(np.clip(getattr(cfg, "ocean_current_streak_strength", 0.0), 0.0, 1.0))
+    breaker_strength = float(np.clip(getattr(cfg, "ocean_coastal_breaker_strength", 0.0), 0.0, 1.0))
+    foam_amount = float(np.clip(getattr(cfg, "ocean_foam_whitecap_amount", 0.0), 0.0, 1.0))
+    water_mask = (~land).astype(np.float32)
+    zeros = np.zeros_like(ocean_depth, dtype=np.float32)
+    if not np.any(~land):
+        return {"ripple": zeros, "current_streaks": zeros, "breakers": zeros, "foam": zeros}
 
     scale = float(np.clip(cfg.ocean_ripple_scale, 8.0, 260.0))
     detail = int(np.clip(round(cfg.ocean_ripple_detail), 1, 6))
     roughness = float(np.clip(cfg.ocean_ripple_roughness, 0.25, 0.85))
+    swell_scale = float(np.clip(getattr(cfg, "ocean_swell_scale", 1.0), 0.25, 4.0))
     rng = np.random.default_rng(int(cfg.seed) + 76423)
     waves = np.zeros_like(ocean_depth, dtype=np.float32)
     total_weight = 0.0
@@ -4482,13 +4517,55 @@ def build_ocean_ripple_field(cfg, x, y, z, land, ocean_depth, polar_ice):
         total_weight += weight
     waves /= max(total_weight, 1e-6)
 
+    swell = np.zeros_like(ocean_depth, dtype=np.float32)
+    swell_weight = 0.0
+    for index, weight in enumerate((0.70, 0.30)):
+        direction = rng.normal(size=3).astype(np.float32)
+        direction /= max(1e-6, float(np.linalg.norm(direction)))
+        phase = float(rng.uniform(0.0, math.tau))
+        frequency = (14.0 / swell_scale) * (1.0 + index * 0.42)
+        plane = x * direction[0] + y * direction[1] + z * direction[2]
+        swell += np.sin(plane * frequency + phase).astype(np.float32) * weight
+        swell_weight += weight
+    swell /= max(swell_weight, 1e-6)
+
     broad_breakup = (fbm_3d(x, y, z, max(1.0, scale * 0.28), detail, roughness, cfg.seed + 76511) - 0.5) * 2.0
     fine_breakup = (fbm_3d(x, y, z, max(1.0, scale * 0.82), max(1, detail - 1), 0.46, cfg.seed + 76537) - 0.5) * 2.0
-    ripple = waves * 0.74 + broad_breakup * 0.18 + fine_breakup * 0.08
-    water_mask = (~land).astype(np.float32)
+    ripple = swell * 0.38 + waves * 0.50 + broad_breakup * 0.08 + fine_breakup * (0.04 + chop * 0.08)
+    if chop > 0.0:
+        choppy = np.sign(ripple) * np.power(np.abs(np.clip(ripple, -1.0, 1.0)), 1.0 / (1.0 + chop * 1.35))
+        ripple = lerp(ripple, choppy, chop)
     depth_fade = smoothstep(0.32, 0.88, ocean_depth)
     ice_fade = 1.0 - smoothstep(0.18, 0.82, polar_ice)
-    return (ripple * water_mask * depth_fade * ice_fade).astype(np.float32)
+    energy = wind_strength * (1.0 - smoothness * 0.82)
+    ripple = (ripple * water_mask * depth_fade * ice_fade * energy).astype(np.float32)
+
+    streak_direction = rng.normal(size=3).astype(np.float32)
+    streak_direction /= max(1e-6, float(np.linalg.norm(streak_direction)))
+    streak_plane = x * streak_direction[0] + y * streak_direction[1] + z * streak_direction[2]
+    streak_warp = fbm_3d(x, y, z, 4.5, 3, 0.54, cfg.seed + 76613)
+    streak_bands = (np.sin(streak_plane * 34.0 + streak_warp * 5.0) + 1.0) * 0.5
+    streak_noise = fbm_3d(x, y, z, 18.0, 3, 0.52, cfg.seed + 76631)
+    current_streaks = smoothstep(0.58, 0.92, streak_bands * 0.68 + streak_noise * 0.32)
+    current_streaks = (current_streaks * water_mask * depth_fade * ice_fade * current_strength).astype(np.float32)
+
+    if shelf is None:
+        shelf = zeros
+    if shoreline is None:
+        shoreline = zeros
+    breaker_noise = fbm_3d(x, y, z, 80.0, 3, 0.50, cfg.seed + 76657)
+    breaker_zone = np.clip(np.asarray(shelf, dtype=np.float32) * 0.82 + np.asarray(shoreline, dtype=np.float32) * 0.34, 0.0, 1.0)
+    breakers = smoothstep(0.22, 0.88, breaker_zone) * smoothstep(0.46, 0.84, breaker_noise)
+    breakers = (breakers * water_mask * ice_fade * breaker_strength).astype(np.float32)
+
+    crest = smoothstep(0.42, 0.96, np.abs(ripple) * (1.55 + chop * 1.65) + current_streaks * 0.50 + breakers * 0.86)
+    foam = np.clip(crest * foam_amount + breakers * breaker_strength * 0.70, 0.0, 1.0)
+    foam = (foam * water_mask * ice_fade).astype(np.float32)
+    return {"ripple": ripple, "current_streaks": current_streaks, "breakers": breakers, "foam": foam}
+
+
+def build_ocean_ripple_field(cfg, x, y, z, land, ocean_depth, polar_ice):
+    return build_ocean_geometry_fields(cfg, x, y, z, land, ocean_depth, polar_ice)["ripple"]
 
 
 def render_globe_preview(color, height_map, out_path, size=900):
@@ -4632,6 +4709,7 @@ def build_maps_from_vectors(
     normal_height = None
     roughness = None
     ocean_ripple_field = None
+    ocean_geometry_fields = None
     if needs_color:
         colors = resolve_planet_colors(cfg)
         color = np.zeros((map_height, map_width, 3), dtype=np.float32)
@@ -4968,6 +5046,31 @@ def build_maps_from_vectors(
             shelf_layer_mask = np.clip(shallow_tint_weight * shelf_color_strength, 0.0, 1.0)
             shelf_layer_mask = np.where(~land, shelf_layer_mask, 0.0)
             color = color_blend(color, shelf_layer_color, shelf_layer_mask)
+        open_ocean_mask = np.where(~land, 1.0 - np.clip(polar_ice_color_mask, 0.0, 1.0), 0.0)
+        smoothness = float(np.clip(cfg.ocean_smoothness, 0.0, 1.0))
+        if smoothness > 0.0:
+            smooth_color = rgb_from_hex(cfg.ocean_base_color)
+            color = color_blend(color, smooth_color, open_ocean_mask * smoothness * 0.38)
+        needs_ocean_geometry_color = (
+            cfg.ocean_foam_whitecap_amount > 0.0
+            or cfg.ocean_current_streak_strength > 0.0
+            or cfg.ocean_coastal_breaker_strength > 0.0
+        )
+        if needs_ocean_geometry_color:
+            if ocean_geometry_fields is None:
+                ocean_geometry_fields = build_ocean_geometry_fields(cfg, x, y, z, land, ocean_depth, polar_ice, shoreline, shelf)
+            current_streaks = ocean_geometry_fields["current_streaks"]
+            breakers = ocean_geometry_fields["breakers"]
+            foam = ocean_geometry_fields["foam"]
+            if cfg.ocean_current_streak_strength > 0.0:
+                streak_highlight = np.clip(color * 1.10 + np.array([6, 12, 14], dtype=np.float32), 0.0, 255.0)
+                color = color_blend(color, streak_highlight, np.clip(current_streaks * 0.32, 0.0, 0.36))
+            if cfg.ocean_coastal_breaker_strength > 0.0:
+                breaker_color = np.array([210, 238, 232], dtype=np.float32)
+                color = color_blend(color, breaker_color, np.clip(breakers * 0.62, 0.0, 0.72))
+            if cfg.ocean_foam_whitecap_amount > 0.0:
+                foam_color = np.array([235, 244, 238], dtype=np.float32)
+                color = color_blend(color, foam_color, np.clip(foam * 0.76, 0.0, 0.86))
         if family_masks["family"] == "clouded_greenhouse":
             haze_color = np.array([222, 196, 126], dtype=np.float32)
             haze_strength = np.clip(build_atmosphere_haze_map(cfg, lat, cloud_mask) * 0.26, 0.0, 0.32)
@@ -5113,11 +5216,11 @@ def build_maps_from_vectors(
             height += ejecta * crater_rim_height * 0.12
         raw_height = height
         normal_height = raw_height
-        if cfg.ocean_ripple_strength > 0.0:
-            ocean_ripple_field = build_ocean_ripple_field(cfg, x, y, z, land, ocean_depth, polar_ice)
-            normal_height = raw_height + ocean_ripple_field * (
-                float(np.clip(cfg.ocean_ripple_strength, 0.0, 1.0)) * OCEAN_RIPPLE_HEIGHT_AMPLITUDE
-            )
+        if effective_ocean_wind_wave_strength(cfg) > 0.0:
+            if ocean_geometry_fields is None:
+                ocean_geometry_fields = build_ocean_geometry_fields(cfg, x, y, z, land, ocean_depth, polar_ice, shoreline, shelf)
+            ocean_ripple_field = ocean_geometry_fields["ripple"]
+            normal_height = raw_height + ocean_ripple_field * OCEAN_RIPPLE_HEIGHT_AMPLITUDE
         height = normalize01(raw_height, height_range)
 
     if stats_only and stats <= {"height"}:
@@ -5139,7 +5242,8 @@ def build_maps_from_vectors(
         return maps
 
     if needs_roughness:
-        roughness = np.where(land, 0.72, 0.24)
+        ocean_smoothness = float(np.clip(cfg.ocean_smoothness, 0.0, 1.0))
+        roughness = np.where(land, 0.72, 0.24 - ocean_smoothness * 0.12)
         roughness = roughness + range_uplift * 0.16 + crest_mask * 0.18 + peak_mask * 0.32 + np.abs(craggy_relief) * 0.14 + plate_boundary * 0.10 + erosion_valleys * 0.12 - shelf * 0.07
         roughness = roughness + polar_ice * (0.06 + ice_solidity * 0.12 + ice_texture * 0.16)
         roughness = roughness + family_masks["regolith"] * 0.10
@@ -5163,10 +5267,19 @@ def build_maps_from_vectors(
                 - crater_layers["floor_dust"] * 0.12
                 - crater_layers["basin"] * 0.06
             )
-        if cfg.ocean_ripple_strength > 0.0:
-            if ocean_ripple_field is None:
-                ocean_ripple_field = build_ocean_ripple_field(cfg, x, y, z, land, ocean_depth, polar_ice)
-            roughness += np.abs(ocean_ripple_field) * float(np.clip(cfg.ocean_ripple_strength, 0.0, 1.0)) * 0.035
+        if (
+            effective_ocean_wind_wave_strength(cfg) > 0.0
+            or cfg.ocean_foam_whitecap_amount > 0.0
+            or cfg.ocean_current_streak_strength > 0.0
+            or cfg.ocean_coastal_breaker_strength > 0.0
+        ):
+            if ocean_geometry_fields is None:
+                ocean_geometry_fields = build_ocean_geometry_fields(cfg, x, y, z, land, ocean_depth, polar_ice, shoreline, shelf)
+            ocean_ripple_field = ocean_geometry_fields["ripple"]
+            roughness += np.abs(ocean_ripple_field) * (0.035 + float(np.clip(cfg.ocean_chop_sharpness, 0.0, 1.0)) * 0.035)
+            roughness += ocean_geometry_fields["current_streaks"] * 0.045
+            roughness += ocean_geometry_fields["breakers"] * 0.12
+            roughness += ocean_geometry_fields["foam"] * 0.18
         roughness = np.clip(roughness, 0.0, 1.0)
 
     maps = {}
@@ -5177,13 +5290,13 @@ def build_maps_from_vectors(
     if "normal" in selected_maps:
         normal_source = normal_height if normal_height is not None else height
         maps["normal"] = normal_from_height(normal_source, strength=7.5, wrap_x=normal_wrap_x)
-        if cfg.ocean_ripple_strength > 0.0 and raw_height is not None and normal_height is not raw_height:
+        if effective_ocean_wind_wave_strength(cfg) > 0.0 and raw_height is not None and normal_height is not raw_height:
             base_normal = normal_from_height(raw_height, strength=7.5, wrap_x=normal_wrap_x)
             maps["normal"] = np.where(land[..., None], base_normal, maps["normal"])
     if "roughness" in selected_maps:
         maps["roughness"] = roughness
-    if "land_mask" in selected_maps:
-        maps["land_mask"] = land.astype(np.float32)
+    if "land_ocean_mask" in selected_maps:
+        maps["land_ocean_mask"] = land.astype(np.float32)
     if "shoreline_mask" in selected_maps:
         maps["shoreline_mask"] = shoreline
     if "ocean_depth" in selected_maps:
@@ -5443,7 +5556,7 @@ TEXTURE_MAP_NAMES = (
     "height",
     "normal",
     "roughness",
-    "land_mask",
+    "land_ocean_mask",
     "shoreline_mask",
     "ocean_depth",
     "cloud_mask",
@@ -5457,13 +5570,21 @@ TEXTURE_MAP_NAMES = (
 )
 
 QUAD_SPHERE_MAP_NAMES = TEXTURE_MAP_NAMES
+TEXTURE_MAP_ALIASES = {
+    "land_mask": "land_ocean_mask",
+}
 
 CLOUD_16BIT_MAPS = {"cloud_mask", "cloud_shadow", "nebula_alpha", "nebula_stars", "atmosphere_haze", "emissive_heat"}
 PNG_16BIT_MAPS = CLOUD_16BIT_MAPS | {"height", "normal"}
 
 
 def png_bit_depth_for_map(map_name):
+    map_name = canonical_texture_map_name(map_name)
     return 16 if map_name in PNG_16BIT_MAPS else 8
+
+
+def canonical_texture_map_name(map_name):
+    return TEXTURE_MAP_ALIASES.get(str(map_name), str(map_name))
 
 
 def sanitized_asset_name(value, fallback="planet"):
@@ -5473,6 +5594,7 @@ def sanitized_asset_name(value, fallback="planet"):
 
 
 def texture_map_filename(map_name, map_type="equirect", width=None, height=None, bit_depth=None, planet_name=None, face_id=None):
+    map_name = canonical_texture_map_name(map_name)
     if not planet_name:
         if map_type == "cubemap_cross":
             return f"{map_name}_cubemap_cross.png"
@@ -5498,7 +5620,8 @@ def texture_map_path(out_dir, map_name, map_type="equirect", width=None, height=
 def selected_texture_maps(map_names=None):
     if map_names is None:
         return TEXTURE_MAP_NAMES
-    selected = tuple(name for name in TEXTURE_MAP_NAMES if name in set(map_names))
+    requested = {canonical_texture_map_name(name) for name in map_names}
+    selected = tuple(name for name in TEXTURE_MAP_NAMES if name in requested)
     if not selected:
         raise ValueError("Choose at least one texture map to save.")
     return selected
@@ -5523,7 +5646,9 @@ def save_map_set(out_dir, maps, map_names=None, planet_name=None, map_type="equi
     saved = {}
 
     def path_for(map_name):
-        arr = maps[map_name]
+        arr = maps.get(map_name)
+        if arr is None and map_name == "land_ocean_mask":
+            arr = maps["land_mask"]
         height, width = arr.shape[:2]
         return texture_map_path(out_dir, map_name, map_type, width, height, planet_name=planet_name, face_id=face_id)
 
@@ -5539,9 +5664,9 @@ def save_map_set(out_dir, maps, map_names=None, planet_name=None, map_type="equi
     if "roughness" in selected:
         saved["roughness"] = path_for("roughness")
         save_gray(saved["roughness"], maps["roughness"])
-    if "land_mask" in selected:
-        saved["land_mask"] = path_for("land_mask")
-        save_gray(saved["land_mask"], maps["land_mask"])
+    if "land_ocean_mask" in selected:
+        saved["land_ocean_mask"] = path_for("land_ocean_mask")
+        save_gray(saved["land_ocean_mask"], maps.get("land_ocean_mask", maps.get("land_mask")))
     if "shoreline_mask" in selected:
         saved["shoreline_mask"] = path_for("shoreline_mask")
         save_gray(saved["shoreline_mask"], maps["shoreline_mask"])
@@ -5991,7 +6116,7 @@ def quad_sphere_low_memory_map_groups(selected_maps):
         ("color",),
         ("height", "normal"),
         ("roughness",),
-        ("land_mask",),
+        ("land_ocean_mask",),
         ("shoreline_mask",),
         ("ocean_depth",),
         ("cloud_mask", "cloud_shadow"),
@@ -6177,7 +6302,7 @@ def save_quad_sphere_height_normal_faces_cached(out_dir, cfg, face_size, selecte
             maps["height"] = normalize01(raw_height, height_range)
         if "normal" in selected_maps:
             maps["normal"] = normal_from_height(normal_heights[face], strength=7.5, wrap_x=False)
-            if cfg.ocean_ripple_strength > 0.0 and normal_heights[face] is not raw_height:
+            if effective_ocean_wind_wave_strength(cfg) > 0.0 and normal_heights[face] is not raw_height:
                 base_normal = normal_from_height(raw_height, strength=7.5, wrap_x=False)
                 maps["normal"] = np.where(land_masks[face][..., None], base_normal, maps["normal"])
         save_map_set(face_dir, maps, selected_maps, planet_name=planet_name, map_type="cubemap", face_id=face)
@@ -6461,7 +6586,7 @@ def build_arg_parser():
     parser.add_argument(
         "--texture-maps",
         nargs="+",
-        choices=TEXTURE_MAP_NAMES,
+        choices=TEXTURE_MAP_NAMES + tuple(TEXTURE_MAP_ALIASES),
         default=None,
         metavar="MAP",
         help="Texture maps to save. Omit to save all maps.",

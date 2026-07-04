@@ -77,7 +77,7 @@ Depending on the exact product variation, the following maps may be included.
 | `height.png` | 16-bit grayscale elevation | Bump, displacement, parallax | Non-Color / Linear |
 | `normal.png` | 16-bit RGB normal map derived from terrain | Surface detail normals | Non-Color / Normal Map |
 | `roughness.png` | Grayscale material roughness | Controls shine/gloss | Non-Color / Linear |
-| `land_mask.png` | White land, black ocean | Land/ocean material blending | Non-Color / Linear |
+| `land_ocean_mask.png` | Land/ocean separation mask. White land, black ocean | Land/ocean material blending | Non-Color / Linear |
 | `shoreline_mask.png` | Shoreline and beach influence | Beach tint, wet sand, foam, coastal detail | Non-Color / Linear |
 | `ocean_depth.png` | Grayscale ocean depth | Water color, transparency, shallow/deep blending | Non-Color / Linear |
 | `cloud_mask.png` | 16-bit grayscale cloud opacity | Separate cloud sphere alpha/opacity | Non-Color / Linear |
@@ -178,7 +178,7 @@ Recommended import settings:
 | `normal.png` | Normal map compression/texture type |
 | `roughness.png` | sRGB off, mask/grayscale data |
 | `height.png` | sRGB off, grayscale data |
-| `land_mask.png`, `shoreline_mask.png`, `ocean_depth.png` | sRGB off, mask data |
+| `land_ocean_mask.png`, `shoreline_mask.png`, `ocean_depth.png` | sRGB off, mask data |
 | `cloud_mask.png`, `cloud_shadow.png` | sRGB off, mask data |
 | `city_lights.png` | sRGB on, emission color |
 
@@ -348,7 +348,7 @@ For intermediate users:
 
 1. Use the 4096 x 2048 equirectangular maps for hero renders.
 2. Use cube/quad-sphere maps for close-up planet assets or custom game shaders.
-3. Use `land_mask.png`, `shoreline_mask.png`, and `ocean_depth.png` to build more advanced ocean, beach, and terrain materials.
+3. Use `land_ocean_mask.png`, `shoreline_mask.png`, and `ocean_depth.png` to build more advanced ocean, beach, and terrain materials.
 4. Use `cloud_shadow.png` to fake consistent surface shadows below clouds.
 5. Use `emissive_heat.png` and `city_lights.png` as separate emission layers instead of baking them into the base color.
 
