@@ -309,7 +309,7 @@ Flip the sphere normals or check whether the texture is being viewed from inside
 
 ### The Normal Map Looks Wrong
 
-Make sure `normal.png` is imported as Non-Color/Linear data or as a Normal Map texture type. Do not import it as sRGB color. The exported normal map is OpenGL-style green-up and uses the standard image tangent basis, with red following horizontal texture slope and green following vertical texture slope.
+Make sure `normal.png` is imported as Non-Color/Linear data or as a Normal Map texture type. Do not import it as sRGB color. The exported normal map is OpenGL-style green-up and uses a clockwise-rotated planet tangent basis so relief shadows align with the planet terminator.
 
 If your software expects DirectX-style normal maps and bumps look inverted, invert the green channel in your software's normal map settings.
 

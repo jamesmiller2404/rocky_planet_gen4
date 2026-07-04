@@ -40,6 +40,7 @@ import math
 import os
 import pstats
 import struct
+import tempfile
 import zlib
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import asdict, dataclass
@@ -2031,23 +2032,71 @@ class PlanetConfig:
 
 
 def smoothstep(edge0, edge1, x):
-    x = np.clip((x - edge0) / max(edge1 - edge0, 1e-6), 0.0, 1.0)
-    return x * x * (3.0 - 2.0 * x)
+    source = np.asarray(x)
+    dtype = np.float32 if np.issubdtype(source.dtype, np.floating) else None
+    x = np.clip((source - edge0) / max(edge1 - edge0, 1e-6), 0.0, 1.0)
+    result = x * x * (3.0 - 2.0 * x)
+    return result.astype(dtype, copy=False) if dtype is not None else result
 
 
 def lerp(a, b, t):
-    return a * (1.0 - t) + b * t
+    result = a * (1.0 - t) + b * t
+    if isinstance(result, np.ndarray) and np.issubdtype(result.dtype, np.floating):
+        return result.astype(np.float32, copy=False)
+    return result
 
 
 def normalize01(a, value_range=None):
+    a = np.asarray(a, dtype=np.float32)
     if value_range is None:
         amin = float(np.min(a))
         amax = float(np.max(a))
     else:
         amin, amax = value_range
     if amax - amin < 1e-9:
-        return np.zeros_like(a)
-    return (a - amin) / (amax - amin)
+        return np.zeros_like(a, dtype=np.float32)
+    return ((a - np.float32(amin)) / np.float32(amax - amin)).astype(np.float32, copy=False)
+
+
+def approximate_distance_from_mask(mask, max_distance, wrap_x=False):
+    if not np.any(mask):
+        return np.full(mask.shape, np.inf, dtype=np.float32)
+    max_steps = max(1, int(math.ceil(float(max_distance))))
+    source = np.concatenate([mask, mask, mask], axis=1) if wrap_x else np.asarray(mask, dtype=bool)
+    distances = np.full(source.shape, np.float32(max_steps + 1), dtype=np.float32)
+    reached = source.astype(bool, copy=True)
+    distances[reached] = 0.0
+    structure = np.ones((3, 3), dtype=bool)
+    for step in range(1, max_steps + 1):
+        grown = ndimage.binary_dilation(reached, structure=structure)
+        new_pixels = grown & ~reached
+        if not np.any(new_pixels):
+            break
+        distances[new_pixels] = np.float32(step)
+        reached = grown
+    if wrap_x:
+        width = mask.shape[1]
+        distances = distances[:, width : width * 2]
+    return distances.astype(np.float32, copy=False)
+
+
+def safe_distance_from_mask(mask, wrap_x=False, max_distance=None):
+    if not np.any(mask):
+        return np.full(mask.shape, np.inf, dtype=np.float32)
+    large_limited = max_distance is not None and mask.size >= 2048 * 2048
+    if large_limited:
+        return approximate_distance_from_mask(mask, max_distance, wrap_x=wrap_x)
+    try:
+        if wrap_x:
+            tiled = np.concatenate([mask, mask, mask], axis=1)
+            distances = ndimage.distance_transform_edt(~tiled)
+            width = mask.shape[1]
+            return distances[:, width : width * 2].astype(np.float32)
+        return ndimage.distance_transform_edt(~mask).astype(np.float32)
+    except MemoryError:
+        if max_distance is None:
+            raise
+        return approximate_distance_from_mask(mask, max_distance, wrap_x=wrap_x)
 
 
 def build_mountain_range_bands(x, y, z, cfg):
@@ -2229,8 +2278,8 @@ def build_summit_spike_field(cfg, x, y, z, mountain_mask, plate_boundary):
     local_max = ridge_source_raw >= ndimage.maximum_filter(ridge_source_raw, size=(9, 9), mode=("nearest", "wrap"))
     summit_seeds = local_max & highland & (ridge_source_raw >= crest_threshold)
     if np.any(summit_seeds):
-        distance = ndimage.distance_transform_edt(~summit_seeds).astype(np.float32)
         radius = max(1.8, min(map_height, map_width) * (0.006 + prominence * 0.006) * (1.08 - sharpness * 0.30))
+        distance = safe_distance_from_mask(summit_seeds, max_distance=radius)
         peak_cones = np.power(np.clip(1.0 - distance / radius, 0.0, 1.0), 1.9 + sharpness * 4.1)
     else:
         peak_cones = np.zeros_like(x, dtype=np.float32)
@@ -3666,14 +3715,7 @@ def build_crater_field(cfg, x, y, z, land):
 
 
 def distance_from_mask(mask, wrap_x=False):
-    if not np.any(mask):
-        return np.full(mask.shape, np.inf, dtype=np.float32)
-    if wrap_x:
-        tiled = np.concatenate([mask, mask, mask], axis=1)
-        distances = ndimage.distance_transform_edt(~tiled)
-        width = mask.shape[1]
-        return distances[:, width : width * 2].astype(np.float32)
-    return ndimage.distance_transform_edt(~mask).astype(np.float32)
+    return safe_distance_from_mask(mask, wrap_x=wrap_x)
 
 
 def filter_land_components(mask, min_area_fraction, max_area_fraction):
@@ -4453,6 +4495,8 @@ def read_unfiltered_png16(path):
 
 
 def normal_from_height(height, strength=5.0, wrap_x=True):
+    height = np.asarray(height, dtype=np.float32)
+    strength = np.float32(strength)
     if wrap_x:
         dx = np.roll(height, -1, axis=1) - np.roll(height, 1, axis=1)
     else:
@@ -4461,15 +4505,14 @@ def normal_from_height(height, strength=5.0, wrap_x=True):
 
     padded_y = np.pad(height, ((1, 1), (0, 0)), mode="edge")
     dy = padded_y[2:, :] - padded_y[:-2, :]
-    # Standard tangent-space basis: red follows left/right texture slope and
-    # green follows up/down texture slope. OpenGL green-up uses the image-space
-    # vertical derivative directly because image rows increase downward.
-    nx = -dx * strength
-    ny = dy * strength
-    nz = np.ones_like(height)
+    # Planet tangent-frame basis: rotate the texture-space slopes clockwise so
+    # relief shadows track the globe terminator instead of sitting 90 degrees off.
+    nx = dy * strength
+    ny = dx * strength
+    nz = np.ones(height.shape, dtype=np.float32)
     length = np.sqrt(nx * nx + ny * ny + nz * nz)
     normal = np.stack((nx / length, ny / length, nz / length), axis=2)
-    return (normal * 0.5 + 0.5) * 255.0
+    return ((normal * np.float32(0.5) + np.float32(0.5)) * np.float32(255.0)).astype(np.float32, copy=False)
 
 
 OCEAN_RIPPLE_HEIGHT_AMPLITUDE = 0.018
@@ -5641,6 +5684,22 @@ def resolve_quad_workers(value=None):
     return min(workers, len(QUAD_SPHERE_FACES))
 
 
+def resolve_quad_height_normal_workers(face_size, selected_maps, quad_workers=1):
+    workers = resolve_quad_workers(quad_workers)
+    selected_set = set(selected_texture_maps(selected_maps))
+    if not selected_set <= {"height", "normal"}:
+        return workers
+    override = os.environ.get("PLANET_QUAD_HEIGHT_NORMAL_WORKERS")
+    if override is not None and override.strip():
+        return resolve_quad_workers(override)
+    face_size = int(face_size)
+    if face_size >= 4096:
+        return min(workers, 1)
+    if face_size >= 2048:
+        return min(workers, 2)
+    return workers
+
+
 def save_map_set(out_dir, maps, map_names=None, planet_name=None, map_type="equirect", face_id=None):
     selected = selected_texture_maps(map_names)
     saved = {}
@@ -6167,8 +6226,30 @@ def resolve_quad_raw_height_cache_max_face_size():
     return max(0, limit)
 
 
+def resolve_quad_raw_height_cache_parent(out_dir, cache_dir=None):
+    value = cache_dir if cache_dir is not None else os.environ.get("PLANET_QUAD_RAW_HEIGHT_CACHE_DIR")
+    if value is None or not value.strip():
+        return Path(out_dir)
+    return Path(value).expanduser()
+
+
 def should_cache_quad_sphere_raw_height(face_size):
     return int(face_size) <= resolve_quad_raw_height_cache_max_face_size()
+
+
+def write_disk_array(cache_dir, face, name, arr, dtype):
+    dtype = np.dtype(dtype)
+    source = np.asarray(arr)
+    path = Path(cache_dir) / f"{face}_{name}.dat"
+    cached = np.memmap(path, dtype=dtype, mode="w+", shape=source.shape)
+    cached[:] = source.astype(dtype, copy=False)
+    cached.flush()
+    del cached
+    return {"path": path, "shape": source.shape, "dtype": dtype.str}
+
+
+def read_disk_array(spec, mode="r"):
+    return np.memmap(spec["path"], dtype=np.dtype(spec["dtype"]), mode=mode, shape=tuple(spec["shape"]))
 
 
 def iter_quad_sphere_face_tiles(face, face_size, tile_rows):
@@ -6266,55 +6347,62 @@ def compute_quad_sphere_land_threshold(cfg, face_size, selected_maps, quad_worke
     return histogram_quantile(land_hist, land_threshold_quantile(cfg))
 
 
-def save_quad_sphere_height_normal_faces_cached(out_dir, cfg, face_size, selected_maps, quad_workers=1, planet_name=None):
+def save_quad_sphere_height_normal_faces_cached(out_dir, cfg, face_size, selected_maps, quad_workers=1, planet_name=None, cache_dir=None):
     land_threshold = compute_quad_sphere_land_threshold(cfg, face_size, selected_maps, quad_workers=quad_workers)
     raw_heights = {}
     normal_heights = {}
     land_masks = {}
+    cache_parent = resolve_quad_raw_height_cache_parent(out_dir, cache_dir)
+    cache_parent.mkdir(parents=True, exist_ok=True)
     height_min = math.inf
     height_max = -math.inf
     stat_fields = ("height", "normal_height", "land_mask") if "normal" in selected_maps else ("height",)
-    for face, maps in iter_quad_sphere_face_pass(
-        cfg,
-        face_size,
-        selected_maps,
-        quad_workers=quad_workers,
-        land_threshold=land_threshold,
-        return_raw_stats=True,
-        stat_fields=stat_fields,
-    ):
-        raw_height = maps["_raw_height"].astype(np.float32, copy=False)
-        raw_heights[face] = raw_height
-        if "normal" in selected_maps:
-            normal_heights[face] = maps["_normal_height"].astype(np.float32, copy=False)
-            land_masks[face] = maps["_land_mask"].astype(bool, copy=False)
-        height_min = min(height_min, float(np.min(raw_height)))
-        height_max = max(height_max, float(np.max(raw_height)))
-        del maps
-    height_range = (height_min, height_max) if math.isfinite(height_min) else None
+    with tempfile.TemporaryDirectory(prefix="_quad_raw_height_cache_", dir=str(cache_parent)) as cache_dir:
+        for face, maps in iter_quad_sphere_face_pass(
+            cfg,
+            face_size,
+            selected_maps,
+            quad_workers=quad_workers,
+            land_threshold=land_threshold,
+            return_raw_stats=True,
+            stat_fields=stat_fields,
+        ):
+            raw_height = maps["_raw_height"].astype(np.float32, copy=False)
+            height_min = min(height_min, float(np.min(raw_height)))
+            height_max = max(height_max, float(np.max(raw_height)))
+            raw_heights[face] = write_disk_array(cache_dir, face, "raw_height", raw_height, np.float32)
+            if "normal" in selected_maps:
+                normal_heights[face] = write_disk_array(cache_dir, face, "normal_height", maps["_normal_height"], np.float32)
+                land_masks[face] = write_disk_array(cache_dir, face, "land_mask", maps["_land_mask"], np.bool_)
+            del maps, raw_height
+        height_range = (height_min, height_max) if math.isfinite(height_min) else None
 
-    for face in QUAD_SPHERE_FACES:
-        face_dir = out_dir / face
-        face_dir.mkdir(parents=True, exist_ok=True)
-        raw_height = raw_heights[face]
-        maps = {}
-        if "height" in selected_maps:
-            maps["height"] = normalize01(raw_height, height_range)
-        if "normal" in selected_maps:
-            maps["normal"] = normal_from_height(normal_heights[face], strength=7.5, wrap_x=False)
-            if effective_ocean_wind_wave_strength(cfg) > 0.0 and normal_heights[face] is not raw_height:
-                base_normal = normal_from_height(raw_height, strength=7.5, wrap_x=False)
-                maps["normal"] = np.where(land_masks[face][..., None], base_normal, maps["normal"])
-        save_map_set(face_dir, maps, selected_maps, planet_name=planet_name, map_type="cubemap", face_id=face)
-        del maps
+        for face in QUAD_SPHERE_FACES:
+            face_dir = out_dir / face
+            face_dir.mkdir(parents=True, exist_ok=True)
+            raw_height = read_disk_array(raw_heights[face])
+            maps = {}
+            if "height" in selected_maps:
+                maps["height"] = normalize01(raw_height, height_range)
+            if "normal" in selected_maps:
+                normal_height = read_disk_array(normal_heights[face])
+                maps["normal"] = normal_from_height(normal_height, strength=7.5, wrap_x=False)
+                if effective_ocean_wind_wave_strength(cfg) > 0.0:
+                    base_normal = normal_from_height(raw_height, strength=7.5, wrap_x=False)
+                    land_mask = read_disk_array(land_masks[face])
+                    maps["normal"] = np.where(land_mask[..., None], base_normal, maps["normal"])
+                    del base_normal, land_mask
+                del normal_height
+            save_map_set(face_dir, maps, selected_maps, planet_name=planet_name, map_type="cubemap", face_id=face)
+            del maps, raw_height
     raw_heights.clear()
     normal_heights.clear()
     land_masks.clear()
 
 
-def save_quad_sphere_maps_low_memory(out_dir, cfg, face_size, map_names=None, quad_workers=1, write_cubemap_crosses=None, planet_name=None):
+def save_quad_sphere_maps_low_memory(out_dir, cfg, face_size, map_names=None, quad_workers=1, write_cubemap_crosses=None, planet_name=None, cache_dir=None):
     selected_maps = selected_texture_maps(map_names)
-    resolved_quad_workers = resolve_quad_workers(quad_workers)
+    resolved_quad_workers = resolve_quad_height_normal_workers(face_size, selected_maps, quad_workers)
     if selected_maps == ("color",) and resolved_quad_workers == 1:
         save_quad_sphere_color_faces_tiled(out_dir, cfg, face_size, planet_name=planet_name)
         if write_cubemap_crosses is None:
@@ -6330,6 +6418,7 @@ def save_quad_sphere_maps_low_memory(out_dir, cfg, face_size, map_names=None, qu
             selected_maps,
             quad_workers=resolved_quad_workers,
             planet_name=planet_name,
+            cache_dir=cache_dir,
         )
         if write_cubemap_crosses is None:
             write_cubemap_crosses = should_write_quad_sphere_crosses(face_size)
@@ -6446,7 +6535,7 @@ def write_quad_sphere_manifest(out_dir, face_size, map_names=None, write_cubemap
             "space": "per-face tangent space",
             "channels": "16-bit RGB = XYZ remapped from -1..1 to 0..65535",
             "green_channel": "OpenGL / green-up in the planet tangent frame",
-            "tangent_frame": "standard image tangent basis: red follows horizontal texture slope, green follows vertical texture slope",
+            "tangent_frame": "clockwise-rotated planet tangent basis: red follows vertical texture slope, green follows horizontal texture slope so relief shadows align with the planet terminator",
         },
     }
     (out_dir / "quad_sphere_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")

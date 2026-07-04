@@ -36,6 +36,7 @@ from rocky_planet_gen import (
     build_maps,
     render_globe_preview,
     resolve_planet_colors,
+    resolve_quad_height_normal_workers,
     resolve_quad_workers,
     selected_texture_maps,
     save_map_set,
@@ -54,6 +55,8 @@ QUAD_WORKERS = resolve_quad_workers(os.environ.get("PLANET_QUAD_WORKERS"))
 OUTPUT_ROOT = Path("output")
 SAVED_CONFIG_ROOT = OUTPUT_ROOT / "saved_configs"
 UI_STATE_VERSION = 1
+CACHE_WARNING_RESERVE_BYTES = 2 * 1024**3
+CACHE_WARNING_DEFAULT_FACE_SIZE = int(os.environ.get("PLANET_QUAD_CACHE_WARNING_FACE_SIZE", "4096"))
 
 
 PARAM_GROUPS = [
@@ -684,6 +687,111 @@ def texture_maps_from_payload(payload: dict) -> tuple[str, ...]:
     return selected_texture_maps(requested)
 
 
+def cache_dir_from_payload(payload: dict) -> str:
+    return str(payload.get("cache_dir", "") or "").strip()
+
+
+def default_cache_dir() -> Path:
+    value = os.environ.get("PLANET_QUAD_RAW_HEIGHT_CACHE_DIR")
+    if value and value.strip():
+        return Path(value).expanduser()
+    return OUTPUT_ROOT
+
+
+def nearest_existing_path(path: Path) -> Path:
+    candidate = path.expanduser()
+    if not candidate.is_absolute():
+        candidate = Path.cwd() / candidate
+    while not candidate.exists() and candidate.parent != candidate:
+        candidate = candidate.parent
+    if not candidate.exists():
+        return Path.cwd()
+    return candidate
+
+
+def path_disk_usage(path: Path) -> shutil._ntuple_diskusage:
+    return shutil.disk_usage(nearest_existing_path(path))
+
+
+def estimate_quad_cache_bytes(face_size: int, texture_maps: tuple[str, ...]) -> int:
+    selected = set(texture_maps)
+    if not selected <= {"height", "normal"} or not selected.intersection({"height", "normal"}):
+        return 0
+    pixels = int(face_size) * int(face_size) * 6
+    total = pixels * 4
+    if "normal" in selected:
+        total += pixels * 4
+        total += pixels
+    return int(total)
+
+
+def cache_disk_status(cache_dir_text: str = "", face_size: int | None = None, texture_maps: tuple[str, ...] | None = None) -> dict:
+    cache_dir = Path(cache_dir_text).expanduser() if cache_dir_text else default_cache_dir()
+    if not cache_dir.is_absolute():
+        cache_dir = Path.cwd() / cache_dir
+    selected_maps = texture_maps or ("height", "normal")
+    estimated_bytes = estimate_quad_cache_bytes(int(face_size or CACHE_WARNING_DEFAULT_FACE_SIZE), selected_maps)
+    recommended_free = estimated_bytes + CACHE_WARNING_RESERVE_BYTES
+    try:
+        usage = path_disk_usage(cache_dir)
+        free = int(usage.free)
+        total = int(usage.total)
+        warning = estimated_bytes > 0 and free < recommended_free
+        message = ""
+        if warning:
+            message = (
+                "Cache disk space is low for this quad-sphere height/normal cache. "
+                "Choose another cache directory on a disk with more free space before saving."
+            )
+        return {
+            "path": str(cache_dir.resolve() if cache_dir.exists() else cache_dir),
+            "usage_path": str(nearest_existing_path(cache_dir).resolve()),
+            "free_bytes": free,
+            "total_bytes": total,
+            "estimated_cache_bytes": int(estimated_bytes),
+            "recommended_free_bytes": int(recommended_free),
+            "warning": bool(warning),
+            "message": message,
+        }
+    except OSError as exc:
+        return {
+            "path": str(cache_dir),
+            "usage_path": "",
+            "free_bytes": None,
+            "total_bytes": None,
+            "estimated_cache_bytes": int(estimated_bytes),
+            "recommended_free_bytes": int(recommended_free),
+            "warning": True,
+            "message": f"Unable to check cache disk space: {exc}. Choose another cache directory before saving large quad-sphere maps.",
+        }
+
+
+def windows_drive_entries() -> list[dict]:
+    drives = []
+    if os.name != "nt":
+        return drives
+    for code in range(ord("A"), ord("Z") + 1):
+        root = Path(f"{chr(code)}:\\")
+        if not root.exists():
+            continue
+        try:
+            usage = shutil.disk_usage(root)
+            free = int(usage.free)
+        except OSError:
+            free = None
+        drives.append(
+            {
+                "name": str(root),
+                "path": str(root),
+                "kind": "folder",
+                "created": None,
+                "modified": None,
+                "free_bytes": free,
+            }
+        )
+    return drives
+
+
 def metadata_for_config(
     cfg: PlanetConfig,
     projection: str,
@@ -735,6 +843,7 @@ def ui_state_from_payload(
         "projection": projection,
         "face_size": int(face_size if face_size is not None else payload.get("face_size", min(cfg.width, cfg.height))),
         "texture_maps": list(texture_maps),
+        "cache_dir": cache_dir_from_payload(payload),
         "params": params,
     }
 
@@ -860,15 +969,27 @@ def save_planet_output(payload: dict) -> tuple[Path, dict]:
         face_size = int(payload.get("face_size") or min(cfg.width, cfg.height))
         if face_size < 32:
             raise ValueError("Quad-sphere face size must be at least 32.")
+        cache_dir = cache_dir_from_payload(payload)
+        cache_status = cache_disk_status(cache_dir, face_size, texture_maps)
         quad_dir = out_dir / "quad_sphere"
         quad_dir.mkdir(parents=True, exist_ok=True)
         report["face_size"] = face_size
-        report["quad_workers"] = QUAD_WORKERS
+        report["requested_quad_workers"] = QUAD_WORKERS
+        report["quad_workers"] = resolve_quad_height_normal_workers(face_size, texture_maps, QUAD_WORKERS)
+        report["cache"] = cache_status
         timed_stage(
             report,
             "quad_sphere_maps",
             "Generate and write quad-sphere faces",
-            lambda: save_quad_sphere_maps_low_memory(quad_dir, cfg, face_size, texture_maps, quad_workers=QUAD_WORKERS, planet_name=planet_name),
+            lambda: save_quad_sphere_maps_low_memory(
+                quad_dir,
+                cfg,
+                face_size,
+                texture_maps,
+                quad_workers=QUAD_WORKERS,
+                planet_name=planet_name,
+                cache_dir=cache_dir or None,
+            ),
         )
         timed_stage(
             report,
@@ -1011,6 +1132,7 @@ def normalize_ui_state(data: dict) -> dict:
             "projection": "quad_sphere" if state.get("projection") == "quad_sphere" else "equirectangular",
             "face_size": max(32, int(state.get("face_size", data.get("quad_sphere_face_size", min(int(data.get("width", 2048)), int(data.get("height", 1024))))))),
             "texture_maps": validate_texture_maps(state.get("texture_maps", data.get("output_texture_maps", TEXTURE_MAP_NAMES))),
+            "cache_dir": str(state.get("cache_dir", data.get("cache_dir", "")) or ""),
             "params": params,
         }
 
@@ -1036,6 +1158,7 @@ def normalize_ui_state(data: dict) -> dict:
         "projection": "quad_sphere" if data.get("output_projection") == "quad_sphere" else "equirectangular",
         "face_size": max(32, int(data.get("quad_sphere_face_size", min(width, height)))),
         "texture_maps": validate_texture_maps(data.get("output_texture_maps", TEXTURE_MAP_NAMES)),
+        "cache_dir": str(data.get("cache_dir", "") or ""),
         "params": params,
     }
 
@@ -1158,6 +1281,75 @@ def file_browser_listing(path_text: str = "") -> dict:
     }
 
 
+def cache_browser_directory(path_text: str = "") -> Path | None:
+    if not path_text:
+        return None
+    path = Path(path_text).expanduser()
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    path = path.resolve()
+    if not path.exists():
+        path = nearest_existing_path(path).resolve()
+    if path.is_file():
+        path = path.parent
+    if not path.is_dir():
+        raise ValueError("Choose an existing cache folder.")
+    return path
+
+
+def cache_browser_listing(path_text: str = "") -> dict:
+    current = cache_browser_directory(path_text)
+    if current is None:
+        return {
+            "current_path": "",
+            "parent_path": "",
+            "items": windows_drive_entries()
+            or [
+                {
+                    "name": str(Path.cwd().anchor or Path("/")),
+                    "path": str(Path(Path.cwd().anchor or Path("/")).resolve()),
+                    "kind": "folder",
+                    "created": None,
+                    "modified": None,
+                    "free_bytes": None,
+                },
+                {
+                    "name": "Current project",
+                    "path": str(Path.cwd().resolve()),
+                    "kind": "folder",
+                    "created": None,
+                    "modified": None,
+                    "free_bytes": None,
+                },
+            ],
+        }
+    folders = []
+    for child in current.iterdir():
+        try:
+            if not child.is_dir():
+                continue
+            stat = child.stat()
+            folders.append(
+                {
+                    "name": child.name,
+                    "path": str(child.resolve()),
+                    "kind": "folder",
+                    "created": stat.st_ctime,
+                    "modified": stat.st_mtime,
+                    "free_bytes": None,
+                }
+            )
+        except OSError:
+            continue
+    folders.sort(key=lambda item: item["name"].lower())
+    parent = current.parent if current.parent != current else None
+    return {
+        "current_path": str(current),
+        "parent_path": str(parent) if parent else "",
+        "items": folders,
+    }
+
+
 def deletable_saved_folder(path_text: str) -> Path:
     path = Path(path_text)
     if not path.is_absolute():
@@ -1251,6 +1443,7 @@ def default_payload() -> dict:
             for key in LAND_PALETTES
         ],
         "land_palette_colors": land_palette_colors,
+        "cache": cache_disk_status(str(default_cache_dir())),
     }
 
 
@@ -1269,6 +1462,15 @@ class PlanetUiHandler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/file/browse":
                 query = parse_qs(parsed.query)
                 self.write_json(file_browser_listing(query.get("path", [""])[0]))
+            elif parsed.path == "/api/cache/browse":
+                query = parse_qs(parsed.query)
+                self.write_json(cache_browser_listing(query.get("path", [""])[0]))
+            elif parsed.path == "/api/cache/status":
+                query = parse_qs(parsed.query)
+                maps_text = query.get("texture_maps", ["height,normal"])[0]
+                maps = tuple(item for item in maps_text.split(",") if item)
+                face_size = int(query.get("face_size", [str(CACHE_WARNING_DEFAULT_FACE_SIZE)])[0] or CACHE_WARNING_DEFAULT_FACE_SIZE)
+                self.write_json(cache_disk_status(query.get("path", [""])[0], face_size, selected_texture_maps(maps or ("height", "normal"))))
             else:
                 self.send_error(HTTPStatus.NOT_FOUND)
         except Exception as exc:
@@ -1736,6 +1938,40 @@ img {
   color: var(--muted);
   font-size: 12px;
 }
+.path-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 74px;
+  gap: 8px;
+  margin: 10px 0;
+}
+.path-row input {
+  width: 100%;
+  min-height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #101115;
+  color: var(--text);
+  padding: 6px 8px;
+}
+.storage-status {
+  margin: 8px 0 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #11151d;
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.storage-status.warning {
+  border-color: rgba(232, 184, 90, 0.7);
+  color: var(--warn);
+  background: rgba(232, 184, 90, 0.08);
+}
+.storage-status.ok {
+  border-color: rgba(85, 183, 165, 0.6);
+  color: var(--accent);
+}
 .map-options {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1899,6 +2135,9 @@ img {
   margin: 10px 0 0;
   color: var(--muted);
   font-size: 12px;
+}
+.report-note.warning {
+  color: var(--warn);
 }
 .file-browser-modal {
   width: min(760px, 100%);
@@ -2096,6 +2335,12 @@ img {
         <label for="faceSize">Quad face size</label>
         <input id="faceSize" type="number" min="32" step="32" value="1024">
       </div>
+      <label for="cacheDir">Quad height/normal cache directory</label>
+      <div class="path-row">
+        <input id="cacheDir" type="text" placeholder="output">
+        <button id="browseCacheBtn" type="button">Browse</button>
+      </div>
+      <div id="cacheStatus" class="storage-status">Checking cache disk space...</div>
       <div class="row">
         <label for="planetName">Planet name / designation</label>
         <input id="planetName" type="text" placeholder="Verdaxis">
@@ -2207,6 +2452,24 @@ img {
     </div>
   </section>
 </div>
+<div class="modal-backdrop" id="cacheBrowserModal" hidden>
+  <section class="file-browser-modal" role="dialog" aria-modal="true" aria-labelledby="cacheBrowserTitle">
+    <div class="report-head">
+      <h2 id="cacheBrowserTitle">Choose Cache Folder</h2>
+      <button id="cacheBrowserClose" type="button">Close</button>
+    </div>
+    <div class="file-browser-path" id="cacheBrowserPath">Drives</div>
+    <div class="file-browser-toolbar">
+      <button id="cacheBrowserUp" type="button">Up</button>
+      <button id="cacheBrowserUseCurrent" class="primary" type="button">Use This Folder</button>
+    </div>
+    <div class="file-browser-list" id="cacheBrowserList"></div>
+    <div class="file-browser-actions">
+      <button id="cacheBrowserCancel" type="button">Cancel</button>
+      <button id="cacheBrowserChoose" class="primary" type="button" disabled>Use Selected</button>
+    </div>
+  </section>
+</div>
 <script>
 let schema = null;
 let debounceTimer = null;
@@ -2215,6 +2478,7 @@ let previewMaps = {};
 let texturePreviewToken = 0;
 let loadedPlanet = null;
 let fileBrowserState = {currentPath: "", parentPath: "", selectedPath: "", items: []};
+let cacheBrowserState = {currentPath: "", parentPath: "", selectedPath: "", items: []};
 
 const els = {
   preset: document.getElementById("preset"),
@@ -2227,6 +2491,9 @@ const els = {
   projection: document.getElementById("projection"),
   faceSizePreset: document.getElementById("faceSizePreset"),
   faceSize: document.getElementById("faceSize"),
+  cacheDir: document.getElementById("cacheDir"),
+  browseCacheBtn: document.getElementById("browseCacheBtn"),
+  cacheStatus: document.getElementById("cacheStatus"),
   planetName: document.getElementById("planetName"),
   outputName: document.getElementById("outputName"),
   status: document.getElementById("status"),
@@ -2265,6 +2532,14 @@ const els = {
   fileBrowserList: document.getElementById("fileBrowserList"),
   fileBrowserCancel: document.getElementById("fileBrowserCancel"),
   fileBrowserLoad: document.getElementById("fileBrowserLoad"),
+  cacheBrowserModal: document.getElementById("cacheBrowserModal"),
+  cacheBrowserClose: document.getElementById("cacheBrowserClose"),
+  cacheBrowserPath: document.getElementById("cacheBrowserPath"),
+  cacheBrowserUp: document.getElementById("cacheBrowserUp"),
+  cacheBrowserUseCurrent: document.getElementById("cacheBrowserUseCurrent"),
+  cacheBrowserList: document.getElementById("cacheBrowserList"),
+  cacheBrowserCancel: document.getElementById("cacheBrowserCancel"),
+  cacheBrowserChoose: document.getElementById("cacheBrowserChoose"),
   generationReportModal: document.getElementById("generationReportModal"),
   generationReportClose: document.getElementById("generationReportClose"),
   generationReportBody: document.getElementById("generationReportBody"),
@@ -2342,6 +2617,36 @@ function formatBytes(value) {
   return `${amount.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
 }
 
+function renderCacheStatus(status) {
+  if (!status) return;
+  els.cacheStatus.className = `storage-status ${status.warning ? "warning" : "ok"}`;
+  const free = formatBytes(status.free_bytes);
+  const estimated = formatBytes(status.estimated_cache_bytes || 0);
+  const target = status.path || "output";
+  if (status.warning) {
+    els.cacheStatus.textContent = `${status.message || "Cache disk space warning"} Target: ${target}. Free: ${free}. Estimated cache: ${estimated}.`;
+    return;
+  }
+  els.cacheStatus.textContent = `Cache target: ${target}. Free: ${free}. Estimated height/normal cache: ${estimated}.`;
+}
+
+async function refreshCacheStatus() {
+  if (!schema) return;
+  const maps = typeof getSelectedTextureMaps === "function" ? getSelectedTextureMaps() : ["height", "normal"];
+  const params = new URLSearchParams({
+    path: els.cacheDir.value || "",
+    face_size: String(parseInt(els.faceSize.value, 10) || 1024),
+    texture_maps: maps.join(","),
+  });
+  try {
+    const status = await getJson(`/api/cache/status?${params.toString()}`);
+    renderCacheStatus(status);
+  } catch (error) {
+    els.cacheStatus.className = "storage-status warning";
+    els.cacheStatus.textContent = error.message;
+  }
+}
+
 function formatMapName(name) {
   return String(name || "").replace(/_/g, " ");
 }
@@ -2406,6 +2711,13 @@ function showGenerationReport(report) {
   if (report.projection === "quad_sphere") {
     appendReportStat(summary, "Quad faces", `${report.face_count || 0} at ${report.face_size || "n/a"} px`);
     appendReportStat(summary, "Workers", String(report.quad_workers || "n/a"));
+    if (report.requested_quad_workers && report.requested_quad_workers !== report.quad_workers) {
+      appendReportStat(summary, "Requested workers", String(report.requested_quad_workers));
+    }
+    if (report.cache) {
+      appendReportStat(summary, "Cache free", formatBytes(report.cache.free_bytes));
+      appendReportStat(summary, "Cache estimate", formatBytes(report.cache.estimated_cache_bytes || 0));
+    }
   } else if (report.requested_size) {
     appendReportStat(summary, "Map size", `${report.requested_size.width} x ${report.requested_size.height}`);
   }
@@ -2456,6 +2768,9 @@ function showGenerationReport(report) {
 
   const reportPath = report.output_dir ? `${report.output_dir}\\generation_report.json` : "generation_report.json";
   body.appendChild(makeEl("p", "report-note", `Saved report: ${reportPath}`));
+  if (report.cache && report.cache.path) {
+    body.appendChild(makeEl("p", report.cache.warning ? "report-note warning" : "report-note", `Cache directory: ${report.cache.path}`));
+  }
   if (report.projection === "equirectangular") {
     body.appendChild(makeEl("p", "report-note", "Equirectangular map computation is a shared build stage; per-map time shows PNG write time."));
   }
@@ -2654,6 +2969,7 @@ function renderTextureMapOptions() {
     input.value = map.key;
     input.checked = true;
     input.dataset.textureMap = "1";
+    input.addEventListener("change", refreshCacheStatus);
 
     const span = document.createElement("span");
     span.textContent = map.label;
@@ -2728,6 +3044,7 @@ function setTextureMapSelection(checked) {
   for (const input of els.textureMapOptions.querySelectorAll("input[data-texture-map='1']")) {
     input.checked = selected ? selected.has(input.value) : checked;
   }
+  refreshCacheStatus();
 }
 
 function cloudOverlayEnabled() {
@@ -2877,6 +3194,7 @@ function getPayload() {
     height: parseInt(els.height.value, 10),
     projection: els.projection.value,
     face_size: parseInt(els.faceSize.value, 10),
+    cache_dir: els.cacheDir.value,
     planet_name: els.planetName.value,
     output_name: els.outputName.value,
     texture_maps: getSelectedTextureMaps(),
@@ -3012,6 +3330,79 @@ async function loadSelectedPresetJson() {
   els.loadPath.value = fileBrowserState.selectedPath;
   closeFileBrowser();
   await loadPresetJson();
+}
+
+function closeCacheBrowser() {
+  els.cacheBrowserModal.hidden = true;
+}
+
+async function openCacheBrowser() {
+  els.cacheBrowserModal.hidden = false;
+  await browseCacheFolders(els.cacheDir.value || "");
+}
+
+async function browseCacheFolders(path = "") {
+  setStatus("Browsing cache folders...", "busy");
+  try {
+    const data = await getJson(`/api/cache/browse?path=${encodeURIComponent(path || "")}`);
+    renderCacheBrowser(data);
+    setStatus("Choose a cache folder with enough free disk space.", "ok");
+  } catch (error) {
+    renderCacheBrowser({current_path: "", parent_path: "", items: []});
+    setStatus(error.message, "error");
+  }
+}
+
+function renderCacheBrowser(data) {
+  cacheBrowserState = {
+    currentPath: data.current_path || "",
+    parentPath: data.parent_path || "",
+    selectedPath: "",
+    items: data.items || [],
+  };
+  els.cacheBrowserPath.textContent = cacheBrowserState.currentPath || "Drives";
+  els.cacheBrowserUp.disabled = !cacheBrowserState.parentPath;
+  els.cacheBrowserUseCurrent.disabled = !cacheBrowserState.currentPath;
+  els.cacheBrowserChoose.disabled = true;
+  renderCacheBrowserItems();
+}
+
+function renderCacheBrowserItems() {
+  cacheBrowserState.selectedPath = "";
+  els.cacheBrowserChoose.disabled = true;
+  els.cacheBrowserList.replaceChildren();
+  if (!cacheBrowserState.items.length) {
+    els.cacheBrowserList.appendChild(makeEl("p", "hint", "No readable folders found here."));
+    return;
+  }
+  for (const item of cacheBrowserState.items) {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "file-browser-row";
+    row.dataset.path = item.path;
+    row.appendChild(makeEl("span", "file-browser-kind", "Folder"));
+    row.appendChild(makeEl("span", "file-browser-name", item.name));
+    const freeText = typeof item.free_bytes === "number" ? `free ${formatBytes(item.free_bytes)}` : "folder";
+    row.appendChild(makeEl("span", "file-browser-meta", freeText));
+    row.addEventListener("click", () => selectCacheFolder(row, item.path));
+    row.addEventListener("dblclick", () => browseCacheFolders(item.path));
+    els.cacheBrowserList.appendChild(row);
+  }
+}
+
+function selectCacheFolder(row, path) {
+  for (const item of els.cacheBrowserList.querySelectorAll(".file-browser-row")) {
+    item.classList.toggle("selected", item === row);
+  }
+  cacheBrowserState.selectedPath = path;
+  els.cacheBrowserChoose.disabled = false;
+}
+
+async function useCacheFolder(path) {
+  if (!path) return;
+  els.cacheDir.value = path;
+  closeCacheBrowser();
+  await refreshCacheStatus();
 }
 
 function setGlobeTextures(surfaceSrc, cloudSrc) {
@@ -3260,7 +3651,7 @@ async function renderPreview() {
 }
 
 function setButtons(disabled) {
-  for (const id of ["previewBtn", "saveBtn", "saveConfigBtn", "resetBtn", "randomSeedBtn", "loadBtn", "browsePresetBtn", "refreshSavedBtn"]) {
+  for (const id of ["previewBtn", "saveBtn", "saveConfigBtn", "resetBtn", "randomSeedBtn", "loadBtn", "browsePresetBtn", "browseCacheBtn", "refreshSavedBtn"]) {
     document.getElementById(id).disabled = disabled;
   }
 }
@@ -3417,6 +3808,9 @@ function applyLoadedState(data) {
   els.height.value = data.height;
   els.projection.value = data.projection === "quad_sphere" ? "quad_sphere" : "equirectangular";
   els.faceSize.value = data.face_size;
+  if (data.cache_dir) {
+    els.cacheDir.value = data.cache_dir;
+  }
   els.planetName.value = data.planet_name || "";
   els.outputName.value = "";
   if (data.params.land_palette) {
@@ -3432,6 +3826,7 @@ function applyLoadedState(data) {
       syncValue(key);
     }
   }
+  refreshCacheStatus();
 }
 
 async function loadSavedPlanet(path) {
@@ -3471,6 +3866,10 @@ async function boot() {
   schema = await response.json();
   renderControls();
   renderTextureMapOptions();
+  if (schema.cache && schema.cache.path) {
+    els.cacheDir.value = schema.cache.path;
+    renderCacheStatus(schema.cache);
+  }
   bindTexturePreviewControls();
   bindGlobeControls();
   bindTabs();
@@ -3483,8 +3882,16 @@ async function boot() {
   els.resolutionPreset.addEventListener("change", applyResolutionPreset);
   els.width.addEventListener("change", syncResolutionPreset);
   els.height.addEventListener("change", syncResolutionPreset);
-  els.faceSizePreset.addEventListener("change", applyFaceSizePreset);
-  els.faceSize.addEventListener("change", syncFaceSizePreset);
+  els.projection.addEventListener("change", refreshCacheStatus);
+  els.faceSizePreset.addEventListener("change", () => {
+    applyFaceSizePreset();
+    refreshCacheStatus();
+  });
+  els.faceSize.addEventListener("change", () => {
+    syncFaceSizePreset();
+    refreshCacheStatus();
+  });
+  els.cacheDir.addEventListener("change", refreshCacheStatus);
   els.selectAllMapsBtn.addEventListener("click", () => setTextureMapSelection(true));
   els.selectNoMapsBtn.addEventListener("click", () => setTextureMapSelection(false));
   document.getElementById("previewBtn").addEventListener("click", () => schedulePreview(0));
@@ -3498,6 +3905,7 @@ async function boot() {
   document.getElementById("refreshSavedBtn").addEventListener("click", () => refreshSavedPlanets(true));
   document.getElementById("loadBtn").addEventListener("click", loadPresetJson);
   els.browsePresetBtn.addEventListener("click", openFileBrowser);
+  els.browseCacheBtn.addEventListener("click", openCacheBrowser);
   els.fileBrowserUp.addEventListener("click", () => browsePresetFiles(fileBrowserState.parentPath));
   els.fileBrowserSort.addEventListener("change", renderFileBrowserItems);
   els.fileBrowserLoad.addEventListener("click", loadSelectedPresetJson);
@@ -3506,12 +3914,21 @@ async function boot() {
   els.fileBrowserModal.addEventListener("click", event => {
     if (event.target === els.fileBrowserModal) closeFileBrowser();
   });
+  els.cacheBrowserUp.addEventListener("click", () => browseCacheFolders(cacheBrowserState.parentPath));
+  els.cacheBrowserUseCurrent.addEventListener("click", () => useCacheFolder(cacheBrowserState.currentPath));
+  els.cacheBrowserChoose.addEventListener("click", () => useCacheFolder(cacheBrowserState.selectedPath));
+  els.cacheBrowserCancel.addEventListener("click", closeCacheBrowser);
+  els.cacheBrowserClose.addEventListener("click", closeCacheBrowser);
+  els.cacheBrowserModal.addEventListener("click", event => {
+    if (event.target === els.cacheBrowserModal) closeCacheBrowser();
+  });
   els.generationReportClose.addEventListener("click", closeGenerationReport);
   els.generationReportModal.addEventListener("click", event => {
     if (event.target === els.generationReportModal) closeGenerationReport();
   });
   document.addEventListener("keydown", event => {
     if (event.key === "Escape" && !els.fileBrowserModal.hidden) closeFileBrowser();
+    if (event.key === "Escape" && !els.cacheBrowserModal.hidden) closeCacheBrowser();
     if (event.key === "Escape" && !els.generationReportModal.hidden) closeGenerationReport();
   });
   refreshSavedPlanets(false);
@@ -3526,9 +3943,14 @@ boot().catch(error => setStatus(error.message, "error"));
 
 def main() -> None:
     warmup_numba()
+    cache_status = cache_disk_status(str(default_cache_dir()))
     server = ThreadingHTTPServer((HOST, PORT), PlanetUiHandler)
     print(f"Rocky Planet Texture UI running at http://{HOST}:{PORT}")
     print(f"Quad-sphere worker processes: {QUAD_WORKERS}")
+    print(f"Quad height/normal cache directory: {cache_status.get('path', 'output')}")
+    print(f"Cache disk free: {cache_status.get('free_bytes')} bytes")
+    if cache_status.get("warning"):
+        print(f"WARNING: {cache_status.get('message')}")
     print("Press Ctrl+C to stop the server.")
     server.serve_forever()
 
