@@ -1162,6 +1162,14 @@ PRESETS["tidally_locked_rocky"].update(plate_boundary_strength=0.78, peak_promin
 for values in PRESETS.values():
     values.setdefault("continent_domain_warp", 0.20)
     values.setdefault("continent_macro_shape", 0.20)
+    values.setdefault("color_brightness", 0.00)
+    values.setdefault("color_contrast", 1.00)
+    values.setdefault("color_saturation", 1.00)
+    values.setdefault("color_hue_shift", 0.00)
+    values.setdefault("ocean_ripple_strength", 0.00)
+    values.setdefault("ocean_ripple_scale", 95.00)
+    values.setdefault("ocean_ripple_detail", 3)
+    values.setdefault("ocean_ripple_roughness", 0.52)
 
 
 OCEAN_COLORS = {
@@ -1936,6 +1944,10 @@ class PlanetConfig:
     ocean_flat_color_strength: float
     ocean_shelf_color: str
     ocean_shelf_color_strength: float
+    ocean_ripple_strength: float
+    ocean_ripple_scale: float
+    ocean_ripple_detail: int
+    ocean_ripple_roughness: float
     ocean_color_variation: float
     ocean_shallow_tint_strength: float
     ocean_shelf_brightness: float
@@ -1952,6 +1964,10 @@ class PlanetConfig:
     ocean_colorizer_strength: float
     land_brightness: float
     land_contrast: float
+    color_brightness: float
+    color_contrast: float
+    color_saturation: float
+    color_hue_shift: float
     mineral_tint_strength: float
     wetland_tint_strength: float
     iron_oxide_tint_strength: float
@@ -4112,6 +4128,25 @@ def adjust_ocean_hsv_color(ocean_color, cfg):
     return np.clip(adjusted, 0.0, 255.0)
 
 
+def apply_global_color_correction(color, cfg):
+    brightness = float(np.clip(cfg.color_brightness, -0.5, 0.5))
+    contrast = float(np.clip(cfg.color_contrast, 0.5, 2.0))
+    saturation = float(np.clip(cfg.color_saturation, 0.0, 3.0))
+    hue_shift = float(np.clip(cfg.color_hue_shift, -0.5, 0.5))
+    if brightness == 0.0 and contrast == 1.0 and saturation == 1.0 and hue_shift == 0.0:
+        return np.clip(color, 0.0, 255.0)
+
+    adjusted = (color - 127.5) * contrast + 127.5
+    adjusted = adjusted + brightness * 255.0
+    adjusted = np.clip(adjusted, 0.0, 255.0)
+    if saturation != 1.0 or hue_shift != 0.0:
+        hsv = rgb_to_hsv_pixels(adjusted)
+        hsv[..., 0] = (hsv[..., 0] + hue_shift) % 1.0
+        hsv[..., 1] = np.clip(hsv[..., 1] * saturation, 0.0, 1.0)
+        adjusted = hsv_to_rgb_pixels(hsv)
+    return np.clip(adjusted, 0.0, 255.0)
+
+
 def build_continent_color_boundary_mask(cfg, x, y, z, land):
     alignment = float(np.clip(cfg.mountain_boundary_alignment, 0.0, 1.0))
     strength = float(np.clip(cfg.continent_color_variation, 0.0, 1.0))
@@ -4412,14 +4447,48 @@ def normal_from_height(height, strength=5.0, wrap_x=True):
 
     padded_y = np.pad(height, ((1, 1), (0, 0)), mode="edge")
     dy = padded_y[2:, :] - padded_y[:-2, :]
-    # Rotate the height-gradient tangent frame clockwise so normal-map relief
-    # lights in the same direction as the planet's terminator.
-    nx = dy * strength
-    ny = dx * strength
+    # Standard tangent-space basis: red follows left/right texture slope and
+    # green follows up/down texture slope. OpenGL green-up uses the image-space
+    # vertical derivative directly because image rows increase downward.
+    nx = -dx * strength
+    ny = dy * strength
     nz = np.ones_like(height)
     length = np.sqrt(nx * nx + ny * ny + nz * nz)
     normal = np.stack((nx / length, ny / length, nz / length), axis=2)
     return (normal * 0.5 + 0.5) * 255.0
+
+
+OCEAN_RIPPLE_HEIGHT_AMPLITUDE = 0.018
+
+
+def build_ocean_ripple_field(cfg, x, y, z, land, ocean_depth, polar_ice):
+    strength = float(np.clip(cfg.ocean_ripple_strength, 0.0, 1.0))
+    if strength <= 0.0 or not np.any(~land):
+        return np.zeros_like(ocean_depth, dtype=np.float32)
+
+    scale = float(np.clip(cfg.ocean_ripple_scale, 8.0, 260.0))
+    detail = int(np.clip(round(cfg.ocean_ripple_detail), 1, 6))
+    roughness = float(np.clip(cfg.ocean_ripple_roughness, 0.25, 0.85))
+    rng = np.random.default_rng(int(cfg.seed) + 76423)
+    waves = np.zeros_like(ocean_depth, dtype=np.float32)
+    total_weight = 0.0
+    for index, weight in enumerate((0.56, 0.30, 0.14)):
+        direction = rng.normal(size=3).astype(np.float32)
+        direction /= max(1e-6, float(np.linalg.norm(direction)))
+        phase = float(rng.uniform(0.0, math.tau))
+        frequency = scale * (0.82 + index * 0.47)
+        plane = x * direction[0] + y * direction[1] + z * direction[2]
+        waves += np.sin(plane * frequency + phase).astype(np.float32) * weight
+        total_weight += weight
+    waves /= max(total_weight, 1e-6)
+
+    broad_breakup = (fbm_3d(x, y, z, max(1.0, scale * 0.28), detail, roughness, cfg.seed + 76511) - 0.5) * 2.0
+    fine_breakup = (fbm_3d(x, y, z, max(1.0, scale * 0.82), max(1, detail - 1), 0.46, cfg.seed + 76537) - 0.5) * 2.0
+    ripple = waves * 0.74 + broad_breakup * 0.18 + fine_breakup * 0.08
+    water_mask = (~land).astype(np.float32)
+    depth_fade = smoothstep(0.32, 0.88, ocean_depth)
+    ice_fade = 1.0 - smoothstep(0.18, 0.82, polar_ice)
+    return (ripple * water_mask * depth_fade * ice_fade).astype(np.float32)
 
 
 def render_globe_preview(color, height_map, out_path, size=900):
@@ -4477,7 +4546,7 @@ def build_maps_from_vectors(
     requested_outputs = set() if stats_only else set(selected_maps)
     needs_cloud = bool({"cloud_mask", "cloud_shadow"} & requested_outputs) or "cloud" in stats
     needs_moisture = bool({"color", "city_lights"} & requested_outputs) or "moisture" in stats
-    needs_height = bool({"height", "normal"} & requested_outputs) or "height" in stats
+    needs_height = bool({"height", "normal"} & requested_outputs) or bool({"height", "normal_height"} & stats)
     needs_preview_height = "color" in requested_outputs and normal_wrap_x
     needs_height = needs_height or needs_preview_height
     needs_roughness = "roughness" in requested_outputs
@@ -4562,6 +4631,7 @@ def build_maps_from_vectors(
     height = None
     normal_height = None
     roughness = None
+    ocean_ripple_field = None
     if needs_color:
         colors = resolve_planet_colors(cfg)
         color = np.zeros((map_height, map_width, 3), dtype=np.float32)
@@ -4960,11 +5030,29 @@ def build_maps_from_vectors(
             color = color_blend(color, central_peak_color, central_peak_tint)
             color = color_blend(color, ray_highlight, ray_tint)
             color = color_blend(color, color * 0.82, micro_tint)
+        color = apply_global_color_correction(color, cfg)
 
     if needs_height:
         continent_base_land_height = smoothstep(threshold - cfg.continent_contrast, threshold + cfg.continent_contrast, land_field)
         base_land_height = continent_base_land_height
-        height = np.where(land, 0.38 + base_land_height * 0.20, 0.18 - ocean_depth * 0.18)
+        signed_land_distance = land_field - threshold
+        coastal_transition_width = max(
+            cfg.beach_width * 1.8,
+            cfg.shelf_width * 1.25,
+            cfg.continent_contrast * 0.35,
+            0.035,
+        )
+        has_ocean = bool(np.any(~land))
+        if has_ocean:
+            coastal_blend = smoothstep(-coastal_transition_width, coastal_transition_width, signed_land_distance)
+            inland_relief_gate = smoothstep(0.0, coastal_transition_width * 1.6, signed_land_distance)
+        else:
+            coastal_blend = np.ones_like(land_field, dtype=np.float32)
+            inland_relief_gate = np.ones_like(land_field, dtype=np.float32)
+        sea_level = 0.34
+        ocean_floor = sea_level - 0.012 - ocean_depth * 0.065
+        land_surface = sea_level + 0.010 + base_land_height * 0.16
+        height = lerp(ocean_floor, land_surface, coastal_blend)
         mountain_relief = (
             np.power(np.clip(range_uplift, 0.0, 1.0), 1.18) * cfg.mountain_height * 0.28
             + np.power(np.clip(crest_mask, 0.0, 1.0), 1.70) * cfg.mountain_height * cfg.peak_prominence * 0.12
@@ -4973,11 +5061,10 @@ def build_maps_from_vectors(
         )
         mountain_relief += craggy_relief * cfg.mountain_height * 0.12
         mountain_relief -= erosion_valleys * (0.070 + cfg.erosion_strength * 0.110)
-        height += np.where(land, mountain_relief, 0.0)
-        height += np.where(land, shoreline * 0.025, 0.0)
+        height += np.where(land, mountain_relief * inland_relief_gate, 0.0)
         height += np.where(
             land,
-            polar_ice * (0.018 + ice_solidity * 0.034 + ice_texture * 0.026),
+            polar_ice * inland_relief_gate * (0.018 + ice_solidity * 0.034 + ice_texture * 0.026),
             polar_ice * cfg.polar_ice_shelf_strength * (0.008 + ice_solidity * 0.014),
         )
         if cfg.volatile_ice_strength > 0.0:
@@ -5026,6 +5113,11 @@ def build_maps_from_vectors(
             height += ejecta * crater_rim_height * 0.12
         raw_height = height
         normal_height = raw_height
+        if cfg.ocean_ripple_strength > 0.0:
+            ocean_ripple_field = build_ocean_ripple_field(cfg, x, y, z, land, ocean_depth, polar_ice)
+            normal_height = raw_height + ocean_ripple_field * (
+                float(np.clip(cfg.ocean_ripple_strength, 0.0, 1.0)) * OCEAN_RIPPLE_HEIGHT_AMPLITUDE
+            )
         height = normalize01(raw_height, height_range)
 
     if stats_only and stats <= {"height"}:
@@ -5038,6 +5130,10 @@ def build_maps_from_vectors(
             maps["_moisture_input"] = moisture_input
         if "height" in stats:
             maps["_raw_height"] = raw_height
+        if "normal_height" in stats:
+            maps["_normal_height"] = normal_height
+        if "land_mask" in stats:
+            maps["_land_mask"] = land
         if "cloud" in stats:
             maps["_cloud_field"] = cloud_field
         return maps
@@ -5067,6 +5163,10 @@ def build_maps_from_vectors(
                 - crater_layers["floor_dust"] * 0.12
                 - crater_layers["basin"] * 0.06
             )
+        if cfg.ocean_ripple_strength > 0.0:
+            if ocean_ripple_field is None:
+                ocean_ripple_field = build_ocean_ripple_field(cfg, x, y, z, land, ocean_depth, polar_ice)
+            roughness += np.abs(ocean_ripple_field) * float(np.clip(cfg.ocean_ripple_strength, 0.0, 1.0)) * 0.035
         roughness = np.clip(roughness, 0.0, 1.0)
 
     maps = {}
@@ -5075,7 +5175,11 @@ def build_maps_from_vectors(
     if needs_height:
         maps["height"] = height
     if "normal" in selected_maps:
-        maps["normal"] = normal_from_height(normal_height if normal_height is not None else height, strength=7.5, wrap_x=normal_wrap_x)
+        normal_source = normal_height if normal_height is not None else height
+        maps["normal"] = normal_from_height(normal_source, strength=7.5, wrap_x=normal_wrap_x)
+        if cfg.ocean_ripple_strength > 0.0 and raw_height is not None and normal_height is not raw_height:
+            base_normal = normal_from_height(raw_height, strength=7.5, wrap_x=normal_wrap_x)
+            maps["normal"] = np.where(land[..., None], base_normal, maps["normal"])
     if "roughness" in selected_maps:
         maps["roughness"] = roughness
     if "land_mask" in selected_maps:
@@ -6040,8 +6144,11 @@ def compute_quad_sphere_land_threshold(cfg, face_size, selected_maps, quad_worke
 def save_quad_sphere_height_normal_faces_cached(out_dir, cfg, face_size, selected_maps, quad_workers=1, planet_name=None):
     land_threshold = compute_quad_sphere_land_threshold(cfg, face_size, selected_maps, quad_workers=quad_workers)
     raw_heights = {}
+    normal_heights = {}
+    land_masks = {}
     height_min = math.inf
     height_max = -math.inf
+    stat_fields = ("height", "normal_height", "land_mask") if "normal" in selected_maps else ("height",)
     for face, maps in iter_quad_sphere_face_pass(
         cfg,
         face_size,
@@ -6049,10 +6156,13 @@ def save_quad_sphere_height_normal_faces_cached(out_dir, cfg, face_size, selecte
         quad_workers=quad_workers,
         land_threshold=land_threshold,
         return_raw_stats=True,
-        stat_fields=("height",),
+        stat_fields=stat_fields,
     ):
         raw_height = maps["_raw_height"].astype(np.float32, copy=False)
         raw_heights[face] = raw_height
+        if "normal" in selected_maps:
+            normal_heights[face] = maps["_normal_height"].astype(np.float32, copy=False)
+            land_masks[face] = maps["_land_mask"].astype(bool, copy=False)
         height_min = min(height_min, float(np.min(raw_height)))
         height_max = max(height_max, float(np.max(raw_height)))
         del maps
@@ -6066,10 +6176,15 @@ def save_quad_sphere_height_normal_faces_cached(out_dir, cfg, face_size, selecte
         if "height" in selected_maps:
             maps["height"] = normalize01(raw_height, height_range)
         if "normal" in selected_maps:
-            maps["normal"] = normal_from_height(raw_height, strength=7.5, wrap_x=False)
+            maps["normal"] = normal_from_height(normal_heights[face], strength=7.5, wrap_x=False)
+            if cfg.ocean_ripple_strength > 0.0 and normal_heights[face] is not raw_height:
+                base_normal = normal_from_height(raw_height, strength=7.5, wrap_x=False)
+                maps["normal"] = np.where(land_masks[face][..., None], base_normal, maps["normal"])
         save_map_set(face_dir, maps, selected_maps, planet_name=planet_name, map_type="cubemap", face_id=face)
         del maps
     raw_heights.clear()
+    normal_heights.clear()
+    land_masks.clear()
 
 
 def save_quad_sphere_maps_low_memory(out_dir, cfg, face_size, map_names=None, quad_workers=1, write_cubemap_crosses=None, planet_name=None):
@@ -6206,7 +6321,7 @@ def write_quad_sphere_manifest(out_dir, face_size, map_names=None, write_cubemap
             "space": "per-face tangent space",
             "channels": "16-bit RGB = XYZ remapped from -1..1 to 0..65535",
             "green_channel": "OpenGL / green-up in the planet tangent frame",
-            "tangent_frame": "height-gradient XY channels are rotated clockwise to align relief shadows with the planet terminator",
+            "tangent_frame": "standard image tangent basis: red follows horizontal texture slope, green follows vertical texture slope",
         },
     }
     (out_dir / "quad_sphere_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
