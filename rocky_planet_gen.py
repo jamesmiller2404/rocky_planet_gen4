@@ -6237,6 +6237,26 @@ def should_cache_quad_sphere_raw_height(face_size):
     return int(face_size) <= resolve_quad_raw_height_cache_max_face_size()
 
 
+def should_tile_quad_sphere_color_faces(face_size):
+    return int(face_size) >= 4096
+
+
+def resolve_quad_generation_workers(face_size, selected_maps, quad_workers=1):
+    workers = resolve_quad_workers(quad_workers)
+    face_size = int(face_size)
+    if face_size >= 4096:
+        override = os.environ.get("PLANET_QUAD_LARGE_FACE_WORKERS")
+        if override is not None and override.strip():
+            return resolve_quad_workers(override)
+        return min(workers, 1)
+    selected = selected_texture_maps(selected_maps)
+    if "color" in selected and should_tile_quad_sphere_color_faces(face_size):
+        selected = tuple(name for name in selected if name != "color")
+        if not selected:
+            return 1
+    return resolve_quad_height_normal_workers(face_size, selected, quad_workers)
+
+
 def write_disk_array(cache_dir, face, name, arr, dtype):
     dtype = np.dtype(dtype)
     source = np.asarray(arr)
@@ -6401,15 +6421,22 @@ def save_quad_sphere_height_normal_faces_cached(out_dir, cfg, face_size, selecte
 
 
 def save_quad_sphere_maps_low_memory(out_dir, cfg, face_size, map_names=None, quad_workers=1, write_cubemap_crosses=None, planet_name=None, cache_dir=None):
-    selected_maps = selected_texture_maps(map_names)
-    resolved_quad_workers = resolve_quad_height_normal_workers(face_size, selected_maps, quad_workers)
-    if selected_maps == ("color",) and resolved_quad_workers == 1:
+    requested_maps = selected_texture_maps(map_names)
+    selected_maps = requested_maps
+    resolved_quad_workers = resolve_quad_generation_workers(face_size, selected_maps, quad_workers)
+    if selected_maps == ("color",) and (resolved_quad_workers == 1 or should_tile_quad_sphere_color_faces(face_size)):
         save_quad_sphere_color_faces_tiled(out_dir, cfg, face_size, planet_name=planet_name)
         if write_cubemap_crosses is None:
             write_cubemap_crosses = should_write_quad_sphere_crosses(face_size)
         if write_cubemap_crosses:
             save_quad_sphere_cubemap_crosses_from_files(out_dir, face_size, selected_maps, planet_name=planet_name)
         return
+
+    if "color" in selected_maps and should_tile_quad_sphere_color_faces(face_size):
+        save_quad_sphere_color_faces_tiled(out_dir, cfg, face_size, planet_name=planet_name)
+        selected_maps = tuple(name for name in selected_maps if name != "color")
+        resolved_quad_workers = resolve_quad_generation_workers(face_size, selected_maps, quad_workers)
+
     if set(selected_maps) <= {"height", "normal"} and should_cache_quad_sphere_raw_height(face_size):
         save_quad_sphere_height_normal_faces_cached(
             out_dir,
@@ -6423,7 +6450,7 @@ def save_quad_sphere_maps_low_memory(out_dir, cfg, face_size, map_names=None, qu
         if write_cubemap_crosses is None:
             write_cubemap_crosses = should_write_quad_sphere_crosses(face_size)
         if write_cubemap_crosses:
-            save_quad_sphere_cubemap_crosses_from_files(out_dir, face_size, selected_maps, planet_name=planet_name)
+            save_quad_sphere_cubemap_crosses_from_files(out_dir, face_size, requested_maps, planet_name=planet_name)
         return
 
     land_threshold, cloud_threshold, moisture_range, height_range = compute_quad_sphere_global_stats(
@@ -6451,7 +6478,7 @@ def save_quad_sphere_maps_low_memory(out_dir, cfg, face_size, map_names=None, qu
     if write_cubemap_crosses is None:
         write_cubemap_crosses = should_write_quad_sphere_crosses(face_size)
     if write_cubemap_crosses:
-        save_quad_sphere_cubemap_crosses_from_files(out_dir, face_size, selected_maps, planet_name=planet_name)
+        save_quad_sphere_cubemap_crosses_from_files(out_dir, face_size, requested_maps, planet_name=planet_name)
 
 
 def write_quad_sphere_manifest(out_dir, face_size, map_names=None, write_cubemap_crosses=None, planet_name=None):

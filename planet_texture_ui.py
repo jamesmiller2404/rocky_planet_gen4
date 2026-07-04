@@ -35,8 +35,8 @@ from rocky_planet_gen import (
     TEXTURE_MAP_NAMES,
     build_maps,
     render_globe_preview,
+    resolve_quad_generation_workers,
     resolve_planet_colors,
-    resolve_quad_height_normal_workers,
     resolve_quad_workers,
     selected_texture_maps,
     save_map_set,
@@ -975,7 +975,7 @@ def save_planet_output(payload: dict) -> tuple[Path, dict]:
         quad_dir.mkdir(parents=True, exist_ok=True)
         report["face_size"] = face_size
         report["requested_quad_workers"] = QUAD_WORKERS
-        report["quad_workers"] = resolve_quad_height_normal_workers(face_size, texture_maps, QUAD_WORKERS)
+        report["quad_workers"] = resolve_quad_generation_workers(face_size, texture_maps, QUAD_WORKERS)
         report["cache"] = cache_status
         timed_stage(
             report,
@@ -3946,7 +3946,8 @@ def main() -> None:
     cache_status = cache_disk_status(str(default_cache_dir()))
     server = ThreadingHTTPServer((HOST, PORT), PlanetUiHandler)
     print(f"Rocky Planet Texture UI running at http://{HOST}:{PORT}")
-    print(f"Quad-sphere worker processes: {QUAD_WORKERS}")
+    print(f"Quad-sphere requested worker processes: {QUAD_WORKERS}")
+    print(f"Quad-sphere 4096px effective worker cap: {resolve_quad_generation_workers(4096, TEXTURE_MAP_NAMES, QUAD_WORKERS)}")
     print(f"Quad height/normal cache directory: {cache_status.get('path', 'output')}")
     print(f"Cache disk free: {cache_status.get('free_bytes')} bytes")
     if cache_status.get("warning"):
