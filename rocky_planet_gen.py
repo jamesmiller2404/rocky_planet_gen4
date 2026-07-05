@@ -22,8 +22,8 @@ Outputs:
 Quad-sphere output:
     python rocky_planet_gen.py --preset earthlike --seed 42 --quad-sphere --face-size 1024 --out output/earthlike_quad
 
-    Writes six face folders under quad_sphere/:
-        px, nx, py, ny, pz, nz
+    Writes map-specific face folders under quad_sphere/:
+        color_faces, height_faces, normal_faces, ...
 
     With --planet-name, writes transparent 3x4 cubemap-cross atlases under quad_sphere/,
     rotated 90 degrees clockwise from the original 4x3 layout:
@@ -5639,6 +5639,8 @@ def sanitized_asset_name(value, fallback="planet"):
 def texture_map_filename(map_name, map_type="equirect", width=None, height=None, bit_depth=None, planet_name=None, face_id=None):
     map_name = canonical_texture_map_name(map_name)
     if not planet_name:
+        if face_id:
+            return f"{map_name}_{face_id}.png"
         if map_type == "cubemap_cross":
             return f"{map_name}_cubemap_cross.png"
         return f"{map_name}.png"
@@ -5658,6 +5660,34 @@ def texture_map_filename(map_name, map_type="equirect", width=None, height=None,
 
 def texture_map_path(out_dir, map_name, map_type="equirect", width=None, height=None, bit_depth=None, planet_name=None, face_id=None):
     return out_dir / texture_map_filename(map_name, map_type, width, height, bit_depth, planet_name, face_id)
+
+
+def quad_sphere_map_faces_dir(out_dir, map_name):
+    return Path(out_dir) / f"{canonical_texture_map_name(map_name)}_faces"
+
+
+def quad_sphere_face_path(out_dir, map_name, face, face_size, planet_name=None):
+    return texture_map_path(
+        quad_sphere_map_faces_dir(out_dir, map_name),
+        map_name,
+        "cubemap",
+        face_size,
+        face_size,
+        planet_name=planet_name,
+        face_id=face,
+    )
+
+
+def quad_sphere_face_relative_path(map_name, face, face_size, planet_name=None):
+    filename = texture_map_filename(
+        map_name,
+        "cubemap",
+        face_size,
+        face_size,
+        planet_name=planet_name,
+        face_id=face,
+    )
+    return Path("quad_sphere", f"{canonical_texture_map_name(map_name)}_faces", filename).as_posix()
 
 
 def selected_texture_maps(map_names=None):
@@ -5887,7 +5917,7 @@ def reconcile_quad_sphere_scalar_seams_from_files(out_dir, map_names, seam_width
         bit_depth = 16 if map_name in CLOUD_16BIT_MAPS else 8
         face_arrays = {}
         for face in QUAD_SPHERE_FACES:
-            path = texture_map_path(out_dir / face, map_name, "cubemap", face_size, face_size, planet_name=planet_name, face_id=face)
+            path = quad_sphere_face_path(out_dir, map_name, face, face_size, planet_name=planet_name)
             if not path.exists():
                 face_arrays = {}
                 break
@@ -5914,7 +5944,7 @@ def reconcile_quad_sphere_scalar_seams_from_files(out_dir, map_names, seam_width
         reconcile_quad_sphere_scalar_corners(face_arrays)
 
         for face, arr in face_arrays.items():
-            path = texture_map_path(out_dir / face, map_name, "cubemap", face_size, face_size, planet_name=planet_name, face_id=face)
+            path = quad_sphere_face_path(out_dir, map_name, face, face_size, planet_name=planet_name)
             if bit_depth == 16:
                 Image.fromarray(np.clip(arr, 0, 65535).astype(np.uint16)).save(path)
             else:
@@ -6040,7 +6070,7 @@ def save_quad_sphere_cubemap_crosses(out_dir, faces, face_size, map_names=None, 
 
 def save_quad_sphere_cubemap_crosses_from_files(out_dir, face_size, map_names=None, planet_name=None):
     for map_name in selected_texture_maps(map_names):
-        face_path = texture_map_path(out_dir / "px", map_name, "cubemap", face_size, face_size, planet_name=planet_name, face_id="px")
+        face_path = quad_sphere_face_path(out_dir, map_name, "px", face_size, planet_name=planet_name)
         with Image.open(face_path) as sample_image:
             is_scalar = sample_image.mode in {"L", "I", "I;16", "I;16B", "I;16L"}
             bit_depth = png_bit_depth_for_map(map_name)
@@ -6069,7 +6099,7 @@ def save_quad_sphere_cubemap_cross_streamed(out_dir, map_name, face_size, is_sca
         empty = np.zeros((face_size, channels), dtype=np.uint8)
 
     def load_face_array(face):
-        path = texture_map_path(out_dir / face, map_name, "cubemap", face_size, face_size, planet_name=planet_name, face_id=face)
+        path = quad_sphere_face_path(out_dir, map_name, face, face_size, planet_name=planet_name)
         with Image.open(path) as image:
             if is_scalar:
                 if bit_depth == 16:
@@ -6328,9 +6358,9 @@ def compute_quad_sphere_color_stats_tiled(cfg, face_size, tile_rows=None):
 def save_quad_sphere_color_faces_tiled(out_dir, cfg, face_size, tile_rows=None, planet_name=None):
     tile_rows = resolve_quad_tile_rows(face_size) if tile_rows is None else int(tile_rows)
     land_threshold, moisture_range = compute_quad_sphere_color_stats_tiled(cfg, face_size, tile_rows)
+    face_dir = quad_sphere_map_faces_dir(out_dir, "color")
+    face_dir.mkdir(parents=True, exist_ok=True)
     for face in QUAD_SPHERE_FACES:
-        face_dir = out_dir / face
-        face_dir.mkdir(parents=True, exist_ok=True)
         image = Image.new("RGB", (int(face_size), int(face_size)))
         for row_start, _, x, y, z, lat, lon in iter_quad_sphere_face_tiles(face, face_size, tile_rows):
             maps = build_maps_from_vectors(
@@ -6398,8 +6428,6 @@ def save_quad_sphere_height_normal_faces_cached(out_dir, cfg, face_size, selecte
         height_range = (height_min, height_max) if math.isfinite(height_min) else None
 
         for face in QUAD_SPHERE_FACES:
-            face_dir = out_dir / face
-            face_dir.mkdir(parents=True, exist_ok=True)
             raw_height = read_disk_array(raw_heights[face])
             maps = {}
             if "height" in selected_maps:
@@ -6413,7 +6441,10 @@ def save_quad_sphere_height_normal_faces_cached(out_dir, cfg, face_size, selecte
                     maps["normal"] = np.where(land_mask[..., None], base_normal, maps["normal"])
                     del base_normal, land_mask
                 del normal_height
-            save_map_set(face_dir, maps, selected_maps, planet_name=planet_name, map_type="cubemap", face_id=face)
+            for map_name in selected_maps:
+                face_dir = quad_sphere_map_faces_dir(out_dir, map_name)
+                face_dir.mkdir(parents=True, exist_ok=True)
+                save_map_set(face_dir, maps, (map_name,), planet_name=planet_name, map_type="cubemap", face_id=face)
             del maps, raw_height
     raw_heights.clear()
     normal_heights.clear()
@@ -6470,9 +6501,10 @@ def save_quad_sphere_maps_low_memory(out_dir, cfg, face_size, map_names=None, qu
             moisture_range=moisture_range,
             height_range=height_range,
         ):
-            face_dir = out_dir / face
-            face_dir.mkdir(parents=True, exist_ok=True)
-            save_map_set(face_dir, maps, group, planet_name=planet_name, map_type="cubemap", face_id=face)
+            for map_name in group:
+                face_dir = quad_sphere_map_faces_dir(out_dir, map_name)
+                face_dir.mkdir(parents=True, exist_ok=True)
+                save_map_set(face_dir, maps, (map_name,), planet_name=planet_name, map_type="cubemap", face_id=face)
             del maps
     reconcile_quad_sphere_scalar_seams_from_files(out_dir, selected_maps, planet_name=planet_name, face_size=face_size)
     if write_cubemap_crosses is None:
@@ -6487,7 +6519,7 @@ def write_quad_sphere_manifest(out_dir, face_size, map_names=None, write_cubemap
         write_cubemap_crosses = should_write_quad_sphere_crosses(face_size)
     face_maps = {
         face: [
-            f"quad_sphere/{face}/{texture_map_filename(name, 'cubemap', face_size, face_size, planet_name=planet_name, face_id=face)}"
+            quad_sphere_face_relative_path(name, face, face_size, planet_name=planet_name)
             for name in selected
         ]
         for face in QUAD_SPHERE_FACES
@@ -6498,7 +6530,7 @@ def write_quad_sphere_manifest(out_dir, face_size, map_names=None, write_cubemap
         for file_name in face_maps[face]
     ]
     map_bit_depths = {
-        f"quad_sphere/{face}/{texture_map_filename(name, 'cubemap', face_size, face_size, planet_name=planet_name, face_id=face)}": png_bit_depth_for_map(name)
+        quad_sphere_face_relative_path(name, face, face_size, planet_name=planet_name): png_bit_depth_for_map(name)
         for face in QUAD_SPHERE_FACES
         for name in selected
     }
@@ -6694,7 +6726,7 @@ def build_arg_parser():
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--width", type=int, default=2048)
     parser.add_argument("--height", type=int, default=1024)
-    parser.add_argument("--quad-sphere", action="store_true", help="Write six quad-sphere face folders instead of equirectangular maps.")
+    parser.add_argument("--quad-sphere", action="store_true", help="Write quad-sphere map face folders instead of equirectangular maps.")
     parser.add_argument("--face-size", type=int, default=None, help="Quad-sphere face size in pixels. Defaults to min(width, height).")
     parser.add_argument("--quad-workers", default=None, help="Worker processes for quad-sphere face generation. Defaults to PLANET_QUAD_WORKERS or auto.")
     parser.add_argument("--out", type=Path, default=Path("planet_output"))

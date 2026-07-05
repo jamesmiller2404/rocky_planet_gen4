@@ -27,7 +27,7 @@ Example:
 | `--height` | `1024` | Equirectangular output height in pixels. Minimum `32`. |
 | `--out` | `planet_output` | Output directory. Created if it does not exist. |
 | `--planet-name` | unset | Optional planet name/designation used as the first segment of texture-map filenames, for example `Verdaxis_color_equirect_2048x1024_8bit.png`. The browser UI always uses the Planet name / designation field, falling back to the save folder name when that field is blank. |
-| `--quad-sphere` | off | Writes six cube/quad-sphere face folders instead of only equirectangular maps. |
+| `--quad-sphere` | off | Writes cube/quad-sphere face PNGs grouped by map role instead of only equirectangular maps. |
 | `--face-size` | `min(width, height)` | Quad-sphere face size in pixels. Minimum `32` when `--quad-sphere` is used. |
 | `--quad-workers` | `PLANET_QUAD_WORKERS` or `auto` | Worker processes for quad-sphere face generation. Auto uses up to the six quad-sphere faces; use `1` for serial generation. |
 | `--texture-maps` | all maps | One or more texture maps to save: `color`, `height`, `normal`, `roughness`, `land_ocean_mask`, `shoreline_mask`, `ocean_depth`, `cloud_mask`, `cloud_shadow`, `nebula_color`, `nebula_alpha`, `nebula_stars`, `city_lights`, `atmosphere_haze`, `emissive_heat`. The old `land_mask` name is still accepted as an alias and writes `land_ocean_mask` files. |
@@ -105,7 +105,7 @@ Verdaxis_height_cubemap_cross_3072x4096_16bit.png
 Verdaxis_normal_cubemap_nx_1024x1024_16bit.png
 ```
 
-The command-line generator uses the same convention when `--planet-name` is supplied. Without `--planet-name`, the CLI keeps the older short filenames such as `color.png` for quick local runs.
+The command-line generator uses the same convention when `--planet-name` is supplied. Without `--planet-name`, the CLI keeps short filenames such as `color.png` for equirectangular maps and `color_px.png` for unnamed cubemap face files.
 
 For normal equirectangular output:
 
@@ -130,18 +130,16 @@ For normal equirectangular output:
 | `preview.html` | Interactive rotating globe preview using the saved color texture. |
 | `preset.json` | Resolved config, output projection, and seed-varied palette. |
 
-For quad-sphere output, the generator writes face folders under `quad_sphere/`:
+For quad-sphere output, the generator writes one folder per selected map role under `quad_sphere/`. Each map folder contains the six face PNGs:
 
 ```text
-quad_sphere/px
-quad_sphere/nx
-quad_sphere/py
-quad_sphere/ny
-quad_sphere/pz
-quad_sphere/nz
+quad_sphere/color_faces/
+quad_sphere/height_faces/
+quad_sphere/normal_faces/
+quad_sphere/roughness_faces/
 ```
 
-It also writes cubemap-cross atlases such as `quad_sphere/Verdaxis_color_cubemap_cross_3072x4096_8bit.png` and face maps such as `quad_sphere/nx/Verdaxis_normal_cubemap_nx_1024x1024_16bit.png`. Large stitched atlases are streamed from the saved face PNGs instead of assembled as one giant in-memory array. Cloud cubemap-cross atlases include copied edge bleed in otherwise empty cells so filtered sampling does not blend face borders into transparent black. Color-only quad-sphere saves are tiled internally to reduce peak memory when running serially or at 4096 px faces and larger. Set `PLANET_QUAD_TILE_ROWS` to a smaller value such as `64` if the computer still runs out of memory. Set `PLANET_WRITE_STITCHED_CROSSES=0` before running the CLI or web UI only if you want to skip stitched atlas output.
+For example, a named color face set is stored as `quad_sphere/color_faces/Verdaxis_color_cubemap_px_1024x1024_8bit.png` through `quad_sphere/color_faces/Verdaxis_color_cubemap_nz_1024x1024_8bit.png`; height faces are stored under `quad_sphere/height_faces/`, normal faces under `quad_sphere/normal_faces/`, and so on. It also writes cubemap-cross atlases such as `quad_sphere/Verdaxis_color_cubemap_cross_3072x4096_8bit.png`. Large stitched atlases are streamed from the saved face PNGs instead of assembled as one giant in-memory array. Cloud cubemap-cross atlases include copied edge bleed in otherwise empty cells so filtered sampling does not blend face borders into transparent black. Color-only quad-sphere saves are tiled internally to reduce peak memory when running serially or at 4096 px faces and larger. Set `PLANET_QUAD_TILE_ROWS` to a smaller value such as `64` if the computer still runs out of memory. Set `PLANET_WRITE_STITCHED_CROSSES=0` before running the CLI or web UI only if you want to skip stitched atlas output.
 
 ## Presets
 

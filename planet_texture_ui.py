@@ -31,9 +31,11 @@ from rocky_planet_gen import (
     LAND_PALETTES,
     PLANET_FAMILIES,
     PRESETS,
+    QUAD_SPHERE_FACES,
     PlanetConfig,
     TEXTURE_MAP_NAMES,
     build_maps,
+    quad_sphere_face_path,
     render_globe_preview,
     resolve_quad_generation_workers,
     resolve_planet_colors,
@@ -919,12 +921,12 @@ def save_map_set_with_report(out_dir: Path, maps: dict, texture_maps: tuple[str,
         report["maps"].append(entry)
 
 
-def summarize_quad_sphere_maps(quad_dir: Path, face_dirs: list[str], texture_maps: tuple[str, ...], planet_name: str | None = None, face_size: int | None = None) -> list[dict]:
+def summarize_quad_sphere_maps(quad_dir: Path, texture_maps: tuple[str, ...], planet_name: str | None = None, face_size: int | None = None) -> list[dict]:
     entries = []
     for name in texture_maps:
         face_files = []
-        for face in face_dirs:
-            path = texture_map_path(quad_dir / face, name, "cubemap", face_size, face_size, planet_name=planet_name, face_id=face)
+        for face in QUAD_SPHERE_FACES:
+            path = quad_sphere_face_path(quad_dir, name, face, face_size, planet_name=planet_name)
             if path.exists():
                 info = image_file_summary(path)
                 info["face"] = face
@@ -999,9 +1001,10 @@ def save_planet_output(payload: dict) -> tuple[Path, dict]:
         )
         ui_state = ui_state_from_payload(payload, cfg, "quad_sphere", face_size, texture_maps)
         metadata = metadata_for_config(cfg, "quad_sphere", face_size, texture_maps, ui_state, planet_name=planet_name)
-        face_dirs = sorted(path.name for path in quad_dir.iterdir() if path.is_dir())
-        report["maps"] = summarize_quad_sphere_maps(quad_dir, face_dirs, texture_maps, planet_name=planet_name, face_size=face_size)
-        report["face_count"] = len(face_dirs)
+        map_dirs = sorted(path.name for path in quad_dir.iterdir() if path.is_dir())
+        report["maps"] = summarize_quad_sphere_maps(quad_dir, texture_maps, planet_name=planet_name, face_size=face_size)
+        report["face_count"] = len(QUAD_SPHERE_FACES)
+        report["map_folders"] = map_dirs
     else:
         maps = timed_stage(
             report,
@@ -1076,7 +1079,7 @@ def output_summary(out_dir: Path, report: dict | None = None) -> dict:
             for path in quad_dir.glob("*.png")
             if "_cubemap_cross_" in path.name or path.name.endswith("_cubemap_cross.png")
         )
-    face_dirs = sorted(path.name for path in quad_dir.iterdir() if path.is_dir()) if quad_dir.exists() else []
+    map_dirs = sorted(path.name for path in quad_dir.iterdir() if path.is_dir()) if quad_dir.exists() else []
     generated_maps = []
     if report is not None:
         for entry in report.get("maps", []):
@@ -1087,12 +1090,13 @@ def output_summary(out_dir: Path, report: dict | None = None) -> dict:
                 generated_maps.append(atlas.get("file", ""))
         generated_maps = [name for name in generated_maps if name]
     elif quad_dir.exists():
-        generated_maps = sorted(path.name for face in face_dirs for path in (quad_dir / face).glob("*.png"))
+        generated_maps = sorted(path.name for map_dir in map_dirs for path in (quad_dir / map_dir).glob("*.png"))
     else:
         generated_maps = sorted(path.name for path in out_dir.glob("*.png") if path.name != "preview.png")
     summary = {
         "output_dir": str(out_dir.resolve()),
-        "quad_sphere_faces": face_dirs,
+        "quad_sphere_faces": list(QUAD_SPHERE_FACES) if quad_dir.exists() else [],
+        "quad_sphere_map_folders": map_dirs,
         "stitched_quad_sphere_maps": stitched,
         "generated_maps": generated_maps,
     }
@@ -2292,7 +2296,7 @@ img {
           <option value="quad_sphere">Quad-sphere faces</option>
         </select>
       </div>
-      <p class="hint" id="projectionHint">Quad-sphere saves six face folders and streamed stitched cubemap_cross atlases using the planet filename prefix.</p>
+      <p class="hint" id="projectionHint">Quad-sphere saves map-specific face folders and streamed stitched cubemap_cross atlases using the planet filename prefix.</p>
       <div class="map-header">
         <label>Texture maps</label>
         <div class="map-actions" aria-label="Texture map selection actions">

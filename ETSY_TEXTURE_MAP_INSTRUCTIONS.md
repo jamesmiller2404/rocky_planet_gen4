@@ -38,7 +38,7 @@ Included face sizes:
 | 1024 x 1024 px per face | General-purpose game and render use |
 | 2048 x 2048 px per face | Higher quality close-up work |
 
-The six face folders/files use these names:
+Quad-sphere folders are grouped by map type, for example `color_faces`, `height_faces`, `normal_faces`, and `roughness_faces`. Each folder contains six face files using these direction labels in the filename:
 
 | Face Name | Direction |
 | --- | --- |
@@ -246,12 +246,12 @@ One practical Blender method is to create a cube-sphere with six UV islands, one
 
 Each face texture should fill its own square UV space from 0 to 1. Do not tile the face textures unless you intentionally want repeated terrain.
 
-For each face, use the matching files:
+For each face, use the matching files from each map folder:
 
-- `px/color.png`, `nx/color.png`, etc. for base color
-- `px/height.png`, `nx/height.png`, etc. for height
-- `px/normal.png`, `nx/normal.png`, etc. for normals
-- `px/roughness.png`, `nx/roughness.png`, etc. for roughness
+- `color_faces/*_color_cubemap_px_*.png`, `color_faces/*_color_cubemap_nx_*.png`, etc. for base color
+- `height_faces/*_height_cubemap_px_*.png`, `height_faces/*_height_cubemap_nx_*.png`, etc. for height
+- `normal_faces/*_normal_cubemap_px_*.png`, `normal_faces/*_normal_cubemap_nx_*.png`, etc. for normals
+- `roughness_faces/*_roughness_cubemap_px_*.png`, `roughness_faces/*_roughness_cubemap_nx_*.png`, etc. for roughness
 - matching mask files if you need clouds, shorelines, city lights, or other effects
 
 ### Game Engine Cube-Sphere Workflow
@@ -299,7 +299,7 @@ If your software expects a horizontal 4-by-3 cubemap cross instead, rotate or co
 - 3072 x 4096 atlas = 1024 px faces
 - 6144 x 8192 atlas = 2048 px faces
 
-Most artists will find the six separate face folders easier to use than the stitched atlas. The atlas is mainly included for software that imports cubemap-cross images or for conversion workflows.
+Most artists will find the separate map face folders easier to use than the stitched atlas. The atlas is mainly included for software that imports cubemap-cross images or for conversion workflows.
 
 ## Common Problems
 
