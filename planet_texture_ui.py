@@ -35,11 +35,13 @@ from rocky_planet_gen import (
     PlanetConfig,
     TEXTURE_MAP_NAMES,
     build_maps,
+    quad_sphere_face_maps_available,
     quad_sphere_face_path,
     render_globe_preview,
     resolve_quad_generation_workers,
     resolve_planet_colors,
     resolve_quad_workers,
+    selected_quad_sphere_faces,
     selected_texture_maps,
     save_map_set,
     save_quad_sphere_maps_low_memory,
@@ -689,6 +691,18 @@ def texture_maps_from_payload(payload: dict) -> tuple[str, ...]:
     return selected_texture_maps(requested)
 
 
+def quad_faces_from_payload(payload: dict) -> tuple[str, ...]:
+    requested = payload.get("quad_faces")
+    if not isinstance(requested, list):
+        return QUAD_SPHERE_FACES
+    return selected_quad_sphere_faces(requested)
+
+
+def write_stitched_crosses_from_payload(payload: dict) -> bool:
+    value = payload.get("write_stitched_crosses", True)
+    return bool(value)
+
+
 def cache_dir_from_payload(payload: dict) -> str:
     return str(payload.get("cache_dir", "") or "").strip()
 
@@ -802,6 +816,8 @@ def metadata_for_config(
     ui_state: dict | None = None,
     output_kind: str = "texture_output",
     planet_name: str | None = None,
+    quad_faces: tuple[str, ...] | None = None,
+    write_stitched_crosses: bool = True,
 ) -> dict:
     metadata = asdict(cfg)
     metadata["output_projection"] = projection
@@ -810,6 +826,8 @@ def metadata_for_config(
     metadata["planet_name"] = planet_name
     if face_size is not None:
         metadata["quad_sphere_face_size"] = face_size
+        metadata["output_quad_faces"] = list(quad_faces or QUAD_SPHERE_FACES)
+        metadata["write_stitched_crosses"] = bool(write_stitched_crosses)
     if ui_state is not None:
         metadata["ui_state"] = ui_state
     resolved_palette = resolve_planet_colors(cfg)
@@ -826,6 +844,8 @@ def ui_state_from_payload(
     projection: str,
     face_size: int | None,
     texture_maps: tuple[str, ...],
+    quad_faces: tuple[str, ...] | None = None,
+    write_stitched_crosses: bool = True,
 ) -> dict:
     params = {}
     source_params = payload.get("params", {})
@@ -845,6 +865,8 @@ def ui_state_from_payload(
         "projection": projection,
         "face_size": int(face_size if face_size is not None else payload.get("face_size", min(cfg.width, cfg.height))),
         "texture_maps": list(texture_maps),
+        "quad_faces": list(quad_faces or QUAD_SPHERE_FACES),
+        "write_stitched_crosses": bool(write_stitched_crosses),
         "cache_dir": cache_dir_from_payload(payload),
         "params": params,
     }
@@ -854,11 +876,23 @@ def metadata_from_payload(payload: dict, output_kind: str = "texture_output") ->
     cfg = config_from_payload(payload, preview=False)
     projection = str(payload.get("projection", "equirectangular"))
     texture_maps = texture_maps_from_payload(payload)
+    quad_faces = quad_faces_from_payload(payload)
+    write_stitched_crosses = write_stitched_crosses_from_payload(payload)
     face_size = int(payload.get("face_size") or min(cfg.width, cfg.height))
-    ui_state = ui_state_from_payload(payload, cfg, projection, face_size, texture_maps)
+    ui_state = ui_state_from_payload(payload, cfg, projection, face_size, texture_maps, quad_faces, write_stitched_crosses)
     metadata_face_size = face_size if projection == "quad_sphere" else None
     planet_name = sanitized_asset_name(str(payload.get("planet_name", "")).strip(), "")
-    return metadata_for_config(cfg, projection, metadata_face_size, texture_maps, ui_state, output_kind, planet_name or None)
+    return metadata_for_config(
+        cfg,
+        projection,
+        metadata_face_size,
+        texture_maps,
+        ui_state,
+        output_kind,
+        planet_name or None,
+        quad_faces,
+        write_stitched_crosses,
+    )
 
 
 def image_file_summary(path: Path) -> dict:
@@ -971,39 +1005,78 @@ def save_planet_output(payload: dict) -> tuple[Path, dict]:
         face_size = int(payload.get("face_size") or min(cfg.width, cfg.height))
         if face_size < 32:
             raise ValueError("Quad-sphere face size must be at least 32.")
+        quad_faces = quad_faces_from_payload(payload)
+        write_stitched_crosses = write_stitched_crosses_from_payload(payload)
         cache_dir = cache_dir_from_payload(payload)
         cache_status = cache_disk_status(cache_dir, face_size, texture_maps)
         quad_dir = out_dir / "quad_sphere"
         quad_dir.mkdir(parents=True, exist_ok=True)
         report["face_size"] = face_size
+        report["requested_faces"] = list(quad_faces)
+        report["face_count"] = len(quad_faces)
+        report["all_faces"] = list(QUAD_SPHERE_FACES)
+        report["write_stitched_crosses"] = bool(write_stitched_crosses)
         report["requested_quad_workers"] = QUAD_WORKERS
         report["quad_workers"] = resolve_quad_generation_workers(face_size, texture_maps, QUAD_WORKERS)
         report["cache"] = cache_status
+        stats_info = {}
         timed_stage(
             report,
             "quad_sphere_maps",
             "Generate and write quad-sphere faces",
-            lambda: save_quad_sphere_maps_low_memory(
+            lambda: stats_info.update(save_quad_sphere_maps_low_memory(
                 quad_dir,
                 cfg,
                 face_size,
                 texture_maps,
                 quad_workers=QUAD_WORKERS,
+                write_cubemap_crosses=write_stitched_crosses,
                 planet_name=planet_name,
                 cache_dir=cache_dir or None,
-            ),
+                face_names=quad_faces,
+            )),
         )
+        stitched_written = bool(write_stitched_crosses) and quad_sphere_face_maps_available(
+            quad_dir,
+            texture_maps,
+            face_size,
+            planet_name=planet_name,
+            face_names=QUAD_SPHERE_FACES,
+        )
+        report["stitched_crosses_written"] = bool(stitched_written)
+        if stats_info:
+            report["quad_sphere_global_stats"] = {
+                "local_path": str((quad_dir / "quad_sphere_global_stats.json").resolve()),
+                "cache_path": str(stats_info.get("cache_path", "")),
+                "config_hash": stats_info.get("config_hash", ""),
+                "available_fields": stats_info.get("available_fields", []),
+            }
         timed_stage(
             report,
             "quad_sphere_manifest",
             "Write quad-sphere manifest",
-            lambda: write_quad_sphere_manifest(out_dir, face_size, texture_maps, planet_name=planet_name),
+            lambda: write_quad_sphere_manifest(
+                out_dir,
+                face_size,
+                texture_maps,
+                write_cubemap_crosses=stitched_written,
+                planet_name=planet_name,
+                face_names=quad_faces,
+            ),
         )
-        ui_state = ui_state_from_payload(payload, cfg, "quad_sphere", face_size, texture_maps)
-        metadata = metadata_for_config(cfg, "quad_sphere", face_size, texture_maps, ui_state, planet_name=planet_name)
+        ui_state = ui_state_from_payload(payload, cfg, "quad_sphere", face_size, texture_maps, quad_faces, write_stitched_crosses)
+        metadata = metadata_for_config(
+            cfg,
+            "quad_sphere",
+            face_size,
+            texture_maps,
+            ui_state,
+            planet_name=planet_name,
+            quad_faces=quad_faces,
+            write_stitched_crosses=write_stitched_crosses,
+        )
         map_dirs = sorted(path.name for path in quad_dir.iterdir() if path.is_dir())
         report["maps"] = summarize_quad_sphere_maps(quad_dir, texture_maps, planet_name=planet_name, face_size=face_size)
-        report["face_count"] = len(QUAD_SPHERE_FACES)
         report["map_folders"] = map_dirs
     else:
         maps = timed_stage(
@@ -1095,7 +1168,8 @@ def output_summary(out_dir: Path, report: dict | None = None) -> dict:
         generated_maps = sorted(path.name for path in out_dir.glob("*.png") if path.name != "preview.png")
     summary = {
         "output_dir": str(out_dir.resolve()),
-        "quad_sphere_faces": list(QUAD_SPHERE_FACES) if quad_dir.exists() else [],
+        "quad_sphere_faces": list(report.get("requested_faces", QUAD_SPHERE_FACES)) if report and quad_dir.exists() else (list(QUAD_SPHERE_FACES) if quad_dir.exists() else []),
+        "quad_sphere_all_faces": list(QUAD_SPHERE_FACES) if quad_dir.exists() else [],
         "quad_sphere_map_folders": map_dirs,
         "stitched_quad_sphere_maps": stitched,
         "generated_maps": generated_maps,
@@ -1136,6 +1210,8 @@ def normalize_ui_state(data: dict) -> dict:
             "projection": "quad_sphere" if state.get("projection") == "quad_sphere" else "equirectangular",
             "face_size": max(32, int(state.get("face_size", data.get("quad_sphere_face_size", min(int(data.get("width", 2048)), int(data.get("height", 1024))))))),
             "texture_maps": validate_texture_maps(state.get("texture_maps", data.get("output_texture_maps", TEXTURE_MAP_NAMES))),
+            "quad_faces": list(selected_quad_sphere_faces(state.get("quad_faces", data.get("output_quad_faces", QUAD_SPHERE_FACES)))),
+            "write_stitched_crosses": bool(state.get("write_stitched_crosses", data.get("write_stitched_crosses", True))),
             "cache_dir": str(state.get("cache_dir", data.get("cache_dir", "")) or ""),
             "params": params,
         }
@@ -1162,6 +1238,8 @@ def normalize_ui_state(data: dict) -> dict:
         "projection": "quad_sphere" if data.get("output_projection") == "quad_sphere" else "equirectangular",
         "face_size": max(32, int(data.get("quad_sphere_face_size", min(width, height)))),
         "texture_maps": validate_texture_maps(data.get("output_texture_maps", TEXTURE_MAP_NAMES)),
+        "quad_faces": list(selected_quad_sphere_faces(data.get("output_quad_faces", QUAD_SPHERE_FACES))),
+        "write_stitched_crosses": bool(data.get("write_stitched_crosses", True)),
         "cache_dir": str(data.get("cache_dir", "") or ""),
         "params": params,
     }
@@ -1440,6 +1518,10 @@ def default_payload() -> dict:
         "texture_maps": [
             {"key": key, "label": TEXTURE_MAP_LABELS.get(key, key.replace("_", " ").title())}
             for key in TEXTURE_MAP_NAMES
+        ],
+        "quad_faces": [
+            {"key": key, "label": key}
+            for key in QUAD_SPHERE_FACES
         ],
         "cloud_recipes": CLOUD_RECIPES,
         "land_palettes": [
@@ -1982,6 +2064,9 @@ img {
   gap: 8px;
   margin: 8px 0 12px;
 }
+.map-options.compact {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
 .map-header {
   display: flex;
   align-items: center;
@@ -2011,6 +2096,20 @@ img {
   font-size: 13px;
 }
 .map-option input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  margin: 8px 0 12px;
+  color: var(--text);
+  font-size: 13px;
+}
+.checkbox-row input {
   width: 16px;
   height: 16px;
   margin: 0;
@@ -2339,6 +2438,19 @@ img {
         <label for="faceSize">Quad face size</label>
         <input id="faceSize" type="number" min="32" step="32" value="1024">
       </div>
+      <div class="map-header">
+        <label>Quad faces</label>
+        <div class="map-actions" aria-label="Quad face selection actions">
+          <button id="selectAllFacesBtn" type="button">All</button>
+          <button id="selectNoFacesBtn" type="button">None</button>
+        </div>
+      </div>
+      <div class="map-options compact" id="quadFaceOptions"></div>
+      <p class="hint">Generate a subset to reduce peak memory. Use the same seed/settings and saved stats JSON for matching later face batches.</p>
+      <label class="checkbox-row">
+        <input id="writeStitchedCrosses" type="checkbox" checked>
+        <span>Write stitched cubemap-cross atlases when all six faces are available</span>
+      </label>
       <label for="cacheDir">Quad height/normal cache directory</label>
       <div class="path-row">
         <input id="cacheDir" type="text" placeholder="output">
@@ -2495,6 +2607,10 @@ const els = {
   projection: document.getElementById("projection"),
   faceSizePreset: document.getElementById("faceSizePreset"),
   faceSize: document.getElementById("faceSize"),
+  quadFaceOptions: document.getElementById("quadFaceOptions"),
+  selectAllFacesBtn: document.getElementById("selectAllFacesBtn"),
+  selectNoFacesBtn: document.getElementById("selectNoFacesBtn"),
+  writeStitchedCrosses: document.getElementById("writeStitchedCrosses"),
   cacheDir: document.getElementById("cacheDir"),
   browseCacheBtn: document.getElementById("browseCacheBtn"),
   cacheStatus: document.getElementById("cacheStatus"),
@@ -2713,7 +2829,10 @@ function showGenerationReport(report) {
   appendReportStat(summary, "Preset / seed", `${report.preset || "n/a"} / ${report.seed ?? "n/a"}`);
   appendReportStat(summary, "Output", report.output_dir || "n/a");
   if (report.projection === "quad_sphere") {
-    appendReportStat(summary, "Quad faces", `${report.face_count || 0} at ${report.face_size || "n/a"} px`);
+    const requestedFaces = report.requested_faces || [];
+    const faceLabel = requestedFaces.length ? requestedFaces.join(", ") : `${report.face_count || 0}`;
+    appendReportStat(summary, "Quad faces", `${faceLabel} at ${report.face_size || "n/a"} px`);
+    appendReportStat(summary, "Stitched atlases", report.stitched_crosses_written ? "written" : (report.write_stitched_crosses ? "waiting for all six faces" : "off"));
     appendReportStat(summary, "Workers", String(report.quad_workers || "n/a"));
     if (report.requested_quad_workers && report.requested_quad_workers !== report.quad_workers) {
       appendReportStat(summary, "Requested workers", String(report.requested_quad_workers));
@@ -2721,6 +2840,9 @@ function showGenerationReport(report) {
     if (report.cache) {
       appendReportStat(summary, "Cache free", formatBytes(report.cache.free_bytes));
       appendReportStat(summary, "Cache estimate", formatBytes(report.cache.estimated_cache_bytes || 0));
+    }
+    if (report.quad_sphere_global_stats && report.quad_sphere_global_stats.available_fields) {
+      appendReportStat(summary, "Stats fields", report.quad_sphere_global_stats.available_fields.join(", "));
     }
   } else if (report.requested_size) {
     appendReportStat(summary, "Map size", `${report.requested_size.width} x ${report.requested_size.height}`);
@@ -2774,6 +2896,9 @@ function showGenerationReport(report) {
   body.appendChild(makeEl("p", "report-note", `Saved report: ${reportPath}`));
   if (report.cache && report.cache.path) {
     body.appendChild(makeEl("p", report.cache.warning ? "report-note warning" : "report-note", `Cache directory: ${report.cache.path}`));
+  }
+  if (report.quad_sphere_global_stats && report.quad_sphere_global_stats.local_path) {
+    body.appendChild(makeEl("p", "report-note", `Quad global stats: ${report.quad_sphere_global_stats.local_path}`));
   }
   if (report.projection === "equirectangular") {
     body.appendChild(makeEl("p", "report-note", "Equirectangular map computation is a shared build stage; per-map time shows PNG write time."));
@@ -2989,6 +3114,26 @@ function renderTextureMapOptions() {
   els.previewMapSelect.value = "color";
 }
 
+function renderQuadFaceOptions() {
+  els.quadFaceOptions.innerHTML = "";
+  for (const face of schema.quad_faces || []) {
+    const label = document.createElement("label");
+    label.className = "map-option";
+
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.value = face.key;
+    input.checked = true;
+    input.dataset.quadFace = "1";
+
+    const span = document.createElement("span");
+    span.textContent = face.label;
+
+    label.append(input, span);
+    els.quadFaceOptions.append(label);
+  }
+}
+
 function syncValue(key) {
   const slider = document.getElementById(sliderId(key));
   if (!slider || slider.type === "color" || slider.tagName === "SELECT") return;
@@ -3043,12 +3188,24 @@ function getSelectedTextureMaps() {
     .map(input => input.value);
 }
 
+function getSelectedQuadFaces() {
+  return Array.from(els.quadFaceOptions.querySelectorAll("input[data-quad-face='1']:checked"))
+    .map(input => input.value);
+}
+
 function setTextureMapSelection(checked) {
   const selected = Array.isArray(checked) ? new Set(checked) : null;
   for (const input of els.textureMapOptions.querySelectorAll("input[data-texture-map='1']")) {
     input.checked = selected ? selected.has(input.value) : checked;
   }
   refreshCacheStatus();
+}
+
+function setQuadFaceSelection(checked) {
+  const selected = Array.isArray(checked) ? new Set(checked) : null;
+  for (const input of els.quadFaceOptions.querySelectorAll("input[data-quad-face='1']")) {
+    input.checked = selected ? selected.has(input.value) : checked;
+  }
 }
 
 function cloudOverlayEnabled() {
@@ -3198,6 +3355,8 @@ function getPayload() {
     height: parseInt(els.height.value, 10),
     projection: els.projection.value,
     face_size: parseInt(els.faceSize.value, 10),
+    quad_faces: getSelectedQuadFaces(),
+    write_stitched_crosses: els.writeStitchedCrosses.checked,
     cache_dir: els.cacheDir.value,
     planet_name: els.planetName.value,
     output_name: els.outputName.value,
@@ -3749,12 +3908,20 @@ function clearLoadedPlanetIfPath(path) {
 
 async function saveOutput() {
   const selectedMaps = getSelectedTextureMaps();
+  const selectedFaces = getSelectedQuadFaces();
   if (!selectedMaps.length) {
     setStatus("Choose at least one texture map to save.", "error");
     return;
   }
+  if (els.projection.value === "quad_sphere" && !selectedFaces.length) {
+    setStatus("Choose at least one quad face to save.", "error");
+    return;
+  }
   setButtons(true);
-  setStatus(`Saving ${selectedMaps.length} texture map${selectedMaps.length === 1 ? "" : "s"}...`, "busy");
+  const faceText = els.projection.value === "quad_sphere"
+    ? ` for ${selectedFaces.length} face${selectedFaces.length === 1 ? "" : "s"}`
+    : "";
+  setStatus(`Saving ${selectedMaps.length} texture map${selectedMaps.length === 1 ? "" : "s"}${faceText}...`, "busy");
   try {
     const data = await postJson("/api/save", getPayload());
     const stitched = data.stitched_quad_sphere_maps || [];
@@ -3823,6 +3990,8 @@ function applyLoadedState(data) {
   syncResolutionPreset();
   syncFaceSizePreset();
   setTextureMapSelection(data.texture_maps || []);
+  setQuadFaceSelection(data.quad_faces || ["px", "nx", "py", "ny", "pz", "nz"]);
+  els.writeStitchedCrosses.checked = data.write_stitched_crosses !== false;
   for (const [key, value] of Object.entries(data.params || {})) {
     const slider = document.getElementById(sliderId(key));
     if (slider) {
@@ -3870,6 +4039,7 @@ async function boot() {
   schema = await response.json();
   renderControls();
   renderTextureMapOptions();
+  renderQuadFaceOptions();
   if (schema.cache && schema.cache.path) {
     els.cacheDir.value = schema.cache.path;
     renderCacheStatus(schema.cache);
@@ -3898,6 +4068,8 @@ async function boot() {
   els.cacheDir.addEventListener("change", refreshCacheStatus);
   els.selectAllMapsBtn.addEventListener("click", () => setTextureMapSelection(true));
   els.selectNoMapsBtn.addEventListener("click", () => setTextureMapSelection(false));
+  els.selectAllFacesBtn.addEventListener("click", () => setQuadFaceSelection(true));
+  els.selectNoFacesBtn.addEventListener("click", () => setQuadFaceSelection(false));
   document.getElementById("previewBtn").addEventListener("click", () => schedulePreview(0));
   document.getElementById("saveBtn").addEventListener("click", saveOutput);
   document.getElementById("saveConfigBtn").addEventListener("click", saveConfigOnly);

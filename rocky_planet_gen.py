@@ -35,6 +35,7 @@ from __future__ import annotations
 import argparse
 import cProfile
 import colorsys
+import hashlib
 import json
 import math
 import os
@@ -5388,6 +5389,115 @@ def build_maps(cfg, map_names=None):
 
 
 QUAD_SPHERE_FACES = ("px", "nx", "py", "ny", "pz", "nz")
+QUAD_SPHERE_GLOBAL_STATS_FILENAME = "quad_sphere_global_stats.json"
+QUAD_SPHERE_GLOBAL_STATS_SCHEMA_VERSION = 1
+
+
+def selected_quad_sphere_faces(face_names=None):
+    if face_names is None:
+        return QUAD_SPHERE_FACES
+    if isinstance(face_names, str):
+        requested = [item.strip() for item in face_names.split(",")]
+    else:
+        requested = [str(item).strip() for item in face_names]
+    requested_set = {face for face in requested if face}
+    invalid = sorted(requested_set - set(QUAD_SPHERE_FACES))
+    if invalid:
+        raise ValueError(f"Unknown quad-sphere face(s): {', '.join(invalid)}")
+    selected = tuple(face for face in QUAD_SPHERE_FACES if face in requested_set)
+    if not selected:
+        raise ValueError("Choose at least one quad-sphere face.")
+    return selected
+
+
+def quad_sphere_config_hash(cfg, face_size):
+    payload = {
+        "schema_version": QUAD_SPHERE_GLOBAL_STATS_SCHEMA_VERSION,
+        "config": asdict(cfg),
+        "face_size": int(face_size),
+        "faces": list(QUAD_SPHERE_FACES),
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def quad_sphere_required_stat_fields(selected_maps):
+    selected_set = set(selected_texture_maps(selected_maps))
+    fields = {"land"}
+    if selected_set & {"color", "city_lights"}:
+        fields.add("moisture")
+    if selected_set & {"height", "normal"}:
+        fields.add("height")
+    if selected_set & {"cloud_mask", "cloud_shadow"}:
+        fields.add("cloud")
+    return tuple(field for field in ("land", "moisture", "height", "cloud") if field in fields)
+
+
+def quad_sphere_stats_cache_dir(out_dir, cache_dir=None):
+    if cache_dir is not None and str(cache_dir).strip():
+        return Path(cache_dir).expanduser()
+    value = os.environ.get("PLANET_QUAD_GLOBAL_STATS_DIR")
+    if value and value.strip():
+        return Path(value).expanduser()
+    out_path = Path(out_dir)
+    return out_path.parent.parent / "_quad_sphere_global_stats"
+
+
+def quad_sphere_local_stats_path(out_dir):
+    return Path(out_dir) / QUAD_SPHERE_GLOBAL_STATS_FILENAME
+
+
+def quad_sphere_cached_stats_path(out_dir, cfg, face_size, cache_dir=None):
+    return quad_sphere_stats_cache_dir(out_dir, cache_dir) / f"{quad_sphere_config_hash(cfg, face_size)}.json"
+
+
+def load_quad_sphere_global_stats(path, cfg, face_size):
+    path = Path(path)
+    if not path.exists():
+        return None
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if data.get("schema_version") != QUAD_SPHERE_GLOBAL_STATS_SCHEMA_VERSION:
+        return None
+    if data.get("config_hash") != quad_sphere_config_hash(cfg, face_size):
+        return None
+    if int(data.get("face_size", -1)) != int(face_size):
+        return None
+    return data
+
+
+def quad_sphere_global_stats_has_fields(stats, fields):
+    if not stats:
+        return False
+    available = set(stats.get("available_fields", []))
+    return all(field in available for field in fields)
+
+
+def quad_sphere_stats_to_values(stats):
+    return (
+        float(stats["land_threshold"]),
+        None if stats.get("cloud_threshold") is None else float(stats["cloud_threshold"]),
+        None if stats.get("moisture_range") is None else tuple(float(value) for value in stats["moisture_range"]),
+        None if stats.get("height_range") is None else tuple(float(value) for value in stats["height_range"]),
+    )
+
+
+def merge_quad_sphere_global_stats(existing, computed):
+    if existing is None:
+        return computed
+    merged = dict(existing)
+    for key in ("land_threshold", "cloud_threshold", "moisture_range", "height_range"):
+        if computed.get(key) is not None:
+            merged[key] = computed[key]
+    available = set(existing.get("available_fields", [])) | set(computed.get("available_fields", []))
+    merged["available_fields"] = [field for field in ("land", "moisture", "height", "cloud") if field in available]
+    return merged
+
+
+def write_quad_sphere_global_stats(stats, *paths):
+    for path in paths:
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(stats, indent=2), encoding="utf-8")
 
 
 def build_quad_sphere_face_worker(job):
@@ -5428,6 +5538,7 @@ def build_quad_sphere_face_pass(
     face_size,
     selected_maps,
     *,
+    face_names=None,
     quad_workers=1,
     land_threshold=None,
     cloud_threshold=None,
@@ -5436,7 +5547,8 @@ def build_quad_sphere_face_pass(
     return_raw_stats=False,
     stat_fields=None,
 ):
-    worker_count = max(1, min(int(quad_workers), len(QUAD_SPHERE_FACES)))
+    faces = selected_quad_sphere_faces(face_names)
+    worker_count = max(1, min(int(quad_workers), len(faces)))
     jobs = [
         (
             cfg,
@@ -5450,7 +5562,7 @@ def build_quad_sphere_face_pass(
             return_raw_stats,
             tuple(stat_fields or ()),
         )
-        for face in QUAD_SPHERE_FACES
+        for face in faces
     ]
     if worker_count == 1:
         return dict(build_quad_sphere_face_worker(job) for job in jobs)
@@ -5463,6 +5575,7 @@ def iter_quad_sphere_face_pass(
     face_size,
     selected_maps,
     *,
+    face_names=None,
     quad_workers=1,
     land_threshold=None,
     cloud_threshold=None,
@@ -5471,7 +5584,8 @@ def iter_quad_sphere_face_pass(
     return_raw_stats=False,
     stat_fields=None,
 ):
-    worker_count = max(1, min(int(quad_workers), len(QUAD_SPHERE_FACES)))
+    faces = selected_quad_sphere_faces(face_names)
+    worker_count = max(1, min(int(quad_workers), len(faces)))
     jobs = [
         (
             cfg,
@@ -5485,7 +5599,7 @@ def iter_quad_sphere_face_pass(
             return_raw_stats,
             tuple(stat_fields or ()),
         )
-        for face in QUAD_SPHERE_FACES
+        for face in faces
     ]
     if worker_count == 1:
         for job in jobs:
@@ -5511,6 +5625,21 @@ def histogram_quantile(counts, q, value_range=(0.0, 1.0)):
 def update_histogram(counts, values, value_range=(0.0, 1.0)):
     hist, _ = np.histogram(values, bins=len(counts), range=value_range)
     counts += hist
+
+
+def quad_sphere_global_stats_payload(cfg, face_size, selected_maps, land_threshold, cloud_threshold, moisture_range, height_range):
+    available_fields = list(quad_sphere_required_stat_fields(selected_maps))
+    return {
+        "schema_version": QUAD_SPHERE_GLOBAL_STATS_SCHEMA_VERSION,
+        "config_hash": quad_sphere_config_hash(cfg, face_size),
+        "face_size": int(face_size),
+        "map_roles": list(selected_texture_maps(selected_maps)),
+        "available_fields": available_fields,
+        "land_threshold": float(land_threshold),
+        "cloud_threshold": None if cloud_threshold is None else float(cloud_threshold),
+        "moisture_range": None if moisture_range is None else [float(moisture_range[0]), float(moisture_range[1])],
+        "height_range": None if height_range is None else [float(height_range[0]), float(height_range[1])],
+    }
 
 
 def compute_quad_sphere_global_stats(cfg, face_size, selected_maps, quad_workers=1):
@@ -5570,6 +5699,59 @@ def compute_quad_sphere_global_stats(cfg, face_size, selected_maps, quad_workers
         cloud_threshold = histogram_quantile(cloud_hist, 1.0 - cloud_coverage) if 0.0 < cloud_coverage < 1.0 else 1.0
 
     return land_threshold, cloud_threshold, moisture_range, height_range
+
+
+def compute_quad_sphere_global_stats_payload(cfg, face_size, selected_maps, quad_workers=1):
+    selected_maps = selected_texture_maps(selected_maps)
+    if selected_maps == ("color",):
+        land_threshold, moisture_range = compute_quad_sphere_color_stats_tiled(cfg, face_size)
+        return quad_sphere_global_stats_payload(
+            cfg,
+            face_size,
+            selected_maps,
+            land_threshold,
+            None,
+            moisture_range,
+            None,
+        )
+    land_threshold, cloud_threshold, moisture_range, height_range = compute_quad_sphere_global_stats(
+        cfg,
+        face_size,
+        selected_maps,
+        quad_workers=quad_workers,
+    )
+    return quad_sphere_global_stats_payload(
+        cfg,
+        face_size,
+        selected_maps,
+        land_threshold,
+        cloud_threshold,
+        moisture_range,
+        height_range,
+    )
+
+
+def get_or_compute_quad_sphere_global_stats(out_dir, cfg, face_size, selected_maps, quad_workers=1, stats_cache_dir=None):
+    required_fields = quad_sphere_required_stat_fields(selected_maps)
+    local_path = quad_sphere_local_stats_path(out_dir)
+    cached_path = quad_sphere_cached_stats_path(out_dir, cfg, face_size, stats_cache_dir)
+    stats = load_quad_sphere_global_stats(local_path, cfg, face_size)
+    if not quad_sphere_global_stats_has_fields(stats, required_fields):
+        cached_stats = load_quad_sphere_global_stats(cached_path, cfg, face_size)
+        if quad_sphere_global_stats_has_fields(cached_stats, required_fields):
+            stats = cached_stats
+    if not quad_sphere_global_stats_has_fields(stats, required_fields):
+        computed = compute_quad_sphere_global_stats_payload(
+            cfg,
+            face_size,
+            selected_maps,
+            quad_workers=quad_workers,
+        )
+        stats = merge_quad_sphere_global_stats(stats, computed)
+    write_quad_sphere_global_stats(stats, local_path, cached_path)
+    stats["local_path"] = str(local_path)
+    stats["cache_path"] = str(cached_path)
+    return stats
 
 
 def build_quad_sphere_maps(cfg, face_size, map_names=None, quad_workers=1):
@@ -6077,6 +6259,15 @@ def save_quad_sphere_cubemap_crosses_from_files(out_dir, face_size, map_names=No
         save_quad_sphere_cubemap_cross_streamed(out_dir, map_name, face_size, is_scalar, bit_depth=bit_depth, planet_name=planet_name)
 
 
+def quad_sphere_face_maps_available(out_dir, map_names=None, face_size=None, planet_name=None, face_names=None):
+    faces = selected_quad_sphere_faces(face_names)
+    for map_name in selected_texture_maps(map_names):
+        for face in faces:
+            if not quad_sphere_face_path(out_dir, map_name, face, face_size, planet_name=planet_name).exists():
+                return False
+    return True
+
+
 def save_quad_sphere_cubemap_cross_streamed(out_dir, map_name, face_size, is_scalar, bit_depth=8, planet_name=None):
     face_size = int(face_size)
     cell_to_face = {cell: face for face, cell in CUBEMAP_CROSS_LAYOUT.items()}
@@ -6355,12 +6546,15 @@ def compute_quad_sphere_color_stats_tiled(cfg, face_size, tile_rows=None):
     return land_threshold, moisture_range
 
 
-def save_quad_sphere_color_faces_tiled(out_dir, cfg, face_size, tile_rows=None, planet_name=None):
+def save_quad_sphere_color_faces_tiled(out_dir, cfg, face_size, tile_rows=None, planet_name=None, face_names=None, global_stats=None):
     tile_rows = resolve_quad_tile_rows(face_size) if tile_rows is None else int(tile_rows)
-    land_threshold, moisture_range = compute_quad_sphere_color_stats_tiled(cfg, face_size, tile_rows)
+    if global_stats is None:
+        land_threshold, moisture_range = compute_quad_sphere_color_stats_tiled(cfg, face_size, tile_rows)
+    else:
+        land_threshold, _, moisture_range, _ = quad_sphere_stats_to_values(global_stats)
     face_dir = quad_sphere_map_faces_dir(out_dir, "color")
     face_dir.mkdir(parents=True, exist_ok=True)
-    for face in QUAD_SPHERE_FACES:
+    for face in selected_quad_sphere_faces(face_names):
         image = Image.new("RGB", (int(face_size), int(face_size)))
         for row_start, _, x, y, z, lat, lon in iter_quad_sphere_face_tiles(face, face_size, tile_rows):
             maps = build_maps_from_vectors(
@@ -6397,8 +6591,22 @@ def compute_quad_sphere_land_threshold(cfg, face_size, selected_maps, quad_worke
     return histogram_quantile(land_hist, land_threshold_quantile(cfg))
 
 
-def save_quad_sphere_height_normal_faces_cached(out_dir, cfg, face_size, selected_maps, quad_workers=1, planet_name=None, cache_dir=None):
-    land_threshold = compute_quad_sphere_land_threshold(cfg, face_size, selected_maps, quad_workers=quad_workers)
+def save_quad_sphere_height_normal_faces_cached(
+    out_dir,
+    cfg,
+    face_size,
+    selected_maps,
+    quad_workers=1,
+    planet_name=None,
+    cache_dir=None,
+    face_names=None,
+    global_stats=None,
+):
+    if global_stats is None:
+        land_threshold = compute_quad_sphere_land_threshold(cfg, face_size, selected_maps, quad_workers=quad_workers)
+        preset_height_range = None
+    else:
+        land_threshold, _, _, preset_height_range = quad_sphere_stats_to_values(global_stats)
     raw_heights = {}
     normal_heights = {}
     land_masks = {}
@@ -6412,6 +6620,7 @@ def save_quad_sphere_height_normal_faces_cached(out_dir, cfg, face_size, selecte
             cfg,
             face_size,
             selected_maps,
+            face_names=face_names,
             quad_workers=quad_workers,
             land_threshold=land_threshold,
             return_raw_stats=True,
@@ -6425,9 +6634,9 @@ def save_quad_sphere_height_normal_faces_cached(out_dir, cfg, face_size, selecte
                 normal_heights[face] = write_disk_array(cache_dir, face, "normal_height", maps["_normal_height"], np.float32)
                 land_masks[face] = write_disk_array(cache_dir, face, "land_mask", maps["_land_mask"], np.bool_)
             del maps, raw_height
-        height_range = (height_min, height_max) if math.isfinite(height_min) else None
+        height_range = preset_height_range if preset_height_range is not None else ((height_min, height_max) if math.isfinite(height_min) else None)
 
-        for face in QUAD_SPHERE_FACES:
+        for face in selected_quad_sphere_faces(face_names):
             raw_height = read_disk_array(raw_heights[face])
             maps = {}
             if "height" in selected_maps:
@@ -6451,20 +6660,40 @@ def save_quad_sphere_height_normal_faces_cached(out_dir, cfg, face_size, selecte
     land_masks.clear()
 
 
-def save_quad_sphere_maps_low_memory(out_dir, cfg, face_size, map_names=None, quad_workers=1, write_cubemap_crosses=None, planet_name=None, cache_dir=None):
+def save_quad_sphere_maps_low_memory(
+    out_dir,
+    cfg,
+    face_size,
+    map_names=None,
+    quad_workers=1,
+    write_cubemap_crosses=None,
+    planet_name=None,
+    cache_dir=None,
+    face_names=None,
+    stats_cache_dir=None,
+):
     requested_maps = selected_texture_maps(map_names)
+    requested_faces = selected_quad_sphere_faces(face_names)
     selected_maps = requested_maps
     resolved_quad_workers = resolve_quad_generation_workers(face_size, selected_maps, quad_workers)
+    global_stats = get_or_compute_quad_sphere_global_stats(
+        out_dir,
+        cfg,
+        face_size,
+        selected_maps,
+        quad_workers=resolved_quad_workers,
+        stats_cache_dir=stats_cache_dir,
+    )
     if selected_maps == ("color",) and (resolved_quad_workers == 1 or should_tile_quad_sphere_color_faces(face_size)):
-        save_quad_sphere_color_faces_tiled(out_dir, cfg, face_size, planet_name=planet_name)
+        save_quad_sphere_color_faces_tiled(out_dir, cfg, face_size, planet_name=planet_name, face_names=requested_faces, global_stats=global_stats)
         if write_cubemap_crosses is None:
             write_cubemap_crosses = should_write_quad_sphere_crosses(face_size)
-        if write_cubemap_crosses:
+        if write_cubemap_crosses and quad_sphere_face_maps_available(out_dir, selected_maps, face_size, planet_name=planet_name, face_names=QUAD_SPHERE_FACES):
             save_quad_sphere_cubemap_crosses_from_files(out_dir, face_size, selected_maps, planet_name=planet_name)
-        return
+        return global_stats
 
     if "color" in selected_maps and should_tile_quad_sphere_color_faces(face_size):
-        save_quad_sphere_color_faces_tiled(out_dir, cfg, face_size, planet_name=planet_name)
+        save_quad_sphere_color_faces_tiled(out_dir, cfg, face_size, planet_name=planet_name, face_names=requested_faces, global_stats=global_stats)
         selected_maps = tuple(name for name in selected_maps if name != "color")
         resolved_quad_workers = resolve_quad_generation_workers(face_size, selected_maps, quad_workers)
 
@@ -6477,24 +6706,22 @@ def save_quad_sphere_maps_low_memory(out_dir, cfg, face_size, map_names=None, qu
             quad_workers=resolved_quad_workers,
             planet_name=planet_name,
             cache_dir=cache_dir,
+            face_names=requested_faces,
+            global_stats=global_stats,
         )
         if write_cubemap_crosses is None:
             write_cubemap_crosses = should_write_quad_sphere_crosses(face_size)
-        if write_cubemap_crosses:
+        if write_cubemap_crosses and quad_sphere_face_maps_available(out_dir, requested_maps, face_size, planet_name=planet_name, face_names=QUAD_SPHERE_FACES):
             save_quad_sphere_cubemap_crosses_from_files(out_dir, face_size, requested_maps, planet_name=planet_name)
-        return
+        return global_stats
 
-    land_threshold, cloud_threshold, moisture_range, height_range = compute_quad_sphere_global_stats(
-        cfg,
-        face_size,
-        selected_maps,
-        quad_workers=resolved_quad_workers,
-    )
+    land_threshold, cloud_threshold, moisture_range, height_range = quad_sphere_stats_to_values(global_stats)
     for group in quad_sphere_low_memory_map_groups(selected_maps):
         for face, maps in iter_quad_sphere_face_pass(
             cfg,
             face_size,
             group,
+            face_names=requested_faces,
             quad_workers=resolved_quad_workers,
             land_threshold=land_threshold,
             cloud_threshold=cloud_threshold,
@@ -6509,12 +6736,15 @@ def save_quad_sphere_maps_low_memory(out_dir, cfg, face_size, map_names=None, qu
     reconcile_quad_sphere_scalar_seams_from_files(out_dir, selected_maps, planet_name=planet_name, face_size=face_size)
     if write_cubemap_crosses is None:
         write_cubemap_crosses = should_write_quad_sphere_crosses(face_size)
-    if write_cubemap_crosses:
+    if write_cubemap_crosses and quad_sphere_face_maps_available(out_dir, requested_maps, face_size, planet_name=planet_name, face_names=QUAD_SPHERE_FACES):
         save_quad_sphere_cubemap_crosses_from_files(out_dir, face_size, requested_maps, planet_name=planet_name)
+    return global_stats
 
 
-def write_quad_sphere_manifest(out_dir, face_size, map_names=None, write_cubemap_crosses=None, planet_name=None):
+def write_quad_sphere_manifest(out_dir, face_size, map_names=None, write_cubemap_crosses=None, planet_name=None, face_names=None):
     selected = selected_texture_maps(map_names)
+    faces = selected_quad_sphere_faces(face_names)
+    partial_faces = set(faces) != set(QUAD_SPHERE_FACES)
     if write_cubemap_crosses is None:
         write_cubemap_crosses = should_write_quad_sphere_crosses(face_size)
     face_maps = {
@@ -6522,23 +6752,24 @@ def write_quad_sphere_manifest(out_dir, face_size, map_names=None, write_cubemap
             quad_sphere_face_relative_path(name, face, face_size, planet_name=planet_name)
             for name in selected
         ]
-        for face in QUAD_SPHERE_FACES
+        for face in faces
     }
     flat_face_maps = [
         file_name
-        for face in QUAD_SPHERE_FACES
+        for face in faces
         for file_name in face_maps[face]
     ]
     map_bit_depths = {
         quad_sphere_face_relative_path(name, face, face_size, planet_name=planet_name): png_bit_depth_for_map(name)
-        for face in QUAD_SPHERE_FACES
+        for face in faces
         for name in selected
     }
     manifest = {
         "layout": "quad_sphere_cubemap_faces",
         "planet_name": sanitized_asset_name(planet_name) if planet_name else None,
         "face_size": face_size,
-        "faces": ["px", "nx", "py", "ny", "pz", "nz"],
+        "faces": list(faces),
+        "all_faces": list(QUAD_SPHERE_FACES),
         "map_roles": list(selected),
         "maps": flat_face_maps,
         "face_maps": face_maps,
@@ -6567,7 +6798,11 @@ def write_quad_sphere_manifest(out_dir, face_size, map_names=None, write_cubemap
             "written": bool(write_cubemap_crosses),
             "skip_reason": None
             if write_cubemap_crosses
-            else "Skipped because PLANET_WRITE_STITCHED_CROSSES is disabled.",
+            else (
+                "Skipped because this manifest covers a partial face batch."
+                if partial_faces
+                else "Skipped because stitched cubemap-cross output is disabled."
+            ),
             "empty_cells": {
                 "default": "transparent alpha 0",
                 "cloud_mask": f"{CUBEMAP_CROSS_BLEED_PIXELS}px copied edge bleed around face borders; remaining empty-cell interior stays alpha 0",
@@ -6728,7 +6963,20 @@ def build_arg_parser():
     parser.add_argument("--height", type=int, default=1024)
     parser.add_argument("--quad-sphere", action="store_true", help="Write quad-sphere map face folders instead of equirectangular maps.")
     parser.add_argument("--face-size", type=int, default=None, help="Quad-sphere face size in pixels. Defaults to min(width, height).")
+    parser.add_argument(
+        "--quad-faces",
+        nargs="+",
+        choices=QUAD_SPHERE_FACES,
+        default=None,
+        help="Quad-sphere faces to generate. Omit to generate all six faces.",
+    )
     parser.add_argument("--quad-workers", default=None, help="Worker processes for quad-sphere face generation. Defaults to PLANET_QUAD_WORKERS or auto.")
+    parser.add_argument(
+        "--write-stitched-crosses",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Write stitched cubemap-cross atlases when all six face files are available.",
+    )
     parser.add_argument("--out", type=Path, default=Path("planet_output"))
     parser.add_argument("--planet-name", default=None, help="Planet name/designation used in texture-map filenames.")
     parser.add_argument(
@@ -6767,15 +7015,51 @@ def build_arg_parser():
     return parser
 
 
-def generate_planet_output(cfg, out_dir, quad_sphere=False, face_size=None, texture_maps=None, quad_workers=1, planet_name=None):
+def generate_planet_output(
+    cfg,
+    out_dir,
+    quad_sphere=False,
+    face_size=None,
+    texture_maps=None,
+    quad_workers=1,
+    planet_name=None,
+    quad_faces=None,
+    write_stitched_crosses=None,
+):
     selected_maps = selected_texture_maps(texture_maps)
+    selected_faces = selected_quad_sphere_faces(quad_faces)
     asset_planet_name = sanitized_asset_name(planet_name, out_dir.name) if planet_name else None
     if quad_sphere:
         resolved_quad_workers = resolve_quad_workers(quad_workers)
         quad_dir = out_dir / "quad_sphere"
         quad_dir.mkdir(parents=True, exist_ok=True)
-        save_quad_sphere_maps_low_memory(quad_dir, cfg, face_size, selected_maps, quad_workers=resolved_quad_workers, planet_name=asset_planet_name)
-        write_quad_sphere_manifest(out_dir, face_size, selected_maps, planet_name=asset_planet_name)
+        save_quad_sphere_maps_low_memory(
+            quad_dir,
+            cfg,
+            face_size,
+            selected_maps,
+            quad_workers=resolved_quad_workers,
+            write_cubemap_crosses=write_stitched_crosses,
+            planet_name=asset_planet_name,
+            face_names=selected_faces,
+        )
+        if write_stitched_crosses is None:
+            write_stitched_crosses = should_write_quad_sphere_crosses(face_size)
+        stitched_written = bool(write_stitched_crosses) and quad_sphere_face_maps_available(
+            quad_dir,
+            selected_maps,
+            face_size,
+            planet_name=asset_planet_name,
+            face_names=QUAD_SPHERE_FACES,
+        )
+        write_quad_sphere_manifest(
+            out_dir,
+            face_size,
+            selected_maps,
+            write_cubemap_crosses=stitched_written,
+            planet_name=asset_planet_name,
+            face_names=selected_faces,
+        )
     else:
         maps = build_maps(cfg, selected_maps)
         save_map_set(out_dir, maps, selected_maps, planet_name=asset_planet_name)
@@ -6789,6 +7073,8 @@ def generate_planet_output(cfg, out_dir, quad_sphere=False, face_size=None, text
     metadata["planet_name"] = asset_planet_name
     if quad_sphere:
         metadata["quad_sphere_face_size"] = face_size
+        metadata["output_quad_faces"] = list(selected_faces)
+        metadata["write_stitched_crosses"] = bool(write_stitched_crosses)
     resolved_palette = resolve_planet_colors(cfg)
     metadata["resolved_palette_rgb"] = {
         name: [int(round(channel)) for channel in color]
@@ -6828,12 +7114,32 @@ def main():
     warmup_numba()
     if args.profile:
         run_profiled(
-            lambda: generate_planet_output(cfg, out_dir, args.quad_sphere, face_size, args.texture_maps, args.quad_workers, args.planet_name),
+            lambda: generate_planet_output(
+                cfg,
+                out_dir,
+                args.quad_sphere,
+                face_size,
+                args.texture_maps,
+                args.quad_workers,
+                args.planet_name,
+                args.quad_faces,
+                args.write_stitched_crosses,
+            ),
             limit=args.profile_limit,
             profile_out=args.profile_out,
         )
     else:
-        generate_planet_output(cfg, out_dir, args.quad_sphere, face_size, args.texture_maps, args.quad_workers, args.planet_name)
+        generate_planet_output(
+            cfg,
+            out_dir,
+            args.quad_sphere,
+            face_size,
+            args.texture_maps,
+            args.quad_workers,
+            args.planet_name,
+            args.quad_faces,
+            args.write_stitched_crosses,
+        )
     print(f"Wrote planet maps to {out_dir.resolve()}")
 
 

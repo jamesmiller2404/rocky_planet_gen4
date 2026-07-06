@@ -29,7 +29,9 @@ Example:
 | `--planet-name` | unset | Optional planet name/designation used as the first segment of texture-map filenames, for example `Verdaxis_color_equirect_2048x1024_8bit.png`. The browser UI always uses the Planet name / designation field, falling back to the save folder name when that field is blank. |
 | `--quad-sphere` | off | Writes cube/quad-sphere face PNGs grouped by map role instead of only equirectangular maps. |
 | `--face-size` | `min(width, height)` | Quad-sphere face size in pixels. Minimum `32` when `--quad-sphere` is used. |
+| `--quad-faces` | all six faces | Quad-sphere face IDs to generate for this run, such as `px nx` or `py ny pz`. Valid faces are `px`, `nx`, `py`, `ny`, `pz`, and `nz`. |
 | `--quad-workers` | `PLANET_QUAD_WORKERS` or `auto` | Worker processes for quad-sphere face generation. Auto uses up to the six quad-sphere faces; use `1` for serial generation. |
+| `--write-stitched-crosses` / `--no-write-stitched-crosses` | environment/default on | Writes stitched cubemap-cross atlases only when all six face files are available. Use `--no-write-stitched-crosses` for partial face batches. |
 | `--texture-maps` | all maps | One or more texture maps to save: `color`, `height`, `normal`, `roughness`, `land_ocean_mask`, `shoreline_mask`, `ocean_depth`, `cloud_mask`, `cloud_shadow`, `nebula_color`, `nebula_alpha`, `nebula_stars`, `city_lights`, `atmosphere_haze`, `emissive_heat`. The old `land_mask` name is still accepted as an alias and writes `land_ocean_mask` files. |
 | `--profile` | off | Prints `cProfile` timing for generation, saving, preview, and metadata writes. |
 | `--profile-limit` | `40` | Number of timing rows to print when `--profile` is enabled. |
@@ -81,6 +83,12 @@ For quad-sphere output:
 
 ```powershell
 .\.venv\Scripts\python.exe rocky_planet_gen.py --preset earthlike --seed 42 --quad-sphere --face-size 2048 --out output/profile_quad --profile
+```
+
+Partial quad-sphere face batch:
+
+```powershell
+.\.venv\Scripts\python.exe rocky_planet_gen.py --preset earthlike --seed 42 --quad-sphere --face-size 4096 --texture-maps color height normal --quad-faces px nx --no-write-stitched-crosses --out output/earthlike_quad_px_nx
 ```
 
 To save raw profile data for a viewer such as SnakeViz:
@@ -140,6 +148,8 @@ quad_sphere/roughness_faces/
 ```
 
 For example, a named color face set is stored as `quad_sphere/color_faces/Verdaxis_color_cubemap_px_1024x1024_8bit.png` through `quad_sphere/color_faces/Verdaxis_color_cubemap_nz_1024x1024_8bit.png`; height faces are stored under `quad_sphere/height_faces/`, normal faces under `quad_sphere/normal_faces/`, and so on. It also writes cubemap-cross atlases such as `quad_sphere/Verdaxis_color_cubemap_cross_3072x4096_8bit.png`. Large stitched atlases are streamed from the saved face PNGs instead of assembled as one giant in-memory array. Cloud cubemap-cross atlases include copied edge bleed in otherwise empty cells so filtered sampling does not blend face borders into transparent black. Color-only quad-sphere saves are tiled internally to reduce peak memory when running serially or at 4096 px faces and larger. Set `PLANET_QUAD_TILE_ROWS` to a smaller value such as `64` if the computer still runs out of memory. Set `PLANET_WRITE_STITCHED_CROSSES=0` before running the CLI or web UI only if you want to skip stitched atlas output.
+
+The browser UI Save tab also lets you choose one or more quad faces for a partial batch. The generator writes `quad_sphere/quad_sphere_global_stats.json` beside the face folders and keeps a reusable hash-named copy under `output/_quad_sphere_global_stats/`. Later batches with the same seed, face size, and planet settings reuse those shared thresholds/ranges so separately generated faces stay consistent. Stitched cubemap-cross atlases are written only when all six face files for the selected map roles are available; otherwise the separate face PNGs can be stitched manually in Photoshop or completed by later batches.
 
 ## Presets
 
