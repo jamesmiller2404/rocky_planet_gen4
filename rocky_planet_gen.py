@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import argparse
 import cProfile
+import ctypes
 import colorsys
 import hashlib
 import json
@@ -42,6 +43,8 @@ import os
 import pstats
 import struct
 import tempfile
+import threading
+import time
 import zlib
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import asdict, dataclass
@@ -55,6 +58,227 @@ from scipy import ndimage
 Image.MAX_IMAGE_PIXELS = None
 
 USE_FUSED_FBM = os.environ.get("PLANET_USE_FUSED_FBM", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _process_tree_supported():
+    return os.name == "nt" or Path("/proc").exists()
+
+
+def _linux_parent_pid_map():
+    proc_dir = Path("/proc")
+    if not proc_dir.exists():
+        return {}
+    parent_map = {}
+    for entry in proc_dir.iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            text = (entry / "stat").read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        close_paren = text.rfind(")")
+        if close_paren < 0:
+            continue
+        fields = text[close_paren + 2 :].split()
+        if len(fields) < 2:
+            continue
+        try:
+            parent_map[int(entry.name)] = int(fields[1])
+        except ValueError:
+            continue
+    return parent_map
+
+
+def _windows_parent_pid_map():
+    if os.name != "nt":
+        return {}
+    from ctypes import wintypes
+
+    class PROCESSENTRY32W(ctypes.Structure):
+        _fields_ = [
+            ("dwSize", wintypes.DWORD),
+            ("cntUsage", wintypes.DWORD),
+            ("th32ProcessID", wintypes.DWORD),
+            ("th32DefaultHeapID", ctypes.c_size_t),
+            ("th32ModuleID", wintypes.DWORD),
+            ("cntThreads", wintypes.DWORD),
+            ("th32ParentProcessID", wintypes.DWORD),
+            ("pcPriClassBase", ctypes.c_long),
+            ("dwFlags", wintypes.DWORD),
+            ("szExeFile", wintypes.WCHAR * 260),
+        ]
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+    kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    kernel32.Process32FirstW.argtypes = [wintypes.HANDLE, ctypes.POINTER(PROCESSENTRY32W)]
+    kernel32.Process32FirstW.restype = wintypes.BOOL
+    kernel32.Process32NextW.argtypes = [wintypes.HANDLE, ctypes.POINTER(PROCESSENTRY32W)]
+    kernel32.Process32NextW.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    snapshot = kernel32.CreateToolhelp32Snapshot(0x00000002, 0)
+    if snapshot == ctypes.c_void_p(-1).value:
+        return {}
+    parent_map = {}
+    try:
+        entry = PROCESSENTRY32W()
+        entry.dwSize = ctypes.sizeof(entry)
+        has_entry = kernel32.Process32FirstW(snapshot, ctypes.byref(entry))
+        while has_entry:
+            parent_map[int(entry.th32ProcessID)] = int(entry.th32ParentProcessID)
+            has_entry = kernel32.Process32NextW(snapshot, ctypes.byref(entry))
+    finally:
+        kernel32.CloseHandle(snapshot)
+    return parent_map
+
+
+def _descendant_pids(root_pid):
+    parent_map = _windows_parent_pid_map() if os.name == "nt" else _linux_parent_pid_map()
+    if not parent_map:
+        return []
+    children = {}
+    for pid, parent_pid in parent_map.items():
+        children.setdefault(parent_pid, []).append(pid)
+    descendants = []
+    stack = list(children.get(int(root_pid), []))
+    while stack:
+        pid = stack.pop()
+        descendants.append(pid)
+        stack.extend(children.get(pid, []))
+    return descendants
+
+
+def _linux_rss_bytes(pid):
+    try:
+        resident_pages = int((Path("/proc") / str(pid) / "statm").read_text(encoding="utf-8").split()[1])
+        return resident_pages * int(os.sysconf("SC_PAGE_SIZE"))
+    except (OSError, IndexError, ValueError):
+        return None
+
+
+def _windows_rss_bytes(pid):
+    if os.name != "nt":
+        return None
+    from ctypes import wintypes
+
+    class PROCESS_MEMORY_COUNTERS_EX(ctypes.Structure):
+        _fields_ = [
+            ("cb", wintypes.DWORD),
+            ("PageFaultCount", wintypes.DWORD),
+            ("PeakWorkingSetSize", ctypes.c_size_t),
+            ("WorkingSetSize", ctypes.c_size_t),
+            ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+            ("PagefileUsage", ctypes.c_size_t),
+            ("PeakPagefileUsage", ctypes.c_size_t),
+            ("PrivateUsage", ctypes.c_size_t),
+        ]
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    psapi = ctypes.WinDLL("psapi", use_last_error=True)
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    psapi.GetProcessMemoryInfo.argtypes = [wintypes.HANDLE, ctypes.POINTER(PROCESS_MEMORY_COUNTERS_EX), wintypes.DWORD]
+    psapi.GetProcessMemoryInfo.restype = wintypes.BOOL
+    handle = kernel32.OpenProcess(0x0400 | 0x0010, False, int(pid))
+    if not handle:
+        return None
+    try:
+        counters = PROCESS_MEMORY_COUNTERS_EX()
+        counters.cb = ctypes.sizeof(counters)
+        if not psapi.GetProcessMemoryInfo(handle, ctypes.byref(counters), counters.cb):
+            return None
+        return int(counters.WorkingSetSize)
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def _rss_bytes(pid):
+    if os.name == "nt":
+        return _windows_rss_bytes(pid)
+    return _linux_rss_bytes(pid)
+
+
+class PeakMemoryMonitor:
+    def __init__(self, interval_seconds=0.5):
+        self.interval_seconds = max(0.1, float(interval_seconds))
+        self.root_pid = os.getpid()
+        self.peak_bytes = 0
+        self.samples = 0
+        self.process_count_at_peak = 0
+        self.includes_child_processes = _process_tree_supported()
+        self._stop_event = threading.Event()
+        self._thread = None
+
+    def __enter__(self):
+        self.start()
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        self.stop()
+
+    def start(self):
+        if self._thread is not None:
+            return
+        self._sample()
+        self._thread = threading.Thread(target=self._run, name="peak-memory-monitor", daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        if self._thread is not None:
+            self._stop_event.set()
+            self._thread.join(timeout=self.interval_seconds * 2.0)
+            self._thread = None
+        self._sample()
+        return self.report()
+
+    def _run(self):
+        while not self._stop_event.wait(self.interval_seconds):
+            self._sample()
+
+    def _sample(self):
+        pids = [self.root_pid]
+        if self.includes_child_processes:
+            pids.extend(_descendant_pids(self.root_pid))
+        total = 0
+        counted = 0
+        for pid in pids:
+            rss = _rss_bytes(pid)
+            if rss is None:
+                continue
+            total += rss
+            counted += 1
+        if counted:
+            self.samples += 1
+            if total > self.peak_bytes:
+                self.peak_bytes = int(total)
+                self.process_count_at_peak = counted
+
+    def report(self):
+        return {
+            "peak_bytes": int(self.peak_bytes),
+            "peak_mib": round(self.peak_bytes / (1024 ** 2), 1) if self.peak_bytes else None,
+            "sample_interval_seconds": self.interval_seconds,
+            "samples": self.samples,
+            "process_count_at_peak": self.process_count_at_peak,
+            "includes_child_processes": bool(self.includes_child_processes),
+            "source": "sampled_process_tree_rss",
+        }
+
+
+def format_peak_memory_report(report):
+    if not report or not report.get("peak_bytes"):
+        return "n/a"
+    peak_mib = report["peak_bytes"] / (1024 ** 2)
+    if peak_mib >= 1024:
+        value = f"{peak_mib / 1024:.2f} GiB"
+    else:
+        value = f"{peak_mib:.1f} MiB"
+    scope = "process tree" if report.get("includes_child_processes") else "main process"
+    return f"{value} sampled {scope} RSS"
 
 
 PLANET_FAMILIES = {
@@ -4660,10 +4884,11 @@ def build_maps_from_vectors(
     return_raw_stats=False,
     map_names=None,
     stat_fields=None,
+    raw_stats_only=None,
 ):
     selected_maps = selected_texture_maps(map_names)
     stats = set(stat_fields or ())
-    stats_only = return_raw_stats and bool(stats)
+    stats_only = return_raw_stats and (bool(stats) if raw_stats_only is None else bool(raw_stats_only))
     requested_outputs = set() if stats_only else set(selected_maps)
     needs_cloud = bool({"cloud_mask", "cloud_shadow"} & requested_outputs) or "cloud" in stats
     needs_moisture = bool({"color", "city_lights"} & requested_outputs) or "moisture" in stats
@@ -5376,8 +5601,10 @@ def build_maps_from_vectors(
             maps["_moisture_input"] = moisture_input
         if raw_height is not None:
             maps["_raw_height"] = raw_height
-        maps["_continent_land"] = continent_land.astype(np.float32)
-        maps["_island_land"] = island_land.astype(np.float32)
+        if "normal_height" in stats and normal_height is not None:
+            maps["_normal_height"] = normal_height
+        if "land_mask" in stats:
+            maps["_land_mask"] = land
         if regional_debug is not None:
             maps["_continent_color_region"] = regional_debug
     return maps
@@ -5894,6 +6121,30 @@ def resolve_quad_workers(value=None):
     if workers < 1:
         raise ValueError("Quad workers must be at least 1.")
     return min(workers, len(QUAD_SPHERE_FACES))
+
+
+def resolve_quad_tile_workers(value=None):
+    if value is None:
+        value = os.environ.get("PLANET_QUAD_TILE_WORKERS", "auto")
+    cpu_count = max(1, os.cpu_count() or 1)
+    if isinstance(value, str) and value.strip().lower() in {"", "auto", "default"}:
+        return max(1, min(cpu_count, len(QUAD_SPHERE_FACES)))
+    try:
+        workers = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Quad tile workers must be an integer or 'auto'.") from exc
+    if workers < 1:
+        raise ValueError("Quad tile workers must be at least 1.")
+    return min(workers, cpu_count)
+
+
+def resolve_quad_parallel_mode(value=None):
+    mode = str(value or "face").strip().lower()
+    if mode in {"", "balanced", "face", "faces"}:
+        return "face"
+    if mode in {"tile", "tiles", "all_cores", "all-cores"}:
+        return "tile"
+    raise ValueError("Quad parallel mode must be 'face' or 'tile'.")
 
 
 def resolve_quad_height_normal_workers(face_size, selected_maps, quad_workers=1):
@@ -6493,11 +6744,234 @@ def read_disk_array(spec, mode="r"):
     return np.memmap(spec["path"], dtype=np.dtype(spec["dtype"]), mode=mode, shape=tuple(spec["shape"]))
 
 
+def create_disk_array(cache_dir, face, name, shape, dtype):
+    dtype = np.dtype(dtype)
+    path = Path(cache_dir) / f"{face}_{name}.dat"
+    cached = np.memmap(path, dtype=dtype, mode="w+", shape=tuple(shape))
+    cached.flush()
+    del cached
+    return {"path": path, "shape": tuple(shape), "dtype": dtype.str}
+
+
 def iter_quad_sphere_face_tiles(face, face_size, tile_rows):
     for row_start in range(0, int(face_size), int(tile_rows)):
         row_stop = min(int(face_size), row_start + int(tile_rows))
         x, y, z, lat, lon = quad_sphere_face_vectors_tile(face, face_size, row_start, row_stop)
         yield row_start, row_stop, x, y, z, lat, lon
+
+
+def iter_quad_sphere_tile_jobs(face_names, face_size, tile_rows):
+    for face in selected_quad_sphere_faces(face_names):
+        for row_start in range(0, int(face_size), int(tile_rows)):
+            row_stop = min(int(face_size), row_start + int(tile_rows))
+            yield face, row_start, row_stop
+
+
+def build_quad_sphere_tile_worker(job):
+    (
+        cfg,
+        face,
+        face_size,
+        row_start,
+        row_stop,
+        selected_maps,
+        land_threshold,
+        cloud_threshold,
+        moisture_range,
+        height_range,
+        return_raw_stats,
+        stat_fields,
+        raw_stats_only,
+    ) = job
+    x, y, z, lat, lon = quad_sphere_face_vectors_tile(face, face_size, row_start, row_stop)
+    maps = build_maps_from_vectors(
+        cfg,
+        x,
+        y,
+        z,
+        lat,
+        lon,
+        normal_wrap_x=False,
+        land_threshold=land_threshold,
+        cloud_threshold=cloud_threshold,
+        moisture_range=moisture_range,
+        height_range=height_range,
+        return_raw_stats=return_raw_stats,
+        map_names=selected_maps,
+        stat_fields=stat_fields,
+        raw_stats_only=raw_stats_only,
+    )
+    return face, row_start, row_stop, maps
+
+
+def iter_quad_sphere_tile_pass(
+    cfg,
+    face_size,
+    selected_maps,
+    *,
+    face_names=None,
+    tile_rows=None,
+    tile_workers=1,
+    land_threshold=None,
+    cloud_threshold=None,
+    moisture_range=None,
+    height_range=None,
+    return_raw_stats=False,
+    stat_fields=None,
+    raw_stats_only=None,
+):
+    tile_rows = resolve_quad_tile_rows(face_size) if tile_rows is None else int(tile_rows)
+    jobs = [
+        (
+            cfg,
+            face,
+            face_size,
+            row_start,
+            row_stop,
+            selected_maps,
+            land_threshold,
+            cloud_threshold,
+            moisture_range,
+            height_range,
+            return_raw_stats,
+            tuple(stat_fields or ()),
+            raw_stats_only,
+        )
+        for face, row_start, row_stop in iter_quad_sphere_tile_jobs(face_names, face_size, tile_rows)
+    ]
+    worker_count = max(1, min(int(tile_workers), len(jobs) or 1))
+    if worker_count == 1:
+        for job in jobs:
+            yield build_quad_sphere_tile_worker(job)
+        return
+    with ProcessPoolExecutor(max_workers=worker_count, initializer=init_quad_sphere_worker) as executor:
+        yield from executor.map(build_quad_sphere_tile_worker, jobs)
+
+
+RGB_8BIT_MAPS = {"color", "nebula_color", "city_lights"}
+
+
+def tile_map_value(maps, map_name):
+    if map_name == "land_ocean_mask":
+        return maps.get("land_ocean_mask", maps.get("land_mask"))
+    return maps.get(map_name)
+
+
+def tile_map_cache_dtype(map_name):
+    return np.uint8 if map_name in RGB_8BIT_MAPS else np.float32
+
+
+def prepare_tile_for_cache(map_name, arr):
+    if map_name in RGB_8BIT_MAPS:
+        return np.clip(arr, 0, 255).astype(np.uint8, copy=False)
+    return np.asarray(arr, dtype=np.float32)
+
+
+def write_rgb8_disk_array(path, spec):
+    arr = read_disk_array(spec)
+    height, width = arr.shape[:2]
+
+    def rows():
+        for row in arr:
+            yield np.clip(row, 0, 255).astype(np.uint8).tobytes()
+
+    try:
+        write_streamed_png(path, width, height, 2, rows(), bit_depth=8)
+    finally:
+        del arr
+
+
+def write_gray8_disk_array(path, spec):
+    arr = read_disk_array(spec)
+    height, width = arr.shape[:2]
+
+    def rows():
+        for row in arr:
+            yield np.clip(row * 255.0, 0, 255).astype(np.uint8).tobytes()
+
+    try:
+        write_streamed_png(path, width, height, 0, rows(), bit_depth=8)
+    finally:
+        del arr
+
+
+def write_gray16_disk_array(path, spec):
+    arr = read_disk_array(spec)
+    height, width = arr.shape[:2]
+
+    def rows():
+        for row in arr:
+            yield np.clip(row * 65535.0, 0, 65535).astype(">u2", copy=False).tobytes()
+
+    try:
+        write_streamed_png(path, width, height, 0, rows(), bit_depth=16)
+    finally:
+        del arr
+
+
+def write_height16_from_raw_disk_array(path, raw_spec, height_range):
+    raw = read_disk_array(raw_spec)
+    height, width = raw.shape[:2]
+    minimum, maximum = height_range if height_range is not None else (float(np.min(raw)), float(np.max(raw)))
+    span = maximum - minimum
+
+    def rows():
+        for row in raw:
+            if span <= 1e-9:
+                normalized = np.zeros(row.shape, dtype=np.float32)
+            else:
+                normalized = (row.astype(np.float32, copy=False) - np.float32(minimum)) / np.float32(span)
+            yield np.clip(normalized * 65535.0, 0, 65535).astype(">u2", copy=False).tobytes()
+
+    try:
+        write_streamed_png(path, width, height, 0, rows(), bit_depth=16)
+    finally:
+        del raw
+
+
+def write_normal16_from_height_disk_arrays(path, raw_spec, normal_spec, land_spec, cfg, tile_rows=None):
+    raw_height = read_disk_array(raw_spec)
+    normal_height = read_disk_array(normal_spec)
+    land_mask = read_disk_array(land_spec) if land_spec is not None else None
+    face_size = int(normal_height.shape[0])
+    tile_rows = resolve_quad_tile_rows(face_size) if tile_rows is None else int(tile_rows)
+    use_ocean_blend = land_mask is not None and effective_ocean_wind_wave_strength(cfg) > 0.0
+
+    def rows():
+        for row_start in range(0, face_size, tile_rows):
+            row_stop = min(face_size, row_start + tile_rows)
+            halo_start = max(0, row_start - 1)
+            halo_stop = min(face_size, row_stop + 1)
+            crop_start = 1 if row_start > 0 else 0
+            crop_stop = crop_start + (row_stop - row_start)
+            normal_tile = normal_from_height(normal_height[halo_start:halo_stop, :], strength=7.5, wrap_x=False)[crop_start:crop_stop]
+            if use_ocean_blend:
+                base_tile = normal_from_height(raw_height[halo_start:halo_stop, :], strength=7.5, wrap_x=False)[crop_start:crop_stop]
+                mask_tile = land_mask[row_start:row_stop, :]
+                normal_tile = np.where(mask_tile[..., None], base_tile, normal_tile)
+                del base_tile, mask_tile
+            encoded = np.rint(np.clip(normal_tile, 0, 255) * (65535.0 / 255.0)).astype(">u2", copy=False)
+            for row in encoded:
+                yield row.tobytes()
+            del normal_tile, encoded
+
+    try:
+        write_streamed_png(path, face_size, face_size, 2, rows(), bit_depth=16)
+    finally:
+        del raw_height, normal_height, land_mask
+
+
+def write_tile_parallel_map_file(out_dir, map_name, face, face_size, spec, planet_name=None):
+    face_dir = quad_sphere_map_faces_dir(out_dir, map_name)
+    face_dir.mkdir(parents=True, exist_ok=True)
+    path = texture_map_path(face_dir, map_name, "cubemap", face_size, face_size, planet_name=planet_name, face_id=face)
+    if map_name in RGB_8BIT_MAPS:
+        write_rgb8_disk_array(path, spec)
+    elif png_bit_depth_for_map(map_name) == 16:
+        write_gray16_disk_array(path, spec)
+    else:
+        write_gray8_disk_array(path, spec)
+    return path
 
 
 def compute_quad_sphere_color_stats_tiled(cfg, face_size, tile_rows=None):
@@ -6660,6 +7134,306 @@ def save_quad_sphere_height_normal_faces_cached(
     land_masks.clear()
 
 
+def save_quad_sphere_group_tile_parallel(
+    out_dir,
+    cfg,
+    face_size,
+    selected_maps,
+    *,
+    face_names=None,
+    tile_rows=None,
+    tile_workers=1,
+    planet_name=None,
+    cache_dir=None,
+    global_stats=None,
+):
+    selected_maps = selected_texture_maps(selected_maps)
+    faces = selected_quad_sphere_faces(face_names)
+    tile_rows = resolve_quad_tile_rows(face_size) if tile_rows is None else int(tile_rows)
+    land_threshold, cloud_threshold, moisture_range, height_range = quad_sphere_stats_to_values(global_stats)
+    cache_parent = resolve_quad_raw_height_cache_parent(out_dir, cache_dir)
+    cache_parent.mkdir(parents=True, exist_ok=True)
+    map_specs = {face: {} for face in faces}
+    with tempfile.TemporaryDirectory(prefix="_quad_tile_cache_", dir=str(cache_parent)) as temp_dir:
+        for face, row_start, row_stop, maps in iter_quad_sphere_tile_pass(
+            cfg,
+            face_size,
+            selected_maps,
+            face_names=faces,
+            tile_rows=tile_rows,
+            tile_workers=tile_workers,
+            land_threshold=land_threshold,
+            cloud_threshold=cloud_threshold,
+            moisture_range=moisture_range,
+            height_range=height_range,
+        ):
+            for map_name in selected_maps:
+                arr = tile_map_value(maps, map_name)
+                if arr is None:
+                    continue
+                if map_name not in map_specs[face]:
+                    shape = (int(face_size), int(face_size)) + tuple(arr.shape[2:])
+                    map_specs[face][map_name] = create_disk_array(temp_dir, face, map_name, shape, np.float32)
+                disk_arr = read_disk_array(map_specs[face][map_name], mode="r+")
+                disk_arr[row_start:row_stop] = np.asarray(arr, dtype=np.float32)
+                disk_arr.flush()
+                del disk_arr
+            del maps
+        for face in faces:
+            for map_name in selected_maps:
+                if map_name not in map_specs[face]:
+                    raise RuntimeError(f"Tile generation did not produce {map_name} for face {face}.")
+                write_tile_parallel_map_file(out_dir, map_name, face, int(face_size), map_specs[face][map_name], planet_name=planet_name)
+
+
+def save_quad_sphere_height_normal_faces_tile_parallel(
+    out_dir,
+    cfg,
+    face_size,
+    selected_maps,
+    *,
+    face_names=None,
+    tile_rows=None,
+    tile_workers=1,
+    planet_name=None,
+    cache_dir=None,
+    global_stats=None,
+):
+    selected_maps = tuple(name for name in selected_texture_maps(selected_maps) if name in {"height", "normal"})
+    if not selected_maps:
+        return
+    faces = selected_quad_sphere_faces(face_names)
+    tile_rows = resolve_quad_tile_rows(face_size) if tile_rows is None else int(tile_rows)
+    land_threshold, _, _, height_range = quad_sphere_stats_to_values(global_stats)
+    cache_parent = resolve_quad_raw_height_cache_parent(out_dir, cache_dir)
+    cache_parent.mkdir(parents=True, exist_ok=True)
+    raw_heights = {}
+    normal_heights = {}
+    land_masks = {}
+    stat_fields = ("height", "normal_height", "land_mask") if "normal" in selected_maps else ("height",)
+    with tempfile.TemporaryDirectory(prefix="_quad_tile_height_cache_", dir=str(cache_parent)) as temp_dir:
+        for face in faces:
+            raw_heights[face] = create_disk_array(temp_dir, face, "raw_height", (int(face_size), int(face_size)), np.float32)
+            if "normal" in selected_maps:
+                normal_heights[face] = create_disk_array(temp_dir, face, "normal_height", (int(face_size), int(face_size)), np.float32)
+                land_masks[face] = create_disk_array(temp_dir, face, "land_mask", (int(face_size), int(face_size)), np.bool_)
+
+        for face, row_start, row_stop, maps in iter_quad_sphere_tile_pass(
+            cfg,
+            face_size,
+            selected_maps,
+            face_names=faces,
+            tile_rows=tile_rows,
+            tile_workers=tile_workers,
+            land_threshold=land_threshold,
+            return_raw_stats=True,
+            stat_fields=stat_fields,
+        ):
+            raw_arr = read_disk_array(raw_heights[face], mode="r+")
+            raw_arr[row_start:row_stop] = maps["_raw_height"].astype(np.float32, copy=False)
+            raw_arr.flush()
+            del raw_arr
+            if "normal" in selected_maps:
+                normal_arr = read_disk_array(normal_heights[face], mode="r+")
+                normal_arr[row_start:row_stop] = maps["_normal_height"].astype(np.float32, copy=False)
+                normal_arr.flush()
+                land_arr = read_disk_array(land_masks[face], mode="r+")
+                land_arr[row_start:row_stop] = maps["_land_mask"].astype(np.bool_, copy=False)
+                land_arr.flush()
+                del normal_arr, land_arr
+            del maps
+
+        for face in faces:
+            if "height" in selected_maps:
+                face_dir = quad_sphere_map_faces_dir(out_dir, "height")
+                face_dir.mkdir(parents=True, exist_ok=True)
+                path = texture_map_path(face_dir, "height", "cubemap", face_size, face_size, planet_name=planet_name, face_id=face)
+                write_height16_from_raw_disk_array(path, raw_heights[face], height_range)
+            if "normal" in selected_maps:
+                face_dir = quad_sphere_map_faces_dir(out_dir, "normal")
+                face_dir.mkdir(parents=True, exist_ok=True)
+                path = texture_map_path(face_dir, "normal", "cubemap", face_size, face_size, planet_name=planet_name, face_id=face)
+                write_normal16_from_height_disk_arrays(path, raw_heights[face], normal_heights[face], land_masks[face], cfg, tile_rows=tile_rows)
+
+
+def save_quad_sphere_maps_tile_parallel(
+    out_dir,
+    cfg,
+    face_size,
+    map_names=None,
+    *,
+    face_names=None,
+    tile_rows=None,
+    tile_workers=1,
+    planet_name=None,
+    cache_dir=None,
+    global_stats=None,
+):
+    selected_maps = selected_texture_maps(map_names)
+    strategy = os.environ.get("PLANET_QUAD_TILE_STRATEGY", "grouped").strip().lower()
+    if strategy not in {"fused", "fuse", "single_pass", "single-pass"}:
+        timings = {
+            "tile_strategy": "grouped",
+            "tile_group_timings": [],
+            "tile_fused_map_groups": len(quad_sphere_low_memory_map_groups(selected_maps)),
+        }
+        total_started = time.perf_counter()
+        for group in quad_sphere_low_memory_map_groups(selected_maps):
+            group_started = time.perf_counter()
+            if set(group) <= {"height", "normal"}:
+                save_quad_sphere_height_normal_faces_tile_parallel(
+                    out_dir,
+                    cfg,
+                    face_size,
+                    group,
+                    face_names=face_names,
+                    tile_rows=tile_rows,
+                    tile_workers=tile_workers,
+                    planet_name=planet_name,
+                    cache_dir=cache_dir,
+                    global_stats=global_stats,
+                )
+            else:
+                save_quad_sphere_group_tile_parallel(
+                    out_dir,
+                    cfg,
+                    face_size,
+                    group,
+                    face_names=face_names,
+                    tile_rows=tile_rows,
+                    tile_workers=tile_workers,
+                    planet_name=planet_name,
+                    cache_dir=cache_dir,
+                    global_stats=global_stats,
+                )
+            timings["tile_group_timings"].append(
+                {
+                    "maps": list(group),
+                    "seconds": round(time.perf_counter() - group_started, 3),
+                }
+            )
+        timings["tile_total_seconds"] = round(time.perf_counter() - total_started, 3)
+        return timings
+
+    faces = selected_quad_sphere_faces(face_names)
+    tile_rows = resolve_quad_tile_rows(face_size) if tile_rows is None else int(tile_rows)
+    face_size = int(face_size)
+    direct_maps = tuple(name for name in selected_maps if name not in {"height", "normal"})
+    height_normal_maps = tuple(name for name in selected_maps if name in {"height", "normal"})
+    land_threshold, cloud_threshold, moisture_range, height_range = quad_sphere_stats_to_values(global_stats)
+    cache_parent = resolve_quad_raw_height_cache_parent(out_dir, cache_dir)
+    cache_parent.mkdir(parents=True, exist_ok=True)
+    timings = {"tile_strategy": "fused"}
+    total_started = time.perf_counter()
+
+    map_specs = {face: {} for face in faces}
+    map_arrays = {}
+    raw_heights = {}
+    normal_heights = {}
+    land_masks = {}
+    stat_fields = ()
+    if height_normal_maps:
+        stat_fields = ("height", "normal_height", "land_mask") if "normal" in height_normal_maps else ("height",)
+
+    with tempfile.TemporaryDirectory(prefix="_quad_tile_fused_cache_", dir=str(cache_parent)) as temp_dir:
+        for face in faces:
+            if height_normal_maps:
+                raw_heights[face] = create_disk_array(temp_dir, face, "raw_height", (face_size, face_size), np.float32)
+            if "normal" in height_normal_maps:
+                normal_heights[face] = create_disk_array(temp_dir, face, "normal_height", (face_size, face_size), np.float32)
+                land_masks[face] = create_disk_array(temp_dir, face, "land_mask", (face_size, face_size), np.bool_)
+
+        cache_started = time.perf_counter()
+        for face, row_start, row_stop, maps in iter_quad_sphere_tile_pass(
+            cfg,
+            face_size,
+            direct_maps,
+            face_names=faces,
+            tile_rows=tile_rows,
+            tile_workers=tile_workers,
+            land_threshold=land_threshold,
+            cloud_threshold=cloud_threshold,
+            moisture_range=moisture_range,
+            height_range=height_range,
+            return_raw_stats=bool(height_normal_maps),
+            stat_fields=stat_fields,
+            raw_stats_only=not bool(direct_maps) if height_normal_maps else None,
+        ):
+            if height_normal_maps:
+                raw_arr = map_arrays.get((face, "_raw_height"))
+                if raw_arr is None:
+                    raw_arr = read_disk_array(raw_heights[face], mode="r+")
+                    map_arrays[(face, "_raw_height")] = raw_arr
+                raw_arr[row_start:row_stop] = maps["_raw_height"].astype(np.float32, copy=False)
+                if "normal" in height_normal_maps:
+                    normal_arr = map_arrays.get((face, "_normal_height"))
+                    if normal_arr is None:
+                        normal_arr = read_disk_array(normal_heights[face], mode="r+")
+                        map_arrays[(face, "_normal_height")] = normal_arr
+                    normal_arr[row_start:row_stop] = maps["_normal_height"].astype(np.float32, copy=False)
+                    land_arr = map_arrays.get((face, "_land_mask"))
+                    if land_arr is None:
+                        land_arr = read_disk_array(land_masks[face], mode="r+")
+                        map_arrays[(face, "_land_mask")] = land_arr
+                    land_arr[row_start:row_stop] = maps["_land_mask"].astype(np.bool_, copy=False)
+
+            for map_name in direct_maps:
+                arr = tile_map_value(maps, map_name)
+                if arr is None:
+                    continue
+                key = (face, map_name)
+                disk_arr = map_arrays.get(key)
+                if disk_arr is None:
+                    cached_tile = prepare_tile_for_cache(map_name, arr)
+                    shape = (face_size, face_size) + tuple(cached_tile.shape[2:])
+                    map_specs[face][map_name] = create_disk_array(temp_dir, face, map_name, shape, cached_tile.dtype)
+                    disk_arr = read_disk_array(map_specs[face][map_name], mode="r+")
+                    map_arrays[key] = disk_arr
+                else:
+                    cached_tile = prepare_tile_for_cache(map_name, arr)
+                disk_arr[row_start:row_stop] = cached_tile
+            del maps
+        timings["tile_compute_cache_seconds"] = round(time.perf_counter() - cache_started, 3)
+
+        flush_started = time.perf_counter()
+        for disk_arr in map_arrays.values():
+            disk_arr.flush()
+        timings["tile_cache_flush_seconds"] = round(time.perf_counter() - flush_started, 3)
+        map_arrays.clear()
+        disk_arr = None
+        raw_arr = None
+        normal_arr = None
+        land_arr = None
+
+        direct_write_started = time.perf_counter()
+        for face in faces:
+            for map_name in direct_maps:
+                if map_name not in map_specs[face]:
+                    raise RuntimeError(f"Tile generation did not produce {map_name} for face {face}.")
+                write_tile_parallel_map_file(out_dir, map_name, face, face_size, map_specs[face][map_name], planet_name=planet_name)
+        timings["tile_direct_write_seconds"] = round(time.perf_counter() - direct_write_started, 3)
+
+        height_write_started = time.perf_counter()
+        for face in faces:
+            if "height" in height_normal_maps:
+                face_dir = quad_sphere_map_faces_dir(out_dir, "height")
+                face_dir.mkdir(parents=True, exist_ok=True)
+                path = texture_map_path(face_dir, "height", "cubemap", face_size, face_size, planet_name=planet_name, face_id=face)
+                write_height16_from_raw_disk_array(path, raw_heights[face], height_range)
+            if "normal" in height_normal_maps:
+                face_dir = quad_sphere_map_faces_dir(out_dir, "normal")
+                face_dir.mkdir(parents=True, exist_ok=True)
+                path = texture_map_path(face_dir, "normal", "cubemap", face_size, face_size, planet_name=planet_name, face_id=face)
+                write_normal16_from_height_disk_arrays(path, raw_heights[face], normal_heights[face], land_masks[face], cfg, tile_rows=tile_rows)
+        timings["tile_height_normal_write_seconds"] = round(time.perf_counter() - height_write_started, 3)
+
+    timings["tile_total_seconds"] = round(time.perf_counter() - total_started, 3)
+    timings["tile_fused_map_groups"] = len(quad_sphere_low_memory_map_groups(selected_maps))
+    timings["tile_direct_maps"] = list(direct_maps)
+    timings["tile_height_normal_maps"] = list(height_normal_maps)
+    return timings
+
+
 def save_quad_sphere_maps_low_memory(
     out_dir,
     cfg,
@@ -6671,11 +7445,15 @@ def save_quad_sphere_maps_low_memory(
     cache_dir=None,
     face_names=None,
     stats_cache_dir=None,
+    quad_parallel_mode="face",
+    quad_tile_workers=None,
 ):
     requested_maps = selected_texture_maps(map_names)
     requested_faces = selected_quad_sphere_faces(face_names)
     selected_maps = requested_maps
+    quad_parallel_mode = resolve_quad_parallel_mode(quad_parallel_mode)
     resolved_quad_workers = resolve_quad_generation_workers(face_size, selected_maps, quad_workers)
+    resolved_tile_workers = resolve_quad_tile_workers(quad_tile_workers)
     global_stats = get_or_compute_quad_sphere_global_stats(
         out_dir,
         cfg,
@@ -6684,6 +7462,29 @@ def save_quad_sphere_maps_low_memory(
         quad_workers=resolved_quad_workers,
         stats_cache_dir=stats_cache_dir,
     )
+    if quad_parallel_mode == "tile":
+        tile_timings = save_quad_sphere_maps_tile_parallel(
+            out_dir,
+            cfg,
+            face_size,
+            selected_maps,
+            face_names=requested_faces,
+            tile_rows=resolve_quad_tile_rows(face_size),
+            tile_workers=resolved_tile_workers,
+            planet_name=planet_name,
+            cache_dir=cache_dir,
+            global_stats=global_stats,
+        )
+        reconcile_quad_sphere_scalar_seams_from_files(out_dir, selected_maps, planet_name=planet_name, face_size=face_size)
+        if write_cubemap_crosses is None:
+            write_cubemap_crosses = should_write_quad_sphere_crosses(face_size)
+        if write_cubemap_crosses and quad_sphere_face_maps_available(out_dir, requested_maps, face_size, planet_name=planet_name, face_names=QUAD_SPHERE_FACES):
+            save_quad_sphere_cubemap_crosses_from_files(out_dir, face_size, requested_maps, planet_name=planet_name)
+        global_stats["quad_parallel_mode"] = quad_parallel_mode
+        global_stats["quad_tile_workers"] = resolved_tile_workers
+        global_stats["quad_tile_rows"] = resolve_quad_tile_rows(face_size)
+        global_stats["quad_tile_stage_timings"] = tile_timings
+        return global_stats
     if selected_maps == ("color",) and (resolved_quad_workers == 1 or should_tile_quad_sphere_color_faces(face_size)):
         save_quad_sphere_color_faces_tiled(out_dir, cfg, face_size, planet_name=planet_name, face_names=requested_faces, global_stats=global_stats)
         if write_cubemap_crosses is None:
@@ -6972,6 +7773,13 @@ def build_arg_parser():
     )
     parser.add_argument("--quad-workers", default=None, help="Worker processes for quad-sphere face generation. Defaults to PLANET_QUAD_WORKERS or auto.")
     parser.add_argument(
+        "--quad-parallel-mode",
+        choices=("face", "tile"),
+        default="face",
+        help="Quad-sphere parallel strategy. 'face' uses one worker per face; 'tile' parallelizes row tiles within selected faces.",
+    )
+    parser.add_argument("--quad-tile-workers", default=None, help="Worker processes for tile-parallel quad-sphere generation. Defaults to PLANET_QUAD_TILE_WORKERS or auto.")
+    parser.add_argument(
         "--write-stitched-crosses",
         action=argparse.BooleanOptionalAction,
         default=None,
@@ -7025,69 +7833,89 @@ def generate_planet_output(
     planet_name=None,
     quad_faces=None,
     write_stitched_crosses=None,
+    quad_parallel_mode="face",
+    quad_tile_workers=None,
 ):
     selected_maps = selected_texture_maps(texture_maps)
     selected_faces = selected_quad_sphere_faces(quad_faces)
+    quad_parallel_mode = resolve_quad_parallel_mode(quad_parallel_mode)
     asset_planet_name = sanitized_asset_name(planet_name, out_dir.name) if planet_name else None
-    if quad_sphere:
-        resolved_quad_workers = resolve_quad_workers(quad_workers)
-        quad_dir = out_dir / "quad_sphere"
-        quad_dir.mkdir(parents=True, exist_ok=True)
-        save_quad_sphere_maps_low_memory(
-            quad_dir,
-            cfg,
-            face_size,
-            selected_maps,
-            quad_workers=resolved_quad_workers,
-            write_cubemap_crosses=write_stitched_crosses,
-            planet_name=asset_planet_name,
-            face_names=selected_faces,
-        )
-        if write_stitched_crosses is None:
-            write_stitched_crosses = should_write_quad_sphere_crosses(face_size)
-        stitched_written = bool(write_stitched_crosses) and quad_sphere_face_maps_available(
-            quad_dir,
-            selected_maps,
-            face_size,
-            planet_name=asset_planet_name,
-            face_names=QUAD_SPHERE_FACES,
-        )
-        write_quad_sphere_manifest(
-            out_dir,
-            face_size,
-            selected_maps,
-            write_cubemap_crosses=stitched_written,
-            planet_name=asset_planet_name,
-            face_names=selected_faces,
-        )
-    else:
-        maps = build_maps(cfg, selected_maps)
-        save_map_set(out_dir, maps, selected_maps, planet_name=asset_planet_name)
-        if "color" in selected_maps:
-            render_globe_preview(maps["color"], maps["height"], out_dir / "preview.png")
-            write_html_preview(out_dir, f"{cfg.preset} planet preview", selected_maps, planet_name=asset_planet_name, width=cfg.width, height=cfg.height)
+    memory_monitor = PeakMemoryMonitor()
+    memory_monitor.start()
+    try:
+        if quad_sphere:
+            resolved_quad_workers = resolve_quad_workers(quad_workers)
+            resolved_tile_workers = resolve_quad_tile_workers(quad_tile_workers)
+            quad_dir = out_dir / "quad_sphere"
+            quad_dir.mkdir(parents=True, exist_ok=True)
+            quad_stats = save_quad_sphere_maps_low_memory(
+                quad_dir,
+                cfg,
+                face_size,
+                selected_maps,
+                quad_workers=resolved_quad_workers,
+                write_cubemap_crosses=write_stitched_crosses,
+                planet_name=asset_planet_name,
+                face_names=selected_faces,
+                quad_parallel_mode=quad_parallel_mode,
+                quad_tile_workers=resolved_tile_workers,
+            )
+            if write_stitched_crosses is None:
+                write_stitched_crosses = should_write_quad_sphere_crosses(face_size)
+            stitched_written = bool(write_stitched_crosses) and quad_sphere_face_maps_available(
+                quad_dir,
+                selected_maps,
+                face_size,
+                planet_name=asset_planet_name,
+                face_names=QUAD_SPHERE_FACES,
+            )
+            write_quad_sphere_manifest(
+                out_dir,
+                face_size,
+                selected_maps,
+                write_cubemap_crosses=stitched_written,
+                planet_name=asset_planet_name,
+                face_names=selected_faces,
+            )
+        else:
+            maps = build_maps(cfg, selected_maps)
+            save_map_set(out_dir, maps, selected_maps, planet_name=asset_planet_name)
+            if "color" in selected_maps:
+                render_globe_preview(maps["color"], maps["height"], out_dir / "preview.png")
+                write_html_preview(out_dir, f"{cfg.preset} planet preview", selected_maps, planet_name=asset_planet_name, width=cfg.width, height=cfg.height)
+    finally:
+        memory_report = memory_monitor.stop()
 
     metadata = asdict(cfg)
     metadata["output_projection"] = "quad_sphere" if quad_sphere else "equirectangular"
     metadata["output_texture_maps"] = list(selected_maps)
     metadata["planet_name"] = asset_planet_name
+    metadata["peak_memory"] = memory_report
     if quad_sphere:
         metadata["quad_sphere_face_size"] = face_size
         metadata["output_quad_faces"] = list(selected_faces)
         metadata["write_stitched_crosses"] = bool(write_stitched_crosses)
+        metadata["quad_parallel_mode"] = quad_parallel_mode
+        metadata["quad_tile_workers"] = quad_tile_workers
+        metadata["resolved_quad_tile_workers"] = resolve_quad_tile_workers(quad_tile_workers)
+        metadata["quad_tile_rows"] = resolve_quad_tile_rows(face_size)
+        if quad_parallel_mode == "tile":
+            metadata["quad_tile_stage_timings"] = quad_stats.get("quad_tile_stage_timings", {})
     resolved_palette = resolve_planet_colors(cfg)
     metadata["resolved_palette_rgb"] = {
         name: [int(round(channel)) for channel in color]
         for name, color in resolved_palette.items()
     }
     (out_dir / "preset.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    return {"peak_memory": memory_report}
 
 
 def run_profiled(callable_obj, limit=40, profile_out=None):
     profiler = cProfile.Profile()
     profiler.enable()
+    result = None
     try:
-        callable_obj()
+        result = callable_obj()
     finally:
         profiler.disable()
     if profile_out is not None:
@@ -7096,6 +7924,7 @@ def run_profiled(callable_obj, limit=40, profile_out=None):
         print(f"Wrote raw profile data to {profile_out.resolve()}")
     stats = pstats.Stats(profiler).strip_dirs().sort_stats("cumtime")
     stats.print_stats(max(1, int(limit)))
+    return result
 
 
 def main():
@@ -7113,7 +7942,7 @@ def main():
 
     warmup_numba()
     if args.profile:
-        run_profiled(
+        result = run_profiled(
             lambda: generate_planet_output(
                 cfg,
                 out_dir,
@@ -7124,12 +7953,14 @@ def main():
                 args.planet_name,
                 args.quad_faces,
                 args.write_stitched_crosses,
+                args.quad_parallel_mode,
+                args.quad_tile_workers,
             ),
             limit=args.profile_limit,
             profile_out=args.profile_out,
         )
     else:
-        generate_planet_output(
+        result = generate_planet_output(
             cfg,
             out_dir,
             args.quad_sphere,
@@ -7139,7 +7970,12 @@ def main():
             args.planet_name,
             args.quad_faces,
             args.write_stitched_crosses,
+            args.quad_parallel_mode,
+            args.quad_tile_workers,
         )
+    memory_report = (result or {}).get("peak_memory")
+    if memory_report:
+        print(f"Peak memory use: {format_peak_memory_report(memory_report)}")
     print(f"Wrote planet maps to {out_dir.resolve()}")
 
 

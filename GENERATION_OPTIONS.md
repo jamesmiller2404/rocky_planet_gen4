@@ -10,6 +10,8 @@ Basic usage:
 
 The generator writes baked texture maps and preview files. All preset options can be overridden from the command line by using the option name with hyphens instead of underscores.
 
+CLI runs print a sampled peak memory readout after generation and store the same `peak_memory` object in `preset.json`. Browser UI saves show Peak memory in the Generation Report modal and write it to `generation_report.json`. The value is sampled process-tree RSS, so quad-sphere worker processes are included on Windows and Linux, but very brief allocation spikes between samples may not be captured.
+
 Example:
 
 ```powershell
@@ -31,6 +33,8 @@ Example:
 | `--face-size` | `min(width, height)` | Quad-sphere face size in pixels. Minimum `32` when `--quad-sphere` is used. |
 | `--quad-faces` | all six faces | Quad-sphere face IDs to generate for this run, such as `px nx` or `py ny pz`. Valid faces are `px`, `nx`, `py`, `ny`, `pz`, and `nz`. |
 | `--quad-workers` | `PLANET_QUAD_WORKERS` or `auto` | Worker processes for quad-sphere face generation. Auto uses up to the six quad-sphere faces; use `1` for serial generation. |
+| `--quad-parallel-mode` | `face` | Quad-sphere parallel strategy. `face` is the safer balanced mode; `tile` splits selected faces into row tiles so multiple workers can generate one face. |
+| `--quad-tile-workers` | `PLANET_QUAD_TILE_WORKERS` or `auto` | Worker processes for tile-parallel quad-sphere generation. Auto uses up to `min(os.cpu_count(), 6)` workers and is independent of selected face count. |
 | `--write-stitched-crosses` / `--no-write-stitched-crosses` | environment/default on | Writes stitched cubemap-cross atlases only when all six face files are available. Use `--no-write-stitched-crosses` for partial face batches. |
 | `--texture-maps` | all maps | One or more texture maps to save: `color`, `height`, `normal`, `roughness`, `land_ocean_mask`, `shoreline_mask`, `ocean_depth`, `cloud_mask`, `cloud_shadow`, `nebula_color`, `nebula_alpha`, `nebula_stars`, `city_lights`, `atmosphere_haze`, `emissive_heat`. The old `land_mask` name is still accepted as an alias and writes `land_ocean_mask` files. |
 | `--profile` | off | Prints `cProfile` timing for generation, saving, preview, and metadata writes. |
@@ -91,6 +95,14 @@ Partial quad-sphere face batch:
 .\.venv\Scripts\python.exe rocky_planet_gen.py --preset earthlike --seed 42 --quad-sphere --face-size 4096 --texture-maps color height normal --quad-faces px nx --no-write-stitched-crosses --out output/earthlike_quad_px_nx
 ```
 
+Tile-parallel single-face batch:
+
+```powershell
+.\.venv\Scripts\python.exe rocky_planet_gen.py --preset earthlike --seed 42 --quad-sphere --face-size 4096 --texture-maps color height normal --quad-faces px --quad-parallel-mode tile --quad-tile-workers 6 --no-write-stitched-crosses --out output/earthlike_quad_px_tile
+```
+
+Tile-parallel mode defaults to grouped tile passes because that is faster for large one-face saves on disk-bound systems. The CLI `preset.json` and browser UI `generation_report.json` record `quad_tile_stage_timings` with the selected strategy, per-group timings, and total tile time. An experimental fused strategy is still available with `PLANET_QUAD_TILE_STRATEGY=fused`; it reduces repeated terrain/noise setup by caching selected maps through disk-backed arrays, but it can be slower when temporary-cache I/O dominates. If Windows starts paging or the app crashes, reduce `--quad-tile-workers`, select fewer maps, or generate fewer faces per run.
+
 To save raw profile data for a viewer such as SnakeViz:
 
 ```powershell
@@ -150,6 +162,8 @@ quad_sphere/roughness_faces/
 For example, a named color face set is stored as `quad_sphere/color_faces/Verdaxis_color_cubemap_px_1024x1024_8bit.png` through `quad_sphere/color_faces/Verdaxis_color_cubemap_nz_1024x1024_8bit.png`; height faces are stored under `quad_sphere/height_faces/`, normal faces under `quad_sphere/normal_faces/`, and so on. It also writes cubemap-cross atlases such as `quad_sphere/Verdaxis_color_cubemap_cross_3072x4096_8bit.png`. Large stitched atlases are streamed from the saved face PNGs instead of assembled as one giant in-memory array. Cloud cubemap-cross atlases include copied edge bleed in otherwise empty cells so filtered sampling does not blend face borders into transparent black. Color-only quad-sphere saves are tiled internally to reduce peak memory when running serially or at 4096 px faces and larger. Set `PLANET_QUAD_TILE_ROWS` to a smaller value such as `64` if the computer still runs out of memory. Set `PLANET_WRITE_STITCHED_CROSSES=0` before running the CLI or web UI only if you want to skip stitched atlas output.
 
 The browser UI Save tab also lets you choose one or more quad faces for a partial batch. The generator writes `quad_sphere/quad_sphere_global_stats.json` beside the face folders and keeps a reusable hash-named copy under `output/_quad_sphere_global_stats/`. Later batches with the same seed, face size, and planet settings reuse those shared thresholds/ranges so separately generated faces stay consistent. Stitched cubemap-cross atlases are written only when all six face files for the selected map roles are available; otherwise the separate face PNGs can be stitched manually in Photoshop or completed by later batches.
+
+By default, quad-sphere generation uses balanced face-parallel workers: one worker can generate one selected face. For partial batches, enable tile-parallel mode in the Save tab or pass `--quad-parallel-mode tile` to split each selected face into row tiles. Tile mode can use multiple CPU cores even for one face, but each worker holds tile arrays and temporary noise fields. The browser UI shows a warning before tile-parallel saves; if Windows starts paging heavily or the app crashes, reduce tile workers, generate fewer faces, or save color separately from height/normal.
 
 ## Presets
 

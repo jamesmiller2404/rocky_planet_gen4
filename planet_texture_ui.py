@@ -31,6 +31,7 @@ from rocky_planet_gen import (
     LAND_PALETTES,
     PLANET_FAMILIES,
     PRESETS,
+    PeakMemoryMonitor,
     QUAD_SPHERE_FACES,
     PlanetConfig,
     TEXTURE_MAP_NAMES,
@@ -39,7 +40,10 @@ from rocky_planet_gen import (
     quad_sphere_face_path,
     render_globe_preview,
     resolve_quad_generation_workers,
+    resolve_quad_parallel_mode,
     resolve_planet_colors,
+    resolve_quad_tile_rows,
+    resolve_quad_tile_workers,
     resolve_quad_workers,
     selected_quad_sphere_faces,
     selected_texture_maps,
@@ -535,6 +539,99 @@ def resolved_save_names(payload: dict, fallback_name: str) -> tuple[str, str]:
     return output_name, planet_name
 
 
+def powershell_quote_arg(value) -> str:
+    text = str(value)
+    if text == "":
+        return "''"
+    safe_chars = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-/:")
+    if all(ch in safe_chars for ch in text):
+        return text
+    return "'" + text.replace("'", "''") + "'"
+
+
+def cli_path(value) -> str:
+    return str(value).replace("\\", "/")
+
+
+def cli_value(value) -> str:
+    if isinstance(value, float):
+        return repr(value)
+    return str(value)
+
+
+def equivalent_cli_command(
+    cfg: PlanetConfig,
+    payload: dict,
+    out_dir: Path,
+    projection: str,
+    texture_maps: tuple[str, ...],
+    planet_name: str | None,
+) -> dict:
+    args = [
+        os.environ.get("PLANET_CLI_PYTHON", "python"),
+        "rocky_planet_gen.py",
+        "--preset",
+        cfg.preset,
+        "--seed",
+        cfg.seed,
+        "--width",
+        cfg.width,
+        "--height",
+        cfg.height,
+        "--out",
+        cli_path(out_dir.resolve()),
+    ]
+    if planet_name:
+        args.extend(["--planet-name", planet_name])
+    if texture_maps:
+        args.append("--texture-maps")
+        args.extend(texture_maps)
+
+    cfg_values = asdict(cfg)
+    preset_values = PRESETS[cfg.preset]
+    for key in preset_values:
+        if key in {"preset", "seed", "width", "height"}:
+            continue
+        value = cfg_values.get(key)
+        if value == preset_values[key]:
+            continue
+        args.extend([f"--{key.replace('_', '-')}", cli_value(value)])
+
+    if projection == "quad_sphere":
+        face_size = int(payload.get("face_size") or min(cfg.width, cfg.height))
+        quad_faces = quad_faces_from_payload(payload)
+        write_stitched_crosses = write_stitched_crosses_from_payload(payload)
+        quad_parallel_mode = quad_parallel_mode_from_payload(payload)
+        quad_tile_workers = quad_tile_workers_from_payload(payload)
+        args.extend(["--quad-sphere", "--face-size", face_size])
+        args.append("--quad-faces")
+        args.extend(quad_faces)
+        args.extend(["--quad-workers", QUAD_WORKERS])
+        args.extend(["--quad-parallel-mode", quad_parallel_mode])
+        args.extend(["--quad-tile-workers", quad_tile_workers])
+        args.append("--write-stitched-crosses" if write_stitched_crosses else "--no-write-stitched-crosses")
+
+    return {
+        "shell": "PowerShell",
+        "argv": [str(arg) for arg in args],
+        "command": " ".join(powershell_quote_arg(arg) for arg in args),
+    }
+
+
+def equivalent_cli_from_payload(payload: dict) -> dict:
+    cfg = config_from_payload(payload, preview=False)
+    projection = str(payload.get("projection", "equirectangular"))
+    texture_maps = texture_maps_from_payload(payload)
+    fallback_name = f"{cfg.preset}_{cfg.seed}_{time.strftime('%Y%m%d_%H%M%S')}"
+    output_name, planet_name = resolved_save_names(payload, fallback_name)
+    out_dir = unique_output_dir(output_name)
+    command = equivalent_cli_command(cfg, payload, out_dir, projection, texture_maps, planet_name)
+    command["output_name"] = out_dir.name
+    command["planet_name"] = planet_name
+    command["output_dir"] = cli_path(out_dir.resolve())
+    return command
+
+
 def config_from_payload(payload: dict, preview: bool) -> PlanetConfig:
     preset = str(payload.get("preset", "earthlike"))
     if preset not in PRESETS:
@@ -703,6 +800,22 @@ def write_stitched_crosses_from_payload(payload: dict) -> bool:
     return bool(value)
 
 
+def quad_parallel_mode_from_payload(payload: dict) -> str:
+    return resolve_quad_parallel_mode(payload.get("quad_parallel_mode", "face"))
+
+
+def quad_tile_workers_from_payload(payload: dict):
+    value = payload.get("quad_tile_workers", "auto")
+    if value is None:
+        return "auto"
+    text = str(value).strip()
+    return text or "auto"
+
+
+def tile_warning_acknowledged_from_payload(payload: dict) -> bool:
+    return bool(payload.get("tile_warning_acknowledged", False))
+
+
 def cache_dir_from_payload(payload: dict) -> str:
     return str(payload.get("cache_dir", "") or "").strip()
 
@@ -818,6 +931,10 @@ def metadata_for_config(
     planet_name: str | None = None,
     quad_faces: tuple[str, ...] | None = None,
     write_stitched_crosses: bool = True,
+    quad_parallel_mode: str = "face",
+    quad_tile_workers: str = "auto",
+    tile_warning_acknowledged: bool = False,
+    quad_tile_stage_timings: dict | None = None,
 ) -> dict:
     metadata = asdict(cfg)
     metadata["output_projection"] = projection
@@ -828,6 +945,13 @@ def metadata_for_config(
         metadata["quad_sphere_face_size"] = face_size
         metadata["output_quad_faces"] = list(quad_faces or QUAD_SPHERE_FACES)
         metadata["write_stitched_crosses"] = bool(write_stitched_crosses)
+        metadata["quad_parallel_mode"] = resolve_quad_parallel_mode(quad_parallel_mode)
+        metadata["quad_tile_workers"] = quad_tile_workers
+        metadata["resolved_quad_tile_workers"] = resolve_quad_tile_workers(quad_tile_workers)
+        metadata["quad_tile_rows"] = resolve_quad_tile_rows(face_size)
+        metadata["tile_warning_acknowledged"] = bool(tile_warning_acknowledged)
+        if quad_tile_stage_timings:
+            metadata["quad_tile_stage_timings"] = quad_tile_stage_timings
     if ui_state is not None:
         metadata["ui_state"] = ui_state
     resolved_palette = resolve_planet_colors(cfg)
@@ -846,6 +970,9 @@ def ui_state_from_payload(
     texture_maps: tuple[str, ...],
     quad_faces: tuple[str, ...] | None = None,
     write_stitched_crosses: bool = True,
+    quad_parallel_mode: str = "face",
+    quad_tile_workers: str = "auto",
+    tile_warning_acknowledged: bool = False,
 ) -> dict:
     params = {}
     source_params = payload.get("params", {})
@@ -867,6 +994,9 @@ def ui_state_from_payload(
         "texture_maps": list(texture_maps),
         "quad_faces": list(quad_faces or QUAD_SPHERE_FACES),
         "write_stitched_crosses": bool(write_stitched_crosses),
+        "quad_parallel_mode": resolve_quad_parallel_mode(quad_parallel_mode),
+        "quad_tile_workers": str(quad_tile_workers or "auto"),
+        "tile_warning_acknowledged": bool(tile_warning_acknowledged),
         "cache_dir": cache_dir_from_payload(payload),
         "params": params,
     }
@@ -878,8 +1008,22 @@ def metadata_from_payload(payload: dict, output_kind: str = "texture_output") ->
     texture_maps = texture_maps_from_payload(payload)
     quad_faces = quad_faces_from_payload(payload)
     write_stitched_crosses = write_stitched_crosses_from_payload(payload)
+    quad_parallel_mode = quad_parallel_mode_from_payload(payload)
+    quad_tile_workers = quad_tile_workers_from_payload(payload)
+    tile_warning_acknowledged = tile_warning_acknowledged_from_payload(payload)
     face_size = int(payload.get("face_size") or min(cfg.width, cfg.height))
-    ui_state = ui_state_from_payload(payload, cfg, projection, face_size, texture_maps, quad_faces, write_stitched_crosses)
+    ui_state = ui_state_from_payload(
+        payload,
+        cfg,
+        projection,
+        face_size,
+        texture_maps,
+        quad_faces,
+        write_stitched_crosses,
+        quad_parallel_mode,
+        quad_tile_workers,
+        tile_warning_acknowledged,
+    )
     metadata_face_size = face_size if projection == "quad_sphere" else None
     planet_name = sanitized_asset_name(str(payload.get("planet_name", "")).strip(), "")
     return metadata_for_config(
@@ -892,6 +1036,9 @@ def metadata_from_payload(payload: dict, output_kind: str = "texture_output") ->
         planet_name or None,
         quad_faces,
         write_stitched_crosses,
+        quad_parallel_mode,
+        quad_tile_workers,
+        tile_warning_acknowledged,
     )
 
 
@@ -938,6 +1085,15 @@ def timed_stage(report: dict, name: str, label: str, fn):
                 "seconds": time.perf_counter() - started,
             }
         )
+
+
+def run_with_peak_memory(report: dict, fn):
+    monitor = PeakMemoryMonitor()
+    monitor.start()
+    try:
+        return fn()
+    finally:
+        report["peak_memory"] = monitor.stop()
 
 
 def save_map_set_with_report(out_dir: Path, maps: dict, texture_maps: tuple[str, ...], report: dict, planet_name: str | None = None) -> None:
@@ -999,6 +1155,7 @@ def save_planet_output(payload: dict) -> tuple[Path, dict]:
         "stages": [],
         "maps": [],
     }
+    report["equivalent_cli"] = equivalent_cli_command(cfg, payload, out_dir, projection, texture_maps, planet_name)
     total_started = time.perf_counter()
 
     if projection == "quad_sphere":
@@ -1007,6 +1164,11 @@ def save_planet_output(payload: dict) -> tuple[Path, dict]:
             raise ValueError("Quad-sphere face size must be at least 32.")
         quad_faces = quad_faces_from_payload(payload)
         write_stitched_crosses = write_stitched_crosses_from_payload(payload)
+        quad_parallel_mode = quad_parallel_mode_from_payload(payload)
+        quad_tile_workers = quad_tile_workers_from_payload(payload)
+        tile_warning_acknowledged = tile_warning_acknowledged_from_payload(payload)
+        resolved_tile_workers = resolve_quad_tile_workers(quad_tile_workers)
+        tile_rows = resolve_quad_tile_rows(face_size)
         cache_dir = cache_dir_from_payload(payload)
         cache_status = cache_disk_status(cache_dir, face_size, texture_maps)
         quad_dir = out_dir / "quad_sphere"
@@ -1018,23 +1180,33 @@ def save_planet_output(payload: dict) -> tuple[Path, dict]:
         report["write_stitched_crosses"] = bool(write_stitched_crosses)
         report["requested_quad_workers"] = QUAD_WORKERS
         report["quad_workers"] = resolve_quad_generation_workers(face_size, texture_maps, QUAD_WORKERS)
+        report["quad_parallel_mode"] = quad_parallel_mode
+        report["requested_quad_tile_workers"] = quad_tile_workers
+        report["quad_tile_workers"] = resolved_tile_workers
+        report["quad_tile_rows"] = tile_rows
+        report["tile_warning_acknowledged"] = bool(tile_warning_acknowledged)
         report["cache"] = cache_status
         stats_info = {}
         timed_stage(
             report,
             "quad_sphere_maps",
             "Generate and write quad-sphere faces",
-            lambda: stats_info.update(save_quad_sphere_maps_low_memory(
-                quad_dir,
-                cfg,
-                face_size,
-                texture_maps,
-                quad_workers=QUAD_WORKERS,
-                write_cubemap_crosses=write_stitched_crosses,
-                planet_name=planet_name,
-                cache_dir=cache_dir or None,
-                face_names=quad_faces,
-            )),
+            lambda: run_with_peak_memory(
+                report,
+                lambda: stats_info.update(save_quad_sphere_maps_low_memory(
+                    quad_dir,
+                    cfg,
+                    face_size,
+                    texture_maps,
+                    quad_workers=QUAD_WORKERS,
+                    write_cubemap_crosses=write_stitched_crosses,
+                    planet_name=planet_name,
+                    cache_dir=cache_dir or None,
+                    face_names=quad_faces,
+                    quad_parallel_mode=quad_parallel_mode,
+                    quad_tile_workers=resolved_tile_workers,
+                )),
+            ),
         )
         stitched_written = bool(write_stitched_crosses) and quad_sphere_face_maps_available(
             quad_dir,
@@ -1045,11 +1217,16 @@ def save_planet_output(payload: dict) -> tuple[Path, dict]:
         )
         report["stitched_crosses_written"] = bool(stitched_written)
         if stats_info:
+            report["quad_tile_stage_timings"] = stats_info.get("quad_tile_stage_timings", {})
             report["quad_sphere_global_stats"] = {
                 "local_path": str((quad_dir / "quad_sphere_global_stats.json").resolve()),
                 "cache_path": str(stats_info.get("cache_path", "")),
                 "config_hash": stats_info.get("config_hash", ""),
                 "available_fields": stats_info.get("available_fields", []),
+                "quad_parallel_mode": stats_info.get("quad_parallel_mode", quad_parallel_mode),
+                "quad_tile_workers": stats_info.get("quad_tile_workers", resolved_tile_workers),
+                "quad_tile_rows": stats_info.get("quad_tile_rows", tile_rows),
+                "quad_tile_stage_timings": stats_info.get("quad_tile_stage_timings", {}),
             }
         timed_stage(
             report,
@@ -1064,7 +1241,18 @@ def save_planet_output(payload: dict) -> tuple[Path, dict]:
                 face_names=quad_faces,
             ),
         )
-        ui_state = ui_state_from_payload(payload, cfg, "quad_sphere", face_size, texture_maps, quad_faces, write_stitched_crosses)
+        ui_state = ui_state_from_payload(
+            payload,
+            cfg,
+            "quad_sphere",
+            face_size,
+            texture_maps,
+            quad_faces,
+            write_stitched_crosses,
+            quad_parallel_mode,
+            quad_tile_workers,
+            tile_warning_acknowledged,
+        )
         metadata = metadata_for_config(
             cfg,
             "quad_sphere",
@@ -1074,36 +1262,47 @@ def save_planet_output(payload: dict) -> tuple[Path, dict]:
             planet_name=planet_name,
             quad_faces=quad_faces,
             write_stitched_crosses=write_stitched_crosses,
+            quad_parallel_mode=quad_parallel_mode,
+            quad_tile_workers=quad_tile_workers,
+            tile_warning_acknowledged=tile_warning_acknowledged,
+            quad_tile_stage_timings=stats_info.get("quad_tile_stage_timings", {}),
         )
         map_dirs = sorted(path.name for path in quad_dir.iterdir() if path.is_dir())
         report["maps"] = summarize_quad_sphere_maps(quad_dir, texture_maps, planet_name=planet_name, face_size=face_size)
         report["map_folders"] = map_dirs
     else:
-        maps = timed_stage(
-            report,
-            "build_maps",
-            "Build selected texture maps",
-            lambda: build_maps(cfg, texture_maps),
-        )
-        timed_stage(
-            report,
-            "write_maps",
-            "Write selected texture maps",
-            lambda: save_map_set_with_report(out_dir, maps, texture_maps, report, planet_name=planet_name),
-        )
-        if "color" in texture_maps:
+        memory_monitor = PeakMemoryMonitor()
+        memory_monitor.start()
+        try:
+            maps = timed_stage(
+                report,
+                "build_maps",
+                "Build selected texture maps",
+                lambda: build_maps(cfg, texture_maps),
+            )
             timed_stage(
                 report,
-                "preview_assets",
-                "Write preview assets",
-                lambda: (
-                    render_globe_preview(maps["color"], maps["height"], out_dir / "preview.png"),
-                    write_html_preview(out_dir, f"{planet_name} planet preview", texture_maps, planet_name=planet_name, width=cfg.width, height=cfg.height),
-                ),
+                "write_maps",
+                "Write selected texture maps",
+                lambda: save_map_set_with_report(out_dir, maps, texture_maps, report, planet_name=planet_name),
             )
+            if "color" in texture_maps:
+                timed_stage(
+                    report,
+                    "preview_assets",
+                    "Write preview assets",
+                    lambda: (
+                        render_globe_preview(maps["color"], maps["height"], out_dir / "preview.png"),
+                        write_html_preview(out_dir, f"{planet_name} planet preview", texture_maps, planet_name=planet_name, width=cfg.width, height=cfg.height),
+                    ),
+                )
+        finally:
+            report["peak_memory"] = memory_monitor.stop()
         ui_state = ui_state_from_payload(payload, cfg, "equirectangular", int(payload.get("face_size") or min(cfg.width, cfg.height)), texture_maps)
         metadata = metadata_for_config(cfg, "equirectangular", texture_maps=texture_maps, ui_state=ui_state, planet_name=planet_name)
 
+    if report.get("peak_memory"):
+        metadata["peak_memory"] = report["peak_memory"]
     timed_stage(
         report,
         "metadata",
@@ -1212,6 +1411,9 @@ def normalize_ui_state(data: dict) -> dict:
             "texture_maps": validate_texture_maps(state.get("texture_maps", data.get("output_texture_maps", TEXTURE_MAP_NAMES))),
             "quad_faces": list(selected_quad_sphere_faces(state.get("quad_faces", data.get("output_quad_faces", QUAD_SPHERE_FACES)))),
             "write_stitched_crosses": bool(state.get("write_stitched_crosses", data.get("write_stitched_crosses", True))),
+            "quad_parallel_mode": resolve_quad_parallel_mode(state.get("quad_parallel_mode", data.get("quad_parallel_mode", "face"))),
+            "quad_tile_workers": str(state.get("quad_tile_workers", data.get("quad_tile_workers", "auto")) or "auto"),
+            "tile_warning_acknowledged": bool(state.get("tile_warning_acknowledged", data.get("tile_warning_acknowledged", False))),
             "cache_dir": str(state.get("cache_dir", data.get("cache_dir", "")) or ""),
             "params": params,
         }
@@ -1240,6 +1442,9 @@ def normalize_ui_state(data: dict) -> dict:
         "texture_maps": validate_texture_maps(data.get("output_texture_maps", TEXTURE_MAP_NAMES)),
         "quad_faces": list(selected_quad_sphere_faces(data.get("output_quad_faces", QUAD_SPHERE_FACES))),
         "write_stitched_crosses": bool(data.get("write_stitched_crosses", True)),
+        "quad_parallel_mode": resolve_quad_parallel_mode(data.get("quad_parallel_mode", "face")),
+        "quad_tile_workers": str(data.get("quad_tile_workers", "auto") or "auto"),
+        "tile_warning_acknowledged": bool(data.get("tile_warning_acknowledged", False)),
         "cache_dir": str(data.get("cache_dir", "") or ""),
         "params": params,
     }
@@ -1523,6 +1728,15 @@ def default_payload() -> dict:
             {"key": key, "label": key}
             for key in QUAD_SPHERE_FACES
         ],
+        "quad_parallel_modes": [
+            {"key": "face", "label": "Balanced"},
+            {"key": "tile", "label": "Use all cores for selected faces"},
+        ],
+        "quad_tile_workers": {
+            "default": "auto",
+            "auto": resolve_quad_tile_workers("auto"),
+            "cpu_count": os.cpu_count() or 1,
+        },
         "cloud_recipes": CLOUD_RECIPES,
         "land_palettes": [
             {"key": key, "label": LAND_PALETTE_LABELS.get(key, key.replace("_", " ").title())}
@@ -1583,6 +1797,8 @@ class PlanetUiHandler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/save":
                 out_dir, report = save_planet_output(payload)
                 self.write_json(output_summary(out_dir, report))
+            elif parsed.path == "/api/command":
+                self.write_json(equivalent_cli_from_payload(payload))
             elif parsed.path == "/api/config/save":
                 out_dir = save_config_only(payload)
                 self.write_json({"output_dir": str(out_dir.resolve()), "preset_path": str((out_dir / "preset.json").resolve())})
@@ -1950,6 +2166,30 @@ img {
 .status.error { color: var(--error); }
 .status.ok { color: var(--accent); }
 .status.busy { color: var(--warn); }
+.live-command-panel {
+  margin-top: 10px;
+}
+.live-command-panel[hidden] {
+  display: none;
+}
+.live-command-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+.live-command-title {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.live-command-copy {
+  min-height: 28px;
+  padding: 5px 9px;
+  font-size: 12px;
+}
 .load-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 76px 82px;
@@ -2242,6 +2482,36 @@ img {
 .report-note.warning {
   color: var(--warn);
 }
+.report-command-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 14px 0 8px;
+}
+.report-command-head .report-section-title {
+  margin: 0;
+}
+.report-command-copy {
+  min-height: 30px;
+  padding: 6px 10px;
+  font-size: 12px;
+}
+.report-command {
+  margin: 0 0 12px;
+  max-height: 180px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #0b0f15;
+  color: var(--text);
+  padding: 10px;
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+}
 .file-browser-modal {
   width: min(760px, 100%);
   max-height: min(720px, calc(100vh - 36px));
@@ -2447,6 +2717,18 @@ img {
       </div>
       <div class="map-options compact" id="quadFaceOptions"></div>
       <p class="hint">Generate a subset to reduce peak memory. Use the same seed/settings and saved stats JSON for matching later face batches.</p>
+      <div class="row">
+        <label for="quadParallelMode">Quad worker mode</label>
+        <select id="quadParallelMode">
+          <option value="face" selected>Balanced</option>
+          <option value="tile">Use all cores for selected faces</option>
+        </select>
+      </div>
+      <div class="row">
+        <label for="quadTileWorkers">Tile workers</label>
+        <input id="quadTileWorkers" type="text" value="auto">
+      </div>
+      <p class="hint">Balanced uses up to one worker per selected face. Tile mode splits selected faces into row tiles and can use multiple workers for a single face.</p>
       <label class="checkbox-row">
         <input id="writeStitchedCrosses" type="checkbox" checked>
         <span>Write stitched cubemap-cross atlases when all six faces are available</span>
@@ -2471,6 +2753,13 @@ img {
         <button id="previewBtn">Render Preview</button>
         <button id="saveConfigBtn">Save Config</button>
         <button id="saveBtn" class="primary">Save Texture Output</button>
+      </div>
+      <div id="liveCommandPanel" class="live-command-panel" hidden>
+        <div class="live-command-head">
+          <div class="live-command-title">Command line equivalent</div>
+          <button id="copyLiveCommandBtn" class="live-command-copy" type="button">Copy</button>
+        </div>
+        <pre class="report-command"><code id="liveCommandText"></code></pre>
       </div>
       <div class="saved-planets-head">
         <h3>Saved Planets</h3>
@@ -2610,12 +2899,17 @@ const els = {
   quadFaceOptions: document.getElementById("quadFaceOptions"),
   selectAllFacesBtn: document.getElementById("selectAllFacesBtn"),
   selectNoFacesBtn: document.getElementById("selectNoFacesBtn"),
+  quadParallelMode: document.getElementById("quadParallelMode"),
+  quadTileWorkers: document.getElementById("quadTileWorkers"),
   writeStitchedCrosses: document.getElementById("writeStitchedCrosses"),
   cacheDir: document.getElementById("cacheDir"),
   browseCacheBtn: document.getElementById("browseCacheBtn"),
   cacheStatus: document.getElementById("cacheStatus"),
   planetName: document.getElementById("planetName"),
   outputName: document.getElementById("outputName"),
+  liveCommandPanel: document.getElementById("liveCommandPanel"),
+  liveCommandText: document.getElementById("liveCommandText"),
+  copyLiveCommandBtn: document.getElementById("copyLiveCommandBtn"),
   status: document.getElementById("status"),
   texturePreviewFrame: document.getElementById("texturePreviewFrame"),
   colorPreview: document.getElementById("colorPreview"),
@@ -2737,6 +3031,12 @@ function formatBytes(value) {
   return `${amount.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
 }
 
+function formatPeakMemory(memory) {
+  if (!memory || typeof memory.peak_bytes !== "number") return "n/a";
+  const scope = memory.includes_child_processes ? "process tree" : "main process";
+  return `${formatBytes(memory.peak_bytes)} sampled ${scope}`;
+}
+
 function renderCacheStatus(status) {
   if (!status) return;
   els.cacheStatus.className = `storage-status ${status.warning ? "warning" : "ok"}`;
@@ -2818,6 +3118,29 @@ function closeGenerationReport() {
   els.generationReportModal.hidden = true;
 }
 
+async function copyReportCommand(command, button) {
+  if (!command) return;
+  try {
+    await navigator.clipboard.writeText(command);
+    button.textContent = "Copied";
+  } catch (_error) {
+    button.textContent = "Select text";
+  }
+  window.setTimeout(() => {
+    button.textContent = "Copy";
+  }, 1600);
+}
+
+function showLiveCommand(commandInfo) {
+  if (!commandInfo || !commandInfo.command) {
+    els.liveCommandPanel.hidden = true;
+    els.liveCommandText.textContent = "";
+    return;
+  }
+  els.liveCommandText.textContent = commandInfo.command;
+  els.liveCommandPanel.hidden = false;
+}
+
 function showGenerationReport(report) {
   if (!report) return;
   const body = els.generationReportBody;
@@ -2825,6 +3148,9 @@ function showGenerationReport(report) {
 
   const summary = makeEl("div", "report-summary");
   appendReportStat(summary, "Total time", formatSeconds(report.total_seconds));
+  if (report.peak_memory) {
+    appendReportStat(summary, "Peak memory", formatPeakMemory(report.peak_memory));
+  }
   appendReportStat(summary, "Projection", String(report.projection || "n/a").replace(/_/g, " "));
   appendReportStat(summary, "Preset / seed", `${report.preset || "n/a"} / ${report.seed ?? "n/a"}`);
   appendReportStat(summary, "Output", report.output_dir || "n/a");
@@ -2833,7 +3159,26 @@ function showGenerationReport(report) {
     const faceLabel = requestedFaces.length ? requestedFaces.join(", ") : `${report.face_count || 0}`;
     appendReportStat(summary, "Quad faces", `${faceLabel} at ${report.face_size || "n/a"} px`);
     appendReportStat(summary, "Stitched atlases", report.stitched_crosses_written ? "written" : (report.write_stitched_crosses ? "waiting for all six faces" : "off"));
+    appendReportStat(summary, "Worker mode", report.quad_parallel_mode === "tile" ? "tile parallel" : "balanced");
     appendReportStat(summary, "Workers", String(report.quad_workers || "n/a"));
+    if (report.quad_parallel_mode === "tile") {
+      appendReportStat(summary, "Tile workers", String(report.quad_tile_workers || "n/a"));
+      appendReportStat(summary, "Tile rows", String(report.quad_tile_rows || "n/a"));
+      appendReportStat(summary, "Warning acknowledged", report.tile_warning_acknowledged ? "yes" : "no");
+      if (report.quad_tile_stage_timings) {
+        const tileTimes = report.quad_tile_stage_timings;
+        appendReportStat(summary, "Tile strategy", tileTimes.tile_strategy || "grouped");
+        if (tileTimes.tile_strategy === "fused") {
+          appendReportStat(
+            summary,
+            "Tile timing",
+            `compute/cache ${formatSeconds(tileTimes.tile_compute_cache_seconds || 0)}, write ${formatSeconds((tileTimes.tile_direct_write_seconds || 0) + (tileTimes.tile_height_normal_write_seconds || 0))}`
+          );
+        } else {
+          appendReportStat(summary, "Tile timing", formatSeconds(tileTimes.tile_total_seconds || 0));
+        }
+      }
+    }
     if (report.requested_quad_workers && report.requested_quad_workers !== report.quad_workers) {
       appendReportStat(summary, "Requested workers", String(report.requested_quad_workers));
     }
@@ -2848,6 +3193,19 @@ function showGenerationReport(report) {
     appendReportStat(summary, "Map size", `${report.requested_size.width} x ${report.requested_size.height}`);
   }
   body.appendChild(summary);
+
+  if (report.equivalent_cli && report.equivalent_cli.command) {
+    const commandHead = makeEl("div", "report-command-head");
+    commandHead.appendChild(makeEl("div", "report-section-title", "Command line equivalent"));
+    const copyButton = makeEl("button", "report-command-copy", "Copy");
+    copyButton.type = "button";
+    copyButton.addEventListener("click", () => copyReportCommand(report.equivalent_cli.command, copyButton));
+    commandHead.appendChild(copyButton);
+    body.appendChild(commandHead);
+    const commandBlock = makeEl("pre", "report-command");
+    commandBlock.appendChild(makeEl("code", "", report.equivalent_cli.command));
+    body.appendChild(commandBlock);
+  }
 
   body.appendChild(makeEl("div", "report-section-title", "Save stages"));
   const stages = makeEl("div", "report-stage-list");
@@ -3357,12 +3715,41 @@ function getPayload() {
     face_size: parseInt(els.faceSize.value, 10),
     quad_faces: getSelectedQuadFaces(),
     write_stitched_crosses: els.writeStitchedCrosses.checked,
+    quad_parallel_mode: els.quadParallelMode.value,
+    quad_tile_workers: els.quadTileWorkers.value,
+    tile_warning_acknowledged: false,
     cache_dir: els.cacheDir.value,
     planet_name: els.planetName.value,
     output_name: els.outputName.value,
     texture_maps: getSelectedTextureMaps(),
     params: getParams(),
   };
+}
+
+function effectiveTileWorkers() {
+  const value = String(els.quadTileWorkers.value || "auto").trim().toLowerCase();
+  if (!value || value === "auto" || value === "default") {
+    return schema && schema.quad_tile_workers ? schema.quad_tile_workers.auto : "auto";
+  }
+  const parsed = parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed < 1) return 1;
+  const cpuCount = schema && schema.quad_tile_workers ? schema.quad_tile_workers.cpu_count : parsed;
+  return Math.max(1, Math.min(parsed, cpuCount || parsed));
+}
+
+function confirmTileParallelSave(selectedMaps, selectedFaces) {
+  if (els.projection.value !== "quad_sphere" || els.quadParallelMode.value !== "tile") return true;
+  const workers = effectiveTileWorkers();
+  const faceSize = parseInt(els.faceSize.value, 10) || 0;
+  const heavyMaps = selectedMaps.some(name => name === "height" || name === "normal");
+  const caution = heavyMaps
+    ? "\n\nHeight and normal maps are higher-memory because workers build terrain-height tiles and temporary normal inputs."
+    : "";
+  return window.confirm(
+    `Tile-parallel mode will use up to ${workers} worker process${workers === 1 ? "" : "es"} for ${selectedFaces.length} selected cubemap face${selectedFaces.length === 1 ? "" : "s"} at ${faceSize} px.\n\n` +
+    `Selected maps: ${selectedMaps.join(", ")}.${caution}\n\n` +
+    "If Windows starts paging heavily or the app crashes, reduce tile workers, select fewer faces, or generate color separately from height/normal.\n\nContinue with tile-parallel save?"
+  );
 }
 
 async function postJson(path, payload) {
@@ -3917,13 +4304,28 @@ async function saveOutput() {
     setStatus("Choose at least one quad face to save.", "error");
     return;
   }
+  const payload = getPayload();
+  if (!confirmTileParallelSave(selectedMaps, selectedFaces)) {
+    setStatus("Tile-parallel save canceled.", "ok");
+    return;
+  }
+  payload.tile_warning_acknowledged = els.projection.value === "quad_sphere" && els.quadParallelMode.value === "tile";
   setButtons(true);
   const faceText = els.projection.value === "quad_sphere"
     ? ` for ${selectedFaces.length} face${selectedFaces.length === 1 ? "" : "s"}`
     : "";
-  setStatus(`Saving ${selectedMaps.length} texture map${selectedMaps.length === 1 ? "" : "s"}${faceText}...`, "busy");
+  setStatus("Preparing command line equivalent...", "busy");
   try {
-    const data = await postJson("/api/save", getPayload());
+    const commandInfo = await postJson("/api/command", payload);
+    showLiveCommand(commandInfo);
+    if (commandInfo.output_name) {
+      payload.output_name = commandInfo.output_name;
+    }
+    if (commandInfo.planet_name && !payload.planet_name) {
+      payload.planet_name = commandInfo.planet_name;
+    }
+    setStatus(`Saving ${selectedMaps.length} texture map${selectedMaps.length === 1 ? "" : "s"}${faceText}...`, "busy");
+    const data = await postJson("/api/save", payload);
     const stitched = data.stitched_quad_sphere_maps || [];
     const generated = data.generated_maps || [];
     const generatedText = generated.length ? ` Maps: ${generated.join(", ")}` : "";
@@ -3992,6 +4394,8 @@ function applyLoadedState(data) {
   setTextureMapSelection(data.texture_maps || []);
   setQuadFaceSelection(data.quad_faces || ["px", "nx", "py", "ny", "pz", "nz"]);
   els.writeStitchedCrosses.checked = data.write_stitched_crosses !== false;
+  els.quadParallelMode.value = data.quad_parallel_mode === "tile" ? "tile" : "face";
+  els.quadTileWorkers.value = data.quad_tile_workers || "auto";
   for (const [key, value] of Object.entries(data.params || {})) {
     const slider = document.getElementById(sliderId(key));
     if (slider) {
@@ -4079,6 +4483,7 @@ async function boot() {
     schedulePreview(0);
   });
   document.getElementById("refreshSavedBtn").addEventListener("click", () => refreshSavedPlanets(true));
+  els.copyLiveCommandBtn.addEventListener("click", () => copyReportCommand(els.liveCommandText.textContent, els.copyLiveCommandBtn));
   document.getElementById("loadBtn").addEventListener("click", loadPresetJson);
   els.browsePresetBtn.addEventListener("click", openFileBrowser);
   els.browseCacheBtn.addEventListener("click", openCacheBrowser);
