@@ -682,6 +682,9 @@ TEXTURE_MAP_LABELS = {
     "land_ocean_mask": "Land/ocean mask",
     "land_mask": "Land/ocean mask",
     "shoreline_mask": "Shoreline mask",
+    "beach_mask": "Beach mask",
+    "surf_foam_mask": "Surf foam mask",
+    "shallow_shelf_mask": "Shallow shelf mask",
     "ocean_depth": "Ocean depth",
     "cloud_mask": "Cloud mask",
     "cloud_shadow": "Cloud shadow",
@@ -1381,7 +1384,12 @@ def output_summary(out_dir: Path, report: dict | None = None) -> dict:
 def validate_texture_maps(value) -> list[str]:
     if not isinstance(value, list):
         return list(TEXTURE_MAP_NAMES)
-    return list(selected_texture_maps(value))
+    requested = list(value)
+    if "shoreline_mask" in {str(name) for name in requested}:
+        for derived_name in ("beach_mask", "surf_foam_mask", "shallow_shelf_mask"):
+            if derived_name not in requested:
+                requested.append(derived_name)
+    return list(selected_texture_maps(requested))
 
 
 def normalize_ui_state(data: dict) -> dict:

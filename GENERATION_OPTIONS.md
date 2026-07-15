@@ -36,7 +36,7 @@ Example:
 | `--quad-parallel-mode` | `face` | Quad-sphere parallel strategy. `face` is the safer balanced mode; `tile` splits selected faces into row tiles so multiple workers can generate one face. |
 | `--quad-tile-workers` | `PLANET_QUAD_TILE_WORKERS` or `auto` | Worker processes for tile-parallel quad-sphere generation. Auto uses up to `min(os.cpu_count(), 6)` workers and is independent of selected face count. |
 | `--write-stitched-crosses` / `--no-write-stitched-crosses` | environment/default on | Writes stitched cubemap-cross atlases only when all six face files are available. Use `--no-write-stitched-crosses` for partial face batches. |
-| `--texture-maps` | all maps | One or more texture maps to save: `color`, `height`, `normal`, `roughness`, `land_ocean_mask`, `shoreline_mask`, `ocean_depth`, `cloud_mask`, `cloud_shadow`, `nebula_color`, `nebula_alpha`, `nebula_stars`, `city_lights`, `atmosphere_haze`, `emissive_heat`. The old `land_mask` name is still accepted as an alias and writes `land_ocean_mask` files. |
+| `--texture-maps` | all maps | One or more texture maps to save: `color`, `height`, `normal`, `roughness`, `land_ocean_mask`, `shoreline_mask`, `beach_mask`, `surf_foam_mask`, `shallow_shelf_mask`, `ocean_depth`, `cloud_mask`, `cloud_shadow`, `nebula_color`, `nebula_alpha`, `nebula_stars`, `city_lights`, `atmosphere_haze`, `emissive_heat`. The old `land_mask` name is still accepted as an alias and writes `land_ocean_mask` files. |
 | `--profile` | off | Prints `cProfile` timing for generation, saving, preview, and metadata writes. |
 | `--profile-limit` | `40` | Number of timing rows to print when `--profile` is enabled. |
 | `--profile-out` | unset | Optional raw `.prof` output path for external profile viewers. |
@@ -136,7 +136,10 @@ For normal equirectangular output:
 | `<planet>_normal_equirect_<width>x<height>_16bit.png` | 16-bit RGB OpenGL-style green-up normal map derived from height, using a clockwise-rotated planet tangent basis so relief shadows align with the planet terminator. |
 | `<planet>_roughness_equirect_<width>x<height>_8bit.png` | Roughness map. Land is rougher; water is smoother. |
 | `<planet>_land_ocean_mask_equirect_<width>x<height>_8bit.png` | Land/ocean separation mask. White land, black ocean. |
-| `<planet>_shoreline_mask_equirect_<width>x<height>_8bit.png` | Shoreline/beach influence mask. |
+| `<planet>_shoreline_mask_equirect_<width>x<height>_8bit.png` | General coastline influence mask derived from the final land/ocean coastline distance field. |
+| `<planet>_beach_mask_equirect_<width>x<height>_8bit.png` | Land-side beach and wet-sediment mask. |
+| `<planet>_surf_foam_mask_equirect_<width>x<height>_8bit.png` | Narrow ocean-side surf and breaker mask. |
+| `<planet>_shallow_shelf_mask_equirect_<width>x<height>_8bit.png` | Wider ocean-side shallow shelf and lagoon-tint mask. |
 | `<planet>_ocean_depth_equirect_<width>x<height>_8bit.png` | Ocean depth mask. |
 | `<planet>_cloud_mask_equirect_<width>x<height>_16bit.png` | Separate 16-bit grayscale cloud opacity mask based on softened land-form-style weather math. |
 | `<planet>_cloud_shadow_equirect_<width>x<height>_16bit.png` | Separate 16-bit grayscale surface-darkening mask derived from the cloud layer for Blender cloud shadows. |

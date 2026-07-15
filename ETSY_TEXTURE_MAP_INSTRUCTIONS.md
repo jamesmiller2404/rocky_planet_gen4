@@ -78,7 +78,10 @@ Depending on the exact product variation, the following maps may be included.
 | `normal.png` | 16-bit RGB normal map derived from terrain | Surface detail normals | Non-Color / Normal Map |
 | `roughness.png` | Grayscale material roughness | Controls shine/gloss | Non-Color / Linear |
 | `land_ocean_mask.png` | Land/ocean separation mask. White land, black ocean | Land/ocean material blending | Non-Color / Linear |
-| `shoreline_mask.png` | Shoreline and beach influence | Beach tint, wet sand, foam, coastal detail | Non-Color / Linear |
+| `shoreline_mask.png` | General coastline influence | Broad coastal blending and shoreline detail | Non-Color / Linear |
+| `beach_mask.png` | Land-side beach and wet-sediment influence | Beach tint, wet sand, shoreline roughness | Non-Color / Linear |
+| `surf_foam_mask.png` | Narrow ocean-side surf influence | Foam, breakers, thin whitewater | Non-Color / Linear |
+| `shallow_shelf_mask.png` | Wider ocean-side shallow-water influence | Shelf tint, lagoons, shallow transparency | Non-Color / Linear |
 | `ocean_depth.png` | Grayscale ocean depth | Water color, transparency, shallow/deep blending | Non-Color / Linear |
 | `cloud_mask.png` | 16-bit grayscale cloud opacity | Separate cloud sphere alpha/opacity | Non-Color / Linear |
 | `cloud_shadow.png` | 16-bit grayscale fake cloud shadow mask | Darken surface below clouds | Non-Color / Linear |
@@ -178,7 +181,7 @@ Recommended import settings:
 | `normal.png` | Normal map compression/texture type |
 | `roughness.png` | sRGB off, mask/grayscale data |
 | `height.png` | sRGB off, grayscale data |
-| `land_ocean_mask.png`, `shoreline_mask.png`, `ocean_depth.png` | sRGB off, mask data |
+| `land_ocean_mask.png`, `shoreline_mask.png`, `beach_mask.png`, `surf_foam_mask.png`, `shallow_shelf_mask.png`, `ocean_depth.png` | sRGB off, mask data |
 | `cloud_mask.png`, `cloud_shadow.png` | sRGB off, mask data |
 | `city_lights.png` | sRGB on, emission color |
 
@@ -348,7 +351,7 @@ For intermediate users:
 
 1. Use the 4096 x 2048 equirectangular maps for hero renders.
 2. Use cube/quad-sphere maps for close-up planet assets or custom game shaders.
-3. Use `land_ocean_mask.png`, `shoreline_mask.png`, and `ocean_depth.png` to build more advanced ocean, beach, and terrain materials.
+3. Use `land_ocean_mask.png`, `shoreline_mask.png`, `beach_mask.png`, `surf_foam_mask.png`, `shallow_shelf_mask.png`, and `ocean_depth.png` to build more advanced ocean, beach, and terrain materials.
 4. Use `cloud_shadow.png` to fake consistent surface shadows below clouds.
 5. Use `emissive_heat.png` and `city_lights.png` as separate emission layers instead of baking them into the base color.
 

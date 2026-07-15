@@ -12,6 +12,9 @@ Outputs:
     <planet>_roughness_equirect_2048x1024_8bit.png
     <planet>_land_ocean_mask_equirect_2048x1024_8bit.png
     <planet>_shoreline_mask_equirect_2048x1024_8bit.png
+    <planet>_beach_mask_equirect_2048x1024_8bit.png
+    <planet>_surf_foam_mask_equirect_2048x1024_8bit.png
+    <planet>_shallow_shelf_mask_equirect_2048x1024_8bit.png
     <planet>_ocean_depth_equirect_2048x1024_8bit.png
     <planet>_cloud_mask_equirect_2048x1024_16bit.png
     <planet>_city_lights_equirect_2048x1024_8bit.png
@@ -2283,6 +2286,48 @@ def normalize01(a, value_range=None):
     return ((a - np.float32(amin)) / np.float32(amax - amin)).astype(np.float32, copy=False)
 
 
+HEIGHT_EXPORT_CEILING = np.float32(0.985)
+
+
+def normalize_height_for_export(height, value_range=None):
+    return np.minimum(normalize01(height, value_range), HEIGHT_EXPORT_CEILING).astype(np.float32, copy=False)
+
+
+def suppress_height_impulse_outliers(height, wrap_x=True):
+    height = np.asarray(height, dtype=np.float32)
+    if min(height.shape[:2]) < 3:
+        return height
+
+    median = ndimage.median_filter(height, size=3, mode="nearest")
+    residual = height - median
+    positive = residual[residual > 0.0]
+    if positive.size < 16:
+        return height
+
+    residual_threshold = max(0.018, float(np.percentile(positive, 99.90)))
+    high_gate = float(np.percentile(height, 99.80))
+    candidates = (residual > residual_threshold) & (height > high_gate)
+    if not np.any(candidates):
+        return height
+
+    labels, label_count = ndimage.label(candidates, structure=np.ones((3, 3), dtype=np.uint8))
+    if label_count <= 0:
+        return height
+
+    counts = np.bincount(labels.ravel())
+    max_impulse_area = max(4, int(round(height.size * 0.000003)))
+    impulse_labels = (counts <= max_impulse_area)
+    impulse_labels[0] = False
+    impulse_mask = impulse_labels[labels]
+    if not np.any(impulse_mask):
+        return height
+
+    filtered = height.copy()
+    cap = median + np.float32(residual_threshold * 0.25)
+    filtered[impulse_mask] = np.minimum(filtered[impulse_mask], cap[impulse_mask])
+    return filtered.astype(np.float32, copy=False)
+
+
 def approximate_distance_from_mask(mask, max_distance, wrap_x=False):
     if not np.any(mask):
         return np.full(mask.shape, np.inf, dtype=np.float32)
@@ -2789,7 +2834,117 @@ def normalize_planet_family(value: str) -> str:
     return key if key in PLANET_FAMILIES else "wet_terrestrial"
 
 
-def build_land_water_layers(cfg, x, y, z, land_threshold=None):
+def shoreline_width_pixels(value, shape, maximum=128.0):
+    width = float(max(0.0, value)) * float(min(shape))
+    if width <= 0.0:
+        return 0.0
+    return float(np.clip(width, 1.0, maximum))
+
+
+def distance_falloff(distance, width):
+    if np.isscalar(width) and float(width) <= 0.0:
+        return np.zeros_like(distance, dtype=np.float32)
+    width_arr = np.maximum(np.asarray(width, dtype=np.float32), np.float32(1e-6))
+    t = np.clip(np.asarray(distance, dtype=np.float32) / width_arr, 0.0, 1.0)
+    return (1.0 - (t * t * (3.0 - 2.0 * t))).astype(np.float32, copy=False)
+
+
+def remove_tiny_coastal_mask_components(mask):
+    mask = np.asarray(mask, dtype=bool)
+    if not np.any(mask) or np.all(mask):
+        return mask
+    min_area = max(4, int(round(mask.size * 0.000002)))
+    if min_area <= 1:
+        return mask
+
+    structure = np.ones((3, 3), dtype=np.uint8)
+    cleaned = mask.copy()
+
+    labels, label_count = ndimage.label(cleaned, structure=structure)
+    if label_count:
+        counts = np.bincount(labels.ravel())
+        remove = counts < min_area
+        remove[0] = False
+        cleaned[remove[labels]] = False
+
+    water_labels, water_count = ndimage.label(~cleaned, structure=structure)
+    if water_count:
+        water_counts = np.bincount(water_labels.ravel())
+        fill = water_counts < min_area
+        fill[0] = False
+        cleaned[fill[water_labels]] = True
+
+    if not np.any(cleaned) or np.all(cleaned):
+        return mask
+    return cleaned
+
+
+def build_coastline_distance_masks(cfg, x, y, z, land, wrap_x=True):
+    shape = land.shape
+    beach_width = shoreline_width_pixels(cfg.beach_width, shape)
+    shelf_width = shoreline_width_pixels(cfg.shelf_width, shape)
+    foam_width = 0.0
+    if beach_width > 0.0:
+        foam_width = float(np.clip(max(1.0, beach_width * 0.32), 1.0, 18.0))
+    max_distance = max(beach_width, shelf_width, foam_width)
+    if max_distance <= 0.0:
+        zeros = np.zeros(shape, dtype=np.float32)
+        return {
+            "shoreline": zeros,
+            "beach": zeros,
+            "surf_foam": zeros,
+            "shallow_shelf": zeros,
+            "shelf": zeros,
+            "ocean_depth": np.where(land, 0.0, 1.0).astype(np.float32),
+        }
+
+    coast_source = remove_tiny_coastal_mask_components(land)
+    dist_to_land = safe_distance_from_mask(coast_source, wrap_x=wrap_x, max_distance=math.ceil(max_distance) + 2.0)
+    dist_to_water = safe_distance_from_mask(~coast_source, wrap_x=wrap_x, max_distance=math.ceil(max_distance) + 2.0)
+    land_side_distance = np.maximum(dist_to_water - 0.5, 0.0)
+    water_side_distance = np.maximum(dist_to_land - 0.5, 0.0)
+
+    width_noise = fbm_3d(
+        x,
+        y,
+        z,
+        max(2.0, float(cfg.shoreline_noise_scale) * 0.42),
+        max(2, min(5, int(cfg.shoreline_detail))),
+        0.58,
+        cfg.seed + 14239,
+    )
+    width_mod = lerp(np.float32(0.68), np.float32(1.42), width_noise)
+
+    zeros = np.zeros(shape, dtype=np.float32)
+    beach = (
+        distance_falloff(land_side_distance, beach_width * width_mod) * coast_source.astype(np.float32)
+        if beach_width > 0.0
+        else zeros
+    )
+    surf_foam = (
+        distance_falloff(water_side_distance, foam_width * width_mod) * (~coast_source).astype(np.float32)
+        if foam_width > 0.0
+        else zeros
+    )
+    shallow_shelf = (
+        distance_falloff(water_side_distance, shelf_width * width_mod) * (~coast_source).astype(np.float32)
+        if shelf_width > 0.0
+        else zeros
+    )
+    shoreline = np.maximum(beach, surf_foam * np.float32(0.85))
+    ocean_depth = np.where(land, 0.0, 1.0 - shallow_shelf * 0.75)
+
+    return {
+        "shoreline": np.clip(shoreline, 0.0, 1.0).astype(np.float32),
+        "beach": np.clip(beach, 0.0, 1.0).astype(np.float32),
+        "surf_foam": np.clip(surf_foam, 0.0, 1.0).astype(np.float32),
+        "shallow_shelf": np.clip(shallow_shelf, 0.0, 1.0).astype(np.float32),
+        "shelf": np.clip(shallow_shelf, 0.0, 1.0).astype(np.float32),
+        "ocean_depth": np.clip(ocean_depth, 0.0, 1.0).astype(np.float32),
+    }
+
+
+def build_land_water_layers(cfg, x, y, z, land_threshold=None, wrap_x=True):
     continent = fbm_3d(
         x,
         y,
@@ -2881,22 +3036,28 @@ def build_land_water_layers(cfg, x, y, z, land_threshold=None):
 
     if no_surface_water:
         shoreline = np.zeros_like(land_field, dtype=np.float32)
+        beach = np.zeros_like(land_field, dtype=np.float32)
+        surf_foam = np.zeros_like(land_field, dtype=np.float32)
+        shallow_shelf = np.zeros_like(land_field, dtype=np.float32)
         shelf = np.zeros_like(land_field, dtype=np.float32)
         ocean_depth = np.zeros_like(land_field, dtype=np.float32)
     else:
-        continent_shoreline_distance = np.abs(land_field - threshold)
-        continent_shoreline = 1.0 - smoothstep(0.0, max(cfg.beach_width, 0.005), continent_shoreline_distance)
-        shoreline = np.where(land, continent_shoreline, continent_shoreline * 0.55)
-
-        continent_shelf = 1.0 - smoothstep(0.0, max(cfg.shelf_width, 0.005), np.clip(threshold - land_field, 0.0, 10.0))
-        shelf = np.where(~land, continent_shelf, 0.0)
-        ocean_depth = np.where(land, 0.0, 1.0 - shelf * 0.75)
+        coastline_masks = build_coastline_distance_masks(cfg, x, y, z, land, wrap_x=wrap_x)
+        shoreline = coastline_masks["shoreline"]
+        beach = coastline_masks["beach"]
+        surf_foam = coastline_masks["surf_foam"]
+        shallow_shelf = coastline_masks["shallow_shelf"]
+        shelf = coastline_masks["shelf"]
+        ocean_depth = coastline_masks["ocean_depth"]
 
     return {
         "land_field": land_field,
         "threshold": threshold,
         "land": land,
         "shoreline": shoreline.astype(np.float32),
+        "beach": beach.astype(np.float32),
+        "surf_foam": surf_foam.astype(np.float32),
+        "shallow_shelf": shallow_shelf.astype(np.float32),
         "shelf": shelf.astype(np.float32),
         "ocean_depth": ocean_depth.astype(np.float32),
     }
@@ -4804,8 +4965,10 @@ def build_ocean_geometry_fields(cfg, x, y, z, land, ocean_depth, polar_ice, shor
         choppy = np.sign(ripple) * np.power(np.abs(np.clip(ripple, -1.0, 1.0)), 1.0 / (1.0 + chop * 1.35))
         ripple = lerp(ripple, choppy, chop)
     depth_fade = smoothstep(0.32, 0.88, ocean_depth)
+    normal_depth_fade = smoothstep(0.045, 0.34, ocean_depth)
     ice_fade = 1.0 - smoothstep(0.18, 0.82, polar_ice)
     energy = wind_strength * (1.0 - smoothness * 0.82)
+    normal_ripple = (ripple * water_mask * normal_depth_fade * ice_fade * energy).astype(np.float32)
     ripple = (ripple * water_mask * depth_fade * ice_fade * energy).astype(np.float32)
 
     streak_direction = rng.normal(size=3).astype(np.float32)
@@ -4829,7 +4992,7 @@ def build_ocean_geometry_fields(cfg, x, y, z, land, ocean_depth, polar_ice, shor
     crest = smoothstep(0.42, 0.96, np.abs(ripple) * (1.55 + chop * 1.65) + current_streaks * 0.50 + breakers * 0.86)
     foam = np.clip(crest * foam_amount + breakers * breaker_strength * 0.70, 0.0, 1.0)
     foam = (foam * water_mask * ice_fade).astype(np.float32)
-    return {"ripple": ripple, "current_streaks": current_streaks, "breakers": breakers, "foam": foam}
+    return {"ripple": ripple, "normal_ripple": normal_ripple, "current_streaks": current_streaks, "breakers": breakers, "foam": foam}
 
 
 def build_ocean_ripple_field(cfg, x, y, z, land, ocean_depth, polar_ice):
@@ -4892,7 +5055,7 @@ def build_maps_from_vectors(
     requested_outputs = set() if stats_only else set(selected_maps)
     needs_cloud = bool({"cloud_mask", "cloud_shadow"} & requested_outputs) or "cloud" in stats
     needs_moisture = bool({"color", "city_lights"} & requested_outputs) or "moisture" in stats
-    needs_height = bool({"height", "normal"} & requested_outputs) or bool({"height", "normal_height"} & stats)
+    needs_height = bool({"height", "normal"} & requested_outputs) or bool({"height", "normal_height", "terrain_normal_height"} & stats)
     needs_preview_height = "color" in requested_outputs and normal_wrap_x
     needs_height = needs_height or needs_preview_height
     needs_roughness = "roughness" in requested_outputs
@@ -4901,11 +5064,14 @@ def build_maps_from_vectors(
     needs_nebula = bool({"nebula_color", "nebula_alpha", "nebula_stars"} & requested_outputs)
 
     lat_abs = np.abs(np.sin(lat))
-    land_layers = build_land_water_layers(cfg, x, y, z, land_threshold)
+    land_layers = build_land_water_layers(cfg, x, y, z, land_threshold, wrap_x=normal_wrap_x)
     land_field = land_layers["land_field"]
     threshold = land_layers["threshold"]
     land = land_layers["land"]
     shoreline = land_layers["shoreline"]
+    beach = land_layers["beach"]
+    surf_foam = land_layers["surf_foam"]
+    shallow_shelf = land_layers["shallow_shelf"]
     shelf = land_layers["shelf"]
     ocean_depth = land_layers["ocean_depth"]
     map_height, map_width = x.shape
@@ -4976,6 +5142,7 @@ def build_maps_from_vectors(
     raw_height = None
     height = None
     normal_height = None
+    terrain_normal_height = None
     roughness = None
     ocean_ripple_field = None
     ocean_geometry_fields = None
@@ -5483,14 +5650,41 @@ def build_maps_from_vectors(
             height += terrace * crater_rim_height * 0.07
             height += central_peak * crater_rim_height * (0.34 + crater_rim_vault * 0.08)
             height += ejecta * crater_rim_height * 0.12
-        raw_height = height
+        raw_height = height.astype(np.float32, copy=False)
         normal_height = raw_height
+        terrain_normal_height = raw_height
+        if has_ocean:
+            # Exported height and normal sources both soften ordinary beaches so
+            # they do not displace or shade like continuous coastal cliffs.
+            coastal_soften_band = np.float32(1.0) - smoothstep(
+                coastal_transition_width * np.float32(0.18),
+                coastal_transition_width * np.float32(1.65),
+                np.abs(signed_land_distance),
+            )
+            coastal_cliff_relief = np.clip(
+                np.abs(mountain_relief) * np.float32(2.8)
+                + range_uplift * np.float32(0.90)
+                + crest_mask * np.float32(0.65)
+                + peak_mask * np.float32(0.85)
+                + plate_boundary * np.float32(0.55),
+                0.0,
+                1.0,
+            )
+            coastal_cliff_keep = smoothstep(0.28, 0.72, coastal_cliff_relief)
+            coastal_height_soften = np.clip(coastal_soften_band * (np.float32(1.0) - coastal_cliff_keep), 0.0, 0.86)
+            raw_height = lerp(raw_height, np.float32(sea_level), coastal_height_soften).astype(np.float32, copy=False)
+            coastal_normal_soften = np.clip(coastal_soften_band * (np.float32(1.0) - coastal_cliff_keep), 0.0, 0.92)
+            terrain_normal_height = lerp(raw_height, np.float32(sea_level), coastal_normal_soften).astype(np.float32, copy=False)
+            normal_height = terrain_normal_height
+        raw_height = suppress_height_impulse_outliers(raw_height, wrap_x=normal_wrap_x)
+        terrain_normal_height = suppress_height_impulse_outliers(terrain_normal_height, wrap_x=normal_wrap_x)
+        normal_height = terrain_normal_height
         if effective_ocean_wind_wave_strength(cfg) > 0.0:
             if ocean_geometry_fields is None:
                 ocean_geometry_fields = build_ocean_geometry_fields(cfg, x, y, z, land, ocean_depth, polar_ice, shoreline, shelf)
-            ocean_ripple_field = ocean_geometry_fields["ripple"]
-            normal_height = raw_height + ocean_ripple_field * OCEAN_RIPPLE_HEIGHT_AMPLITUDE
-        height = normalize01(raw_height, height_range)
+            ocean_ripple_field = ocean_geometry_fields.get("normal_ripple", ocean_geometry_fields["ripple"])
+            normal_height = terrain_normal_height + ocean_ripple_field * OCEAN_RIPPLE_HEIGHT_AMPLITUDE
+        height = normalize_height_for_export(raw_height, height_range)
 
     if stats_only and stats <= {"height"}:
         return {"_land_field": land_field, "_raw_height": raw_height}
@@ -5504,6 +5698,8 @@ def build_maps_from_vectors(
             maps["_raw_height"] = raw_height
         if "normal_height" in stats:
             maps["_normal_height"] = normal_height
+        if "terrain_normal_height" in stats:
+            maps["_terrain_normal_height"] = terrain_normal_height
         if "land_mask" in stats:
             maps["_land_mask"] = land
         if "cloud" in stats:
@@ -5560,7 +5756,8 @@ def build_maps_from_vectors(
         normal_source = normal_height if normal_height is not None else height
         maps["normal"] = normal_from_height(normal_source, strength=7.5, wrap_x=normal_wrap_x)
         if effective_ocean_wind_wave_strength(cfg) > 0.0 and raw_height is not None and normal_height is not raw_height:
-            base_normal = normal_from_height(raw_height, strength=7.5, wrap_x=normal_wrap_x)
+            base_normal_source = terrain_normal_height if terrain_normal_height is not None else raw_height
+            base_normal = normal_from_height(base_normal_source, strength=7.5, wrap_x=normal_wrap_x)
             maps["normal"] = np.where(land[..., None], base_normal, maps["normal"])
     if "roughness" in selected_maps:
         maps["roughness"] = roughness
@@ -5568,6 +5765,12 @@ def build_maps_from_vectors(
         maps["land_ocean_mask"] = land.astype(np.float32)
     if "shoreline_mask" in selected_maps:
         maps["shoreline_mask"] = shoreline
+    if "beach_mask" in selected_maps:
+        maps["beach_mask"] = beach
+    if "surf_foam_mask" in selected_maps:
+        maps["surf_foam_mask"] = surf_foam
+    if "shallow_shelf_mask" in selected_maps:
+        maps["shallow_shelf_mask"] = shallow_shelf
     if "ocean_depth" in selected_maps:
         maps["ocean_depth"] = ocean_depth
     if "cloud_mask" in selected_maps:
@@ -5603,6 +5806,8 @@ def build_maps_from_vectors(
             maps["_raw_height"] = raw_height
         if "normal_height" in stats and normal_height is not None:
             maps["_normal_height"] = normal_height
+        if "terrain_normal_height" in stats and terrain_normal_height is not None:
+            maps["_terrain_normal_height"] = terrain_normal_height
         if "land_mask" in stats:
             maps["_land_mask"] = land
         if regional_debug is not None:
@@ -6010,6 +6215,9 @@ TEXTURE_MAP_NAMES = (
     "roughness",
     "land_ocean_mask",
     "shoreline_mask",
+    "beach_mask",
+    "surf_foam_mask",
+    "shallow_shelf_mask",
     "ocean_depth",
     "cloud_mask",
     "cloud_shadow",
@@ -6192,6 +6400,15 @@ def save_map_set(out_dir, maps, map_names=None, planet_name=None, map_type="equi
     if "shoreline_mask" in selected:
         saved["shoreline_mask"] = path_for("shoreline_mask")
         save_gray(saved["shoreline_mask"], maps["shoreline_mask"])
+    if "beach_mask" in selected:
+        saved["beach_mask"] = path_for("beach_mask")
+        save_gray(saved["beach_mask"], maps["beach_mask"])
+    if "surf_foam_mask" in selected:
+        saved["surf_foam_mask"] = path_for("surf_foam_mask")
+        save_gray(saved["surf_foam_mask"], maps["surf_foam_mask"])
+    if "shallow_shelf_mask" in selected:
+        saved["shallow_shelf_mask"] = path_for("shallow_shelf_mask")
+        save_gray(saved["shallow_shelf_mask"], maps["shallow_shelf_mask"])
     if "ocean_depth" in selected:
         saved["ocean_depth"] = path_for("ocean_depth")
         save_gray(saved["ocean_depth"], maps["ocean_depth"])
@@ -6648,7 +6865,7 @@ def quad_sphere_low_memory_map_groups(selected_maps):
         ("height", "normal"),
         ("roughness",),
         ("land_ocean_mask",),
-        ("shoreline_mask",),
+        ("shoreline_mask", "beach_mask", "surf_foam_mask", "shallow_shelf_mask"),
         ("ocean_depth",),
         ("cloud_mask", "cloud_shadow"),
         ("nebula_color", "nebula_alpha", "nebula_stars"),
@@ -6921,6 +7138,7 @@ def write_height16_from_raw_disk_array(path, raw_spec, height_range):
                 normalized = np.zeros(row.shape, dtype=np.float32)
             else:
                 normalized = (row.astype(np.float32, copy=False) - np.float32(minimum)) / np.float32(span)
+            normalized = np.minimum(normalized, HEIGHT_EXPORT_CEILING)
             yield np.clip(normalized * 65535.0, 0, 65535).astype(">u2", copy=False).tobytes()
 
     try:
@@ -6929,9 +7147,10 @@ def write_height16_from_raw_disk_array(path, raw_spec, height_range):
         del raw
 
 
-def write_normal16_from_height_disk_arrays(path, raw_spec, normal_spec, land_spec, cfg, tile_rows=None):
+def write_normal16_from_height_disk_arrays(path, raw_spec, normal_spec, land_spec, cfg, tile_rows=None, terrain_spec=None):
     raw_height = read_disk_array(raw_spec)
     normal_height = read_disk_array(normal_spec)
+    terrain_height = read_disk_array(terrain_spec) if terrain_spec is not None else raw_height
     land_mask = read_disk_array(land_spec) if land_spec is not None else None
     face_size = int(normal_height.shape[0])
     tile_rows = resolve_quad_tile_rows(face_size) if tile_rows is None else int(tile_rows)
@@ -6946,7 +7165,7 @@ def write_normal16_from_height_disk_arrays(path, raw_spec, normal_spec, land_spe
             crop_stop = crop_start + (row_stop - row_start)
             normal_tile = normal_from_height(normal_height[halo_start:halo_stop, :], strength=7.5, wrap_x=False)[crop_start:crop_stop]
             if use_ocean_blend:
-                base_tile = normal_from_height(raw_height[halo_start:halo_stop, :], strength=7.5, wrap_x=False)[crop_start:crop_stop]
+                base_tile = normal_from_height(terrain_height[halo_start:halo_stop, :], strength=7.5, wrap_x=False)[crop_start:crop_stop]
                 mask_tile = land_mask[row_start:row_stop, :]
                 normal_tile = np.where(mask_tile[..., None], base_tile, normal_tile)
                 del base_tile, mask_tile
@@ -6958,7 +7177,7 @@ def write_normal16_from_height_disk_arrays(path, raw_spec, normal_spec, land_spe
     try:
         write_streamed_png(path, face_size, face_size, 2, rows(), bit_depth=16)
     finally:
-        del raw_height, normal_height, land_mask
+        del raw_height, normal_height, terrain_height, land_mask
 
 
 def write_tile_parallel_map_file(out_dir, map_name, face, face_size, spec, planet_name=None):
@@ -7083,12 +7302,13 @@ def save_quad_sphere_height_normal_faces_cached(
         land_threshold, _, _, preset_height_range = quad_sphere_stats_to_values(global_stats)
     raw_heights = {}
     normal_heights = {}
+    terrain_normal_heights = {}
     land_masks = {}
     cache_parent = resolve_quad_raw_height_cache_parent(out_dir, cache_dir)
     cache_parent.mkdir(parents=True, exist_ok=True)
     height_min = math.inf
     height_max = -math.inf
-    stat_fields = ("height", "normal_height", "land_mask") if "normal" in selected_maps else ("height",)
+    stat_fields = ("height", "normal_height", "terrain_normal_height", "land_mask") if "normal" in selected_maps else ("height",)
     with tempfile.TemporaryDirectory(prefix="_quad_raw_height_cache_", dir=str(cache_parent)) as cache_dir:
         for face, maps in iter_quad_sphere_face_pass(
             cfg,
@@ -7106,6 +7326,7 @@ def save_quad_sphere_height_normal_faces_cached(
             raw_heights[face] = write_disk_array(cache_dir, face, "raw_height", raw_height, np.float32)
             if "normal" in selected_maps:
                 normal_heights[face] = write_disk_array(cache_dir, face, "normal_height", maps["_normal_height"], np.float32)
+                terrain_normal_heights[face] = write_disk_array(cache_dir, face, "terrain_normal_height", maps["_terrain_normal_height"], np.float32)
                 land_masks[face] = write_disk_array(cache_dir, face, "land_mask", maps["_land_mask"], np.bool_)
             del maps, raw_height
         height_range = preset_height_range if preset_height_range is not None else ((height_min, height_max) if math.isfinite(height_min) else None)
@@ -7114,15 +7335,16 @@ def save_quad_sphere_height_normal_faces_cached(
             raw_height = read_disk_array(raw_heights[face])
             maps = {}
             if "height" in selected_maps:
-                maps["height"] = normalize01(raw_height, height_range)
+                maps["height"] = normalize_height_for_export(raw_height, height_range)
             if "normal" in selected_maps:
                 normal_height = read_disk_array(normal_heights[face])
                 maps["normal"] = normal_from_height(normal_height, strength=7.5, wrap_x=False)
                 if effective_ocean_wind_wave_strength(cfg) > 0.0:
-                    base_normal = normal_from_height(raw_height, strength=7.5, wrap_x=False)
+                    terrain_normal_height = read_disk_array(terrain_normal_heights[face])
+                    base_normal = normal_from_height(terrain_normal_height, strength=7.5, wrap_x=False)
                     land_mask = read_disk_array(land_masks[face])
                     maps["normal"] = np.where(land_mask[..., None], base_normal, maps["normal"])
-                    del base_normal, land_mask
+                    del terrain_normal_height, base_normal, land_mask
                 del normal_height
             for map_name in selected_maps:
                 face_dir = quad_sphere_map_faces_dir(out_dir, map_name)
@@ -7131,6 +7353,7 @@ def save_quad_sphere_height_normal_faces_cached(
             del maps, raw_height
     raw_heights.clear()
     normal_heights.clear()
+    terrain_normal_heights.clear()
     land_masks.clear()
 
 
@@ -7209,13 +7432,15 @@ def save_quad_sphere_height_normal_faces_tile_parallel(
     cache_parent.mkdir(parents=True, exist_ok=True)
     raw_heights = {}
     normal_heights = {}
+    terrain_normal_heights = {}
     land_masks = {}
-    stat_fields = ("height", "normal_height", "land_mask") if "normal" in selected_maps else ("height",)
+    stat_fields = ("height", "normal_height", "terrain_normal_height", "land_mask") if "normal" in selected_maps else ("height",)
     with tempfile.TemporaryDirectory(prefix="_quad_tile_height_cache_", dir=str(cache_parent)) as temp_dir:
         for face in faces:
             raw_heights[face] = create_disk_array(temp_dir, face, "raw_height", (int(face_size), int(face_size)), np.float32)
             if "normal" in selected_maps:
                 normal_heights[face] = create_disk_array(temp_dir, face, "normal_height", (int(face_size), int(face_size)), np.float32)
+                terrain_normal_heights[face] = create_disk_array(temp_dir, face, "terrain_normal_height", (int(face_size), int(face_size)), np.float32)
                 land_masks[face] = create_disk_array(temp_dir, face, "land_mask", (int(face_size), int(face_size)), np.bool_)
 
         for face, row_start, row_stop, maps in iter_quad_sphere_tile_pass(
@@ -7237,10 +7462,13 @@ def save_quad_sphere_height_normal_faces_tile_parallel(
                 normal_arr = read_disk_array(normal_heights[face], mode="r+")
                 normal_arr[row_start:row_stop] = maps["_normal_height"].astype(np.float32, copy=False)
                 normal_arr.flush()
+                terrain_arr = read_disk_array(terrain_normal_heights[face], mode="r+")
+                terrain_arr[row_start:row_stop] = maps["_terrain_normal_height"].astype(np.float32, copy=False)
+                terrain_arr.flush()
                 land_arr = read_disk_array(land_masks[face], mode="r+")
                 land_arr[row_start:row_stop] = maps["_land_mask"].astype(np.bool_, copy=False)
                 land_arr.flush()
-                del normal_arr, land_arr
+                del normal_arr, terrain_arr, land_arr
             del maps
 
         for face in faces:
@@ -7253,7 +7481,7 @@ def save_quad_sphere_height_normal_faces_tile_parallel(
                 face_dir = quad_sphere_map_faces_dir(out_dir, "normal")
                 face_dir.mkdir(parents=True, exist_ok=True)
                 path = texture_map_path(face_dir, "normal", "cubemap", face_size, face_size, planet_name=planet_name, face_id=face)
-                write_normal16_from_height_disk_arrays(path, raw_heights[face], normal_heights[face], land_masks[face], cfg, tile_rows=tile_rows)
+                write_normal16_from_height_disk_arrays(path, raw_heights[face], normal_heights[face], land_masks[face], cfg, tile_rows=tile_rows, terrain_spec=terrain_normal_heights[face])
 
 
 def save_quad_sphere_maps_tile_parallel(
@@ -7330,10 +7558,11 @@ def save_quad_sphere_maps_tile_parallel(
     map_arrays = {}
     raw_heights = {}
     normal_heights = {}
+    terrain_normal_heights = {}
     land_masks = {}
     stat_fields = ()
     if height_normal_maps:
-        stat_fields = ("height", "normal_height", "land_mask") if "normal" in height_normal_maps else ("height",)
+        stat_fields = ("height", "normal_height", "terrain_normal_height", "land_mask") if "normal" in height_normal_maps else ("height",)
 
     with tempfile.TemporaryDirectory(prefix="_quad_tile_fused_cache_", dir=str(cache_parent)) as temp_dir:
         for face in faces:
@@ -7341,6 +7570,7 @@ def save_quad_sphere_maps_tile_parallel(
                 raw_heights[face] = create_disk_array(temp_dir, face, "raw_height", (face_size, face_size), np.float32)
             if "normal" in height_normal_maps:
                 normal_heights[face] = create_disk_array(temp_dir, face, "normal_height", (face_size, face_size), np.float32)
+                terrain_normal_heights[face] = create_disk_array(temp_dir, face, "terrain_normal_height", (face_size, face_size), np.float32)
                 land_masks[face] = create_disk_array(temp_dir, face, "land_mask", (face_size, face_size), np.bool_)
 
         cache_started = time.perf_counter()
@@ -7371,6 +7601,11 @@ def save_quad_sphere_maps_tile_parallel(
                         normal_arr = read_disk_array(normal_heights[face], mode="r+")
                         map_arrays[(face, "_normal_height")] = normal_arr
                     normal_arr[row_start:row_stop] = maps["_normal_height"].astype(np.float32, copy=False)
+                    terrain_arr = map_arrays.get((face, "_terrain_normal_height"))
+                    if terrain_arr is None:
+                        terrain_arr = read_disk_array(terrain_normal_heights[face], mode="r+")
+                        map_arrays[(face, "_terrain_normal_height")] = terrain_arr
+                    terrain_arr[row_start:row_stop] = maps["_terrain_normal_height"].astype(np.float32, copy=False)
                     land_arr = map_arrays.get((face, "_land_mask"))
                     if land_arr is None:
                         land_arr = read_disk_array(land_masks[face], mode="r+")
@@ -7424,7 +7659,7 @@ def save_quad_sphere_maps_tile_parallel(
                 face_dir = quad_sphere_map_faces_dir(out_dir, "normal")
                 face_dir.mkdir(parents=True, exist_ok=True)
                 path = texture_map_path(face_dir, "normal", "cubemap", face_size, face_size, planet_name=planet_name, face_id=face)
-                write_normal16_from_height_disk_arrays(path, raw_heights[face], normal_heights[face], land_masks[face], cfg, tile_rows=tile_rows)
+                write_normal16_from_height_disk_arrays(path, raw_heights[face], normal_heights[face], land_masks[face], cfg, tile_rows=tile_rows, terrain_spec=terrain_normal_heights[face])
         timings["tile_height_normal_write_seconds"] = round(time.perf_counter() - height_write_started, 3)
 
     timings["tile_total_seconds"] = round(time.perf_counter() - total_started, 3)
