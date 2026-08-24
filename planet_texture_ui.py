@@ -113,7 +113,7 @@ PARAM_GROUPS = [
     {
         "name": "Ocean Geometry",
         "params": [
-            ("beach_width", 0.00, 0.120, 0.005),
+            ("beach_width", 0.00, 0.120, 0.0001),
             ("shelf_width", 0.00, 0.35, 0.01),
             ("ocean_smoothness", 0.00, 1.00, 0.01),
             ("ocean_wind_wave_strength", 0.00, 1.00, 0.01),
@@ -1318,18 +1318,52 @@ def save_planet_output(payload: dict) -> tuple[Path, dict]:
     return out_dir, report
 
 
-def save_config_only(payload: dict) -> Path:
+def writable_saved_preset_path(path_text: str) -> Path:
+    path = Path(path_text)
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    path = path.resolve()
+    output_root = OUTPUT_ROOT.resolve()
+    if path.name != "preset.json":
+        raise ValueError("Choose a preset.json file.")
+    if not path.exists():
+        raise ValueError("Choose an existing preset.json file.")
+    if not path.is_relative_to(output_root):
+        raise ValueError("Saved planet must be inside the output folder.")
+    return path
+
+
+def save_config_only(payload: dict) -> dict:
     metadata = metadata_from_payload(payload, "config")
     ui_state = metadata["ui_state"]
     fallback_name = f"{ui_state['preset']}_{ui_state['seed']}_{time.strftime('%Y%m%d_%H%M%S')}"
     output_name, planet_name = resolved_save_names(payload, fallback_name)
     metadata["planet_name"] = planet_name
     metadata["ui_state"]["planet_name"] = planet_name
-    SAVED_CONFIG_ROOT.mkdir(parents=True, exist_ok=True)
-    out_dir = unique_config_dir(output_name)
-    out_dir.mkdir(parents=True, exist_ok=False)
-    (out_dir / "preset.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
-    return out_dir
+    overwrite_path = str(payload.get("overwrite_path", "")).strip()
+    if overwrite_path:
+        preset_path = writable_saved_preset_path(overwrite_path)
+        out_dir = preset_path.parent
+        saved_as_new = False
+    else:
+        SAVED_CONFIG_ROOT.mkdir(parents=True, exist_ok=True)
+        out_dir = unique_config_dir(output_name)
+        out_dir.mkdir(parents=True, exist_ok=False)
+        preset_path = out_dir / "preset.json"
+        saved_as_new = True
+    preset_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    try:
+        list_path = str(preset_path.resolve().relative_to(Path.cwd().resolve()))
+    except ValueError:
+        list_path = str(preset_path.resolve())
+    return {
+        "output_dir": str(out_dir.resolve()),
+        "preset_path": str(preset_path.resolve()),
+        "list_path": list_path,
+        "folder_name": out_dir.name,
+        "planet_name": planet_name,
+        "saved_as_new": saved_as_new,
+    }
 
 
 def unique_config_dir(name: str) -> Path:
@@ -1492,6 +1526,7 @@ def saved_config_entry(path: Path) -> dict | None:
         "name": path.parent.name,
         "path": relative_path,
         "kind": data.get("output_kind", "texture_output"),
+        "planet_name": state["planet_name"],
         "preset": state["preset"],
         "seed": state["seed"],
         "projection": state["projection"],
@@ -1808,8 +1843,7 @@ class PlanetUiHandler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/command":
                 self.write_json(equivalent_cli_from_payload(payload))
             elif parsed.path == "/api/config/save":
-                out_dir = save_config_only(payload)
-                self.write_json({"output_dir": str(out_dir.resolve()), "preset_path": str((out_dir / "preset.json").resolve())})
+                self.write_json(save_config_only(payload))
             elif parsed.path == "/api/config/delete":
                 self.write_json(delete_saved_config(str(payload.get("path", ""))))
             elif parsed.path == "/api/load":
@@ -1990,6 +2024,17 @@ summary {
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
+.slider-head input[type="number"] {
+  width: 100%;
+  min-height: 30px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #101115;
+  color: var(--text);
+  padding: 4px 6px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
 .actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -2116,8 +2161,8 @@ img {
   grid-template-rows: auto minmax(260px, 1fr) auto;
 }
 .globe-toolbar {
-  display: grid;
-  grid-template-columns: 74px minmax(120px, 1fr) auto auto minmax(110px, 1fr) 48px;
+  display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: center;
   padding: 8px;
@@ -2131,6 +2176,28 @@ img {
 }
 .globe-toolbar button {
   min-height: 30px;
+  flex: 0 0 auto;
+}
+.globe-toolbar select {
+  flex: 1 1 150px;
+  min-width: 0;
+}
+.globe-toolbar .cloud-layer-toggle {
+  flex: 0 1 auto;
+}
+.globe-toolbar label[for="globeSpeed"] {
+  flex: 0 0 auto;
+}
+.globe-toolbar #globeSpeed {
+  flex: 1 1 110px;
+  min-width: 90px;
+}
+.globe-toolbar #globeSpeedValue {
+  flex: 0 0 48px;
+}
+.globe-toolbar #globeFullscreenBtn {
+  flex: 0 0 auto;
+  margin-left: auto;
 }
 .cloud-recipes {
   display: grid;
@@ -2161,6 +2228,36 @@ img {
 }
 #globeCanvas.dragging {
   cursor: grabbing;
+}
+.globe-figure.fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  width: 100vw;
+  height: 100vh;
+  max-height: none;
+  border: 0;
+  border-radius: 0;
+  background: #040506;
+}
+.globe-figure.fullscreen .globe-toolbar {
+  padding-inline: 12px;
+}
+.globe-figure.fullscreen .globe-canvas-wrap {
+  min-height: 0;
+  height: 100%;
+}
+.globe-figure.fullscreen #globeCanvas {
+  width: min(100vw, calc(100vh - 104px));
+  max-width: none;
+  max-height: calc(100vh - 104px);
+}
+.globe-figure.fullscreen figcaption {
+  background: #040506;
+}
+body.globe-fullscreen-active {
+  overflow: hidden;
 }
 .status {
   min-height: 42px;
@@ -2615,6 +2712,9 @@ img {
   .image-grid { grid-template-columns: 1fr; }
   .texture-toolbar { grid-template-columns: auto minmax(0, 1fr); }
   .texture-zoom-controls { grid-column: 1 / -1; }
+  .globe-toolbar #globeFullscreenBtn {
+    margin-left: 0;
+  }
   .map-options { grid-template-columns: 1fr; }
   .report-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .load-row { grid-template-columns: 1fr; }
@@ -2644,10 +2744,11 @@ img {
       <div class="row">
         <label for="previewWidth">Preview width</label>
         <select id="previewWidth">
-          <option>384</option>
-          <option selected>512</option>
-          <option>768</option>
-          <option>1024</option>
+          <option value="384">384</option>
+          <option value="512" selected>512</option>
+          <option value="768">768</option>
+          <option value="1024">1024</option>
+          <option value="2048">2048 high detail</option>
         </select>
       </div>
     </section>
@@ -2759,7 +2860,7 @@ img {
         <button id="resetBtn">Reset Preset</button>
         <button id="randomSeedBtn">Random Seed</button>
         <button id="previewBtn">Render Preview</button>
-        <button id="saveConfigBtn">Save Config</button>
+        <button id="saveConfigBtn">Save Planet</button>
         <button id="saveBtn" class="primary">Save Texture Output</button>
       </div>
       <div id="liveCommandPanel" class="live-command-panel" hidden>
@@ -2808,7 +2909,7 @@ img {
         </div>
         <figcaption id="texturePreviewCaption">texture map preview</figcaption>
       </figure>
-      <figure class="globe-figure">
+      <figure class="globe-figure" id="globeFigure">
         <div class="globe-toolbar">
           <button id="globePlayPause" type="button">Pause</button>
           <select id="globeViewMode" aria-label="Globe preview mode">
@@ -2823,6 +2924,7 @@ img {
           <label for="globeSpeed">Speed</label>
           <input id="globeSpeed" type="range" min="0.05" max="2" step="0.05" value="0.35">
           <span id="globeSpeedValue">0.35x</span>
+          <button id="globeFullscreenBtn" type="button">Full Screen</button>
         </div>
         <div class="globe-canvas-wrap">
           <canvas id="globeCanvas" width="560" height="560" aria-label="Interactive globe preview"></canvas>
@@ -2927,12 +3029,14 @@ const els = {
   textureZoom: document.getElementById("textureZoom"),
   textureZoomValue: document.getElementById("textureZoomValue"),
   textureZoomReset: document.getElementById("textureZoomReset"),
+  globeFigure: document.getElementById("globeFigure"),
   globeCanvas: document.getElementById("globeCanvas"),
   globePlayPause: document.getElementById("globePlayPause"),
   globeViewMode: document.getElementById("globeViewMode"),
   globeCloudLayerToggle: document.getElementById("globeCloudLayerToggle"),
   globeSpeed: document.getElementById("globeSpeed"),
   globeSpeedValue: document.getElementById("globeSpeedValue"),
+  globeFullscreenBtn: document.getElementById("globeFullscreenBtn"),
   terrainTab: document.getElementById("terrainTab"),
   oceanTab: document.getElementById("oceanTab"),
   colorTab: document.getElementById("colorTab"),
@@ -2980,6 +3084,7 @@ const globe = {
   yaw: 0,
   pitch: 0,
   playing: true,
+  fullscreen: false,
   dragging: false,
   lastX: 0,
   lastY: 0,
@@ -3314,6 +3419,18 @@ function valueId(key) {
   return `value_${key}`;
 }
 
+function decimalsFromStep(step) {
+  const text = String(step || "");
+  if (!text.includes(".")) return 0;
+  return text.split(".")[1].replace(/0+$/, "").length;
+}
+
+function formatParamValue(rawValue, step, isInteger) {
+  if (isInteger) return String(parseInt(rawValue, 10));
+  const decimals = Math.max(3, decimalsFromStep(step));
+  return Number(rawValue).toFixed(decimals).replace(/0+$/, "").replace(/\.$/, "");
+}
+
 function getDefaults() {
   return schema.defaults[els.preset.value];
 }
@@ -3428,8 +3545,29 @@ function renderControls() {
       const label = document.createElement("label");
       label.htmlFor = sliderId(param.key);
       label.textContent = param.label;
-      const value = document.createElement("span");
+      const manualValue = param.key === "beach_width";
+      const value = document.createElement(manualValue ? "input" : "span");
       value.id = valueId(param.key);
+      if (manualValue) {
+        value.type = "number";
+        value.min = param.min;
+        value.max = param.max;
+        value.step = param.step;
+        value.inputMode = "decimal";
+        value.setAttribute("aria-label", `${param.label} value`);
+        value.addEventListener("change", () => {
+          const slider = document.getElementById(sliderId(param.key));
+          const numericValue = parseFloat(value.value);
+          if (!Number.isFinite(numericValue)) {
+            syncValue(param.key);
+            return;
+          }
+          const clamped = Math.min(param.max, Math.max(param.min, numericValue));
+          slider.value = param.integer ? String(Math.round(clamped)) : String(clamped);
+          syncValue(param.key);
+          schedulePreview(0);
+        });
+      }
       head.append(label, value);
 
       const slider = document.createElement("input");
@@ -3504,9 +3642,12 @@ function syncValue(key) {
   const slider = document.getElementById(sliderId(key));
   if (!slider || slider.type === "color" || slider.tagName === "SELECT") return;
   const value = document.getElementById(valueId(key));
-  value.textContent = slider.dataset.integer === "1"
-    ? String(parseInt(slider.value, 10))
-    : Number(slider.value).toFixed(3).replace(/0+$/, "").replace(/\.$/, "");
+  const formatted = formatParamValue(slider.value, slider.step, slider.dataset.integer === "1");
+  if (value.tagName === "INPUT") {
+    value.value = formatted;
+  } else {
+    value.textContent = formatted;
+  }
 }
 
 function applyPresetDefaults() {
@@ -3732,6 +3873,11 @@ function getPayload() {
     texture_maps: getSelectedTextureMaps(),
     params: getParams(),
   };
+}
+
+function folderNameFromPresetPath(path) {
+  const parts = String(path || "").replace(/\\/g, "/").split("/");
+  return parts[Math.max(0, parts.length - 2)] || "";
 }
 
 function effectiveTileWorkers() {
@@ -4032,14 +4178,50 @@ function bindTabs() {
 
 function sizeGlobeCanvas() {
   const rect = els.globeCanvas.getBoundingClientRect();
-  const displaySize = Math.max(240, Math.round(Math.min(rect.width || 560, 560)));
-  const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
-  const size = Math.round(displaySize * dpr);
+  const fallbackSize = globe.fullscreen ? Math.min(window.innerWidth || 1024, Math.max(320, (window.innerHeight || 768) - 104)) : 560;
+  const maxDisplaySize = globe.fullscreen ? 2048 : 560;
+  const displaySize = Math.max(240, Math.round(Math.min(rect.width || fallbackSize, maxDisplaySize)));
+  const dpr = globe.fullscreen ? Math.min(window.devicePixelRatio || 1, 1.25) : Math.min(window.devicePixelRatio || 1, 1.5);
+  const maxRenderSize = globe.fullscreen ? 2048 : 840;
+  const size = Math.min(maxRenderSize, Math.round(displaySize * dpr));
   if (els.globeCanvas.width !== size || els.globeCanvas.height !== size) {
     els.globeCanvas.width = size;
     els.globeCanvas.height = size;
   }
   return size;
+}
+
+function syncGlobeFullscreenState(active) {
+  globe.fullscreen = Boolean(active);
+  els.globeFigure.classList.toggle("fullscreen", globe.fullscreen);
+  document.body.classList.toggle("globe-fullscreen-active", globe.fullscreen);
+  els.globeFullscreenBtn.textContent = globe.fullscreen ? "Exit" : "Full Screen";
+  els.globeFullscreenBtn.setAttribute("aria-pressed", globe.fullscreen ? "true" : "false");
+  requestAnimationFrame(drawGlobe);
+}
+
+async function toggleGlobeFullscreen() {
+  if (globe.fullscreen) {
+    if (document.fullscreenElement && document.exitFullscreen) {
+      try {
+        await document.exitFullscreen();
+      } catch (error) {
+        syncGlobeFullscreenState(false);
+      }
+    } else {
+      syncGlobeFullscreenState(false);
+    }
+    return;
+  }
+
+  syncGlobeFullscreenState(true);
+  if (els.globeFigure.requestFullscreen) {
+    try {
+      await els.globeFigure.requestFullscreen();
+    } catch (error) {
+      syncGlobeFullscreenState(true);
+    }
+  }
 }
 
 function drawGlobe() {
@@ -4134,7 +4316,7 @@ function animateGlobe(timestamp) {
   const elapsed = globe.lastFrameTime ? Math.min(0.08, (timestamp - globe.lastFrameTime) / 1000) : 0;
   globe.lastFrameTime = timestamp;
   if (globe.playing && !globe.dragging && globe.textureData) {
-    globe.yaw = (globe.yaw + elapsed * globe.speed * 0.45) % (Math.PI * 2);
+    globe.yaw = (globe.yaw - elapsed * globe.speed * 0.45) % (Math.PI * 2);
     drawGlobe();
   }
   requestAnimationFrame(animateGlobe);
@@ -4147,6 +4329,7 @@ function bindGlobeControls() {
   els.textureCloudLayerToggle.addEventListener("change", () => syncCloudLayerToggles(els.textureCloudLayerToggle.checked));
   els.globeCloudLayerToggle.addEventListener("change", () => syncCloudLayerToggles(els.globeCloudLayerToggle.checked));
   els.globeSpeed.addEventListener("input", syncGlobeSpeed);
+  els.globeFullscreenBtn.addEventListener("click", toggleGlobeFullscreen);
   els.globeCanvas.addEventListener("pointerdown", (event) => {
     setGlobePlaying(false);
     globe.dragging = true;
@@ -4176,6 +4359,14 @@ function bindGlobeControls() {
   els.globeCanvas.addEventListener("pointerup", endDrag);
   els.globeCanvas.addEventListener("pointercancel", endDrag);
   window.addEventListener("resize", drawGlobe);
+  document.addEventListener("fullscreenchange", () => {
+    syncGlobeFullscreenState(document.fullscreenElement === els.globeFigure);
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && globe.fullscreen && !document.fullscreenElement) {
+      syncGlobeFullscreenState(false);
+    }
+  });
   requestAnimationFrame(animateGlobe);
 }
 
@@ -4247,13 +4438,15 @@ function renderSavedPlanets(items) {
     const text = document.createElement("div");
     const title = document.createElement("div");
     title.className = "saved-planet-title";
-    title.textContent = item.name;
+    title.textContent = item.planet_name || item.name;
     const meta = document.createElement("div");
     meta.className = "saved-planet-meta";
     const date = new Date((item.modified || 0) * 1000);
     const maps = Array.isArray(item.texture_maps) ? item.texture_maps.length : 0;
     const loadedText = isLoadedSavedPlanet(item) ? "Currently loaded - " : "";
-    meta.textContent = `${loadedText}${item.kind === "config" ? "Config" : "Output"} - ${item.preset}, seed ${item.seed} - ${item.projection} - ${maps} maps - ${date.toLocaleString()}`;
+    const kind = item.kind === "config" ? "Saved planet" : "Texture output";
+    const folderText = item.planet_name && item.planet_name !== item.name ? ` - folder ${item.name}` : "";
+    meta.textContent = `${loadedText}${kind} - ${item.preset}, seed ${item.seed} - ${item.projection} - ${maps} maps${folderText} - ${date.toLocaleString()}`;
     text.append(title, meta);
 
     const actions = document.createElement("div");
@@ -4351,11 +4544,22 @@ async function saveOutput() {
 }
 
 async function saveConfigOnly() {
+  const payload = getPayload();
+  const outputName = String(payload.output_name || "").trim();
+  if (loadedPlanet && (!outputName || outputName === loadedPlanet.name || outputName === folderNameFromPresetPath(loadedPlanet.listPath))) {
+    payload.overwrite_path = loadedPlanet.listPath || loadedPlanet.path;
+  }
   setButtons(true);
-  setStatus("Saving planet configuration...", "busy");
+  setStatus("Saving planet...", "busy");
   try {
-    const data = await postJson("/api/config/save", getPayload());
-    setStatus(`Saved planet configuration: ${data.preset_path}.`, "ok");
+    const data = await postJson("/api/config/save", payload);
+    const actionText = data.saved_as_new ? "Saved planet" : "Updated saved planet";
+    loadedPlanet = {
+      path: data.preset_path,
+      listPath: data.list_path || data.preset_path,
+      name: data.folder_name || folderNameFromPresetPath(data.preset_path) || "saved planet",
+    };
+    setStatus(`${actionText}: ${data.preset_path}. No texture generation was run.`, "ok");
     await refreshSavedPlanets(false);
   } catch (error) {
     setStatus(error.message, "error");

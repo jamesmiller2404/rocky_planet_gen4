@@ -4891,10 +4891,13 @@ def normal_from_height(height, strength=5.0, wrap_x=True):
 
     padded_y = np.pad(height, ((1, 1), (0, 0)), mode="edge")
     dy = padded_y[2:, :] - padded_y[:-2, :]
-    # Planet tangent-frame basis: rotate the texture-space slopes clockwise so
-    # relief shadows track the globe terminator instead of sitting 90 degrees off.
-    nx = dy * strength
-    ny = dx * strength
+    # Standard OpenGL tangent-space basis: red follows the horizontal
+    # (left/right) texture slope and green follows the vertical (up/down) slope.
+    # The horizontal slope is negated and the vertical slope is used directly
+    # because image rows increase downward, so relief shadows align with the
+    # light source instead of sitting 90 degrees off.
+    nx = -dx * strength
+    ny = dy * strength
     nz = np.ones(height.shape, dtype=np.float32)
     length = np.sqrt(nx * nx + ny * ny + nz * nz)
     normal = np.stack((nx / length, ny / length, nz / length), axis=2)
@@ -7865,7 +7868,7 @@ def write_quad_sphere_manifest(out_dir, face_size, map_names=None, write_cubemap
             "space": "per-face tangent space",
             "channels": "16-bit RGB = XYZ remapped from -1..1 to 0..65535",
             "green_channel": "OpenGL / green-up in the planet tangent frame",
-            "tangent_frame": "clockwise-rotated planet tangent basis: red follows vertical texture slope, green follows horizontal texture slope so relief shadows align with the planet terminator",
+            "tangent_frame": "standard OpenGL image tangent basis: red follows horizontal texture slope, green follows vertical texture slope so relief shadows align with the light source",
         },
     }
     (out_dir / "quad_sphere_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
@@ -7961,7 +7964,7 @@ function draw() {{
     }}
   }}
   ctx.putImageData(image, 0, 0);
-  angle += 0.004;
+  angle -= 0.004;
   requestAnimationFrame(draw);
 }}
 </script>

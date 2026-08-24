@@ -133,7 +133,7 @@ For normal equirectangular output:
 | --- | --- |
 | `<planet>_color_equirect_<width>x<height>_8bit.png` | Main color/albedo texture. |
 | `<planet>_height_equirect_<width>x<height>_16bit.png` | 16-bit grayscale normalized height map with smoothed sea-level transitions for displacement. |
-| `<planet>_normal_equirect_<width>x<height>_16bit.png` | 16-bit RGB OpenGL-style green-up normal map derived from height, using a clockwise-rotated planet tangent basis so relief shadows align with the planet terminator. |
+| `<planet>_normal_equirect_<width>x<height>_16bit.png` | 16-bit RGB OpenGL-style green-up normal map derived from height, using the standard image tangent basis (red follows horizontal texture slope, green follows vertical texture slope) so relief shadows align with the light source. |
 | `<planet>_roughness_equirect_<width>x<height>_8bit.png` | Roughness map. Land is rougher; water is smoother. |
 | `<planet>_land_ocean_mask_equirect_<width>x<height>_8bit.png` | Land/ocean separation mask. White land, black ocean. |
 | `<planet>_shoreline_mask_equirect_<width>x<height>_8bit.png` | General coastline influence mask derived from the final land/ocean coastline distance field. |
