@@ -312,9 +312,11 @@ Flip the sphere normals or check whether the texture is being viewed from inside
 
 ### The Normal Map Looks Wrong
 
-Make sure `normal.png` is imported as Non-Color/Linear data or as a Normal Map texture type. Do not import it as sRGB color. The exported normal map is OpenGL-style green-up using the standard image tangent basis (red follows the horizontal texture slope, green follows the vertical texture slope) so relief shadows align with the light source.
+Make sure `normal.png` is imported as Non-Color/Linear data or as a Normal Map texture type. Do not import it as sRGB color. The exported normal maps are OpenGL-style green-up. Equirectangular normal maps use the standard image tangent basis (red follows the horizontal texture slope, green follows the vertical texture slope). Cube/quad-sphere face normal maps use the per-face tangent basis that matches the cube-sphere mesh (red follows the vertical texture slope, green follows the horizontal texture slope). Both are oriented so relief shadows align with the light source.
 
 If your software expects DirectX-style normal maps and bumps look inverted, invert the green channel in your software's normal map settings.
+
+If the cube-sphere face normal maps appear rotated 90 degrees on your cube-sphere mesh, the mesh's face UV islands are oriented differently from the tangent basis above. Re-unwrap the cube-sphere faces so each face's texture reads U left-to-right and V bottom-to-top when viewed from outside the sphere (or rotate the offending UV islands in 90-degree increments), instead of rotating the normal map in an image editor.
 
 ### The Roughness Looks Backwards
 

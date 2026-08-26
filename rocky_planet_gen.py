@@ -1859,6 +1859,8 @@ CRATER_LAYER_DEFAULTS = {
     "crater_rim_breakup": 0.32,
     "crater_wall_terracing": 0.35,
     "crater_central_peak_strength": 0.35,
+    "crater_central_peak_height": 0.5,
+    "crater_central_peak_sharpness": 0.5,
     "crater_shadow_strength": 0.45,
     "crater_floor_dust_fill": 0.45,
     "crater_small_density": 0.0,
@@ -2136,6 +2138,8 @@ class PlanetConfig:
     crater_rim_breakup: float
     crater_wall_terracing: float
     crater_central_peak_strength: float
+    crater_central_peak_height: float
+    crater_central_peak_sharpness: float
     crater_shadow_strength: float
     crater_floor_dust_fill: float
     moon_basin_strength: float
@@ -3752,6 +3756,7 @@ def accumulate_crater_layer(
     rim_breakup = float(np.clip(cfg.crater_rim_breakup * breakup_scale, 0.0, 1.0))
     wall_terracing = float(np.clip(cfg.crater_wall_terracing * terrace_scale, 0.0, 1.0))
     central_peak_strength = float(np.clip(cfg.crater_central_peak_strength * central_peak_scale, 0.0, 1.0))
+    central_peak_sharpness = float(np.clip(cfg.crater_central_peak_sharpness, 0.0, 1.0))
     shadow_strength = float(np.clip(cfg.crater_shadow_strength * shadow_scale, 0.0, 1.0))
     floor_dust_fill = float(np.clip(cfg.crater_floor_dust_fill * floor_dust_scale, 0.0, 1.0))
     centers = rng.normal(size=(count, 3)).astype(np.float32)
@@ -3810,7 +3815,7 @@ def accumulate_crater_layer(
             layers["rim"] += basin_rim * local_wear * (0.34 + rim_vault * 0.20)
             layers["outer_wall"] += basin_outer_wall * local_wear * (0.10 + rim_vault * 0.10) * (1.0 - erosion * 0.18)
             layers["terrace"] += basin_terrace * local_wear * wall_terracing * 0.40 * (1.0 - erosion * 0.45)
-            layers["central_peak"] += basin_center * local_wear * central_peak_strength * 0.22 * (1.0 - erosion * 0.58)
+            layers["central_peak"] += basin_center * local_wear * central_peak_strength * 0.70 * (1.0 - erosion * 0.58)
             layers["shadow"] += (basin_inner_wall * 0.50 + basin_floor * 0.14 + basin_outer_wall * 0.20) * local_wear * shadow_strength
             layers["floor_dust"] += basin_floor * local_wear * floor_dust_fill * (0.36 + erosion * 0.48)
             layers["rim_tone"] += basin_tone_mask * crater_tone
@@ -3864,9 +3869,10 @@ def accumulate_crater_layer(
                 radial * (1.0 + central_angular * (0.16 + central_peak_strength * 0.08)),
             )
             center_radius = 0.17 + erosion * 0.07
-            center_spire_radius = 0.065 + erosion * 0.035
-            center_core = np.power(np.clip(1.0 - center_profile / center_radius, 0.0, 1.0), 1.70)
-            center_spire = np.power(np.clip(1.0 - center_profile / center_spire_radius, 0.0, 1.0), 1.18)
+            center_spire_radius = 0.075 + erosion * 0.035
+            spire_power = 1.05 - central_peak_sharpness * 0.65
+            center_core = np.power(np.clip(1.0 - center_profile / center_radius, 0.0, 1.0), 2.2)
+            center_spire = np.power(np.clip(1.0 - center_profile / center_spire_radius, 0.0, 1.0), spire_power)
             local_x = tx / chord_radius
             local_y = ty / chord_radius
             center_rubble = (
@@ -3874,8 +3880,8 @@ def accumulate_crater_layer(
                 + np.cos(local_x * 8.3 - local_y * 18.1 - phase * 0.61) * 0.13
                 + central_angular * 0.12
             )
-            center_peak = np.clip((center_core * 0.72 + center_spire * 0.55) * (0.86 + center_rubble), 0.0, 1.0)
-            center_floor_relief = smoothstep(0.12, 0.70, center_peak)
+            center_peak = np.clip((center_core * 0.16 + center_spire) * (0.82 + center_rubble * 0.28), 0.0, 1.0)
+            center_floor_relief = smoothstep(0.12, 0.85, center_peak)
 
         floor_scale = 0.72 if layer_kind == "small" else 1.0
         rim_scale = 1.12 if layer_kind == "medium" else 0.82
@@ -3885,7 +3891,7 @@ def accumulate_crater_layer(
         layers["rim"] += ring * local_wear * rim_scale * (1.0 - erosion * 0.18)
         layers["outer_wall"] += outer_wall * local_wear * rim_scale * (0.20 + rim_vault * 0.22) * (1.0 - erosion * 0.18)
         layers["terrace"] += terrace * local_wear * wall_terracing * 0.55 * (1.0 - erosion * 0.48)
-        layers["central_peak"] += center_peak * local_wear * central_peak_strength * 0.34 * (1.0 - erosion * 0.55)
+        layers["central_peak"] += center_peak * local_wear * central_peak_strength * 1.10 * (1.0 - erosion * 0.55)
         layers["shadow"] += (inner_wall * 0.54 + floor_mask * 0.20 + outer_wall * 0.16) * local_wear * shadow_strength
         layers["floor_dust"] += floor_mask * local_wear * floor_dust_fill * (0.20 + erosion * 0.58)
         layers["rim_tone"] += tone_mask * crater_tone
@@ -4891,13 +4897,21 @@ def normal_from_height(height, strength=5.0, wrap_x=True):
 
     padded_y = np.pad(height, ((1, 1), (0, 0)), mode="edge")
     dy = padded_y[2:, :] - padded_y[:-2, :]
-    # Standard OpenGL tangent-space basis: red follows the horizontal
-    # (left/right) texture slope and green follows the vertical (up/down) slope.
-    # The horizontal slope is negated and the vertical slope is used directly
-    # because image rows increase downward, so relief shadows align with the
-    # light source instead of sitting 90 degrees off.
-    nx = -dx * strength
-    ny = dy * strength
+    if wrap_x:
+        # Equirectangular map on a UV sphere: standard OpenGL tangent-space
+        # basis. Red follows the horizontal (left/right) texture slope and green
+        # follows the vertical (up/down) slope. The horizontal slope is negated
+        # and the vertical slope is used directly because image rows increase
+        # downward, so relief shadows align with the light source.
+        nx = -dx * strength
+        ny = dy * strength
+    else:
+        # Cube-sphere face: the per-face tangent frame is rotated 90 degrees
+        # relative to the equirect basis, so the horizontal slope drives the
+        # green channel and the vertical slope drives the red channel with the
+        # signs chosen so relief shadows align with the light source.
+        nx = dy * strength
+        ny = dx * strength
     nz = np.ones(height.shape, dtype=np.float32)
     length = np.sqrt(nx * nx + ny * ny + nz * nz)
     normal = np.stack((nx / length, ny / length, nz / length), axis=2)
@@ -5548,7 +5562,9 @@ def build_maps_from_vectors(
             basin_shadow = color * 0.42 + np.array([28, 28, 28], dtype=np.float32) * 0.58
             cavity_shadow = color * 0.42 + np.array([46, 24, 14], dtype=np.float32) * 0.42
             floor_dust_color = color * 0.58 + np.array([190, 150, 98], dtype=np.float32) * 0.42
-            central_peak_relief = np.clip(central_peak * (0.55 + cfg.crater_central_peak_strength * 0.45), 0.0, 1.0)
+            peak_height = float(np.clip(cfg.crater_central_peak_height, 0.0, 1.0))
+            peak_relief_gain = (0.80 + cfg.crater_central_peak_strength * 1.10) * (0.90 + peak_height * 1.20)
+            central_peak_relief = np.clip(central_peak * peak_relief_gain, 0.0, 1.0)
             central_peak_color = color * 0.52 + rim_accent * 0.28 + np.array([176, 158, 126], dtype=np.float32) * 0.20
             floor_tint = np.clip(
                 floor * (1.0 - central_peak_relief * 0.68) * crater_color_strength * (0.62 + floor_darkening * 0.58),
@@ -5633,7 +5649,9 @@ def build_maps_from_vectors(
             terrace = crater_layers["terrace"]
             central_peak = crater_layers["central_peak"]
             floor_dust = crater_layers["floor_dust"]
-            central_peak_relief = np.clip(central_peak * (0.55 + cfg.crater_central_peak_strength * 0.45), 0.0, 1.0)
+            peak_height = float(np.clip(cfg.crater_central_peak_height, 0.0, 1.0))
+            peak_relief_gain = (0.80 + cfg.crater_central_peak_strength * 1.10) * (0.90 + peak_height * 1.20)
+            central_peak_relief = np.clip(central_peak * peak_relief_gain, 0.0, 1.0)
             crater_floor_level = np.where(land, 0.30 + base_land_height * 0.025, height - ocean_depth * 0.06)
             crater_flatten = np.clip(
                 (floor * 0.92 + basin * 0.42 + floor_dust * 0.28)
@@ -5651,7 +5669,7 @@ def build_maps_from_vectors(
             height += rim * crater_rim_height * (0.30 + crater_rim_vault * 0.20)
             height += outer_wall * crater_rim_height * (0.06 + crater_rim_vault * 0.10)
             height += terrace * crater_rim_height * 0.07
-            height += central_peak * crater_rim_height * (0.34 + crater_rim_vault * 0.08)
+            height += central_peak * crater_rim_height * (0.34 + crater_rim_vault * 0.08) * (0.55 + peak_height * 1.25)
             height += ejecta * crater_rim_height * 0.12
         raw_height = height.astype(np.float32, copy=False)
         normal_height = raw_height
@@ -7868,7 +7886,7 @@ def write_quad_sphere_manifest(out_dir, face_size, map_names=None, write_cubemap
             "space": "per-face tangent space",
             "channels": "16-bit RGB = XYZ remapped from -1..1 to 0..65535",
             "green_channel": "OpenGL / green-up in the planet tangent frame",
-            "tangent_frame": "standard OpenGL image tangent basis: red follows horizontal texture slope, green follows vertical texture slope so relief shadows align with the light source",
+            "tangent_frame": "cube-sphere per-face tangent basis: red follows vertical texture slope, green follows horizontal texture slope so relief shadows align with the light source",
         },
     }
     (out_dir / "quad_sphere_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
