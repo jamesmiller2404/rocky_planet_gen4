@@ -26,7 +26,7 @@ Quad-sphere output:
     python rocky_planet_gen.py --preset earthlike --seed 42 --quad-sphere --face-size 1024 --out output/earthlike_quad
 
     Writes map-specific face folders under quad_sphere/:
-        color_faces, height_faces, normal_faces, ...
+        color_faces_1024, height_faces_1024, normal_faces_1024, ... (size suffix)
 
     With --planet-name, writes transparent 3x4 cubemap-cross atlases under quad_sphere/,
     rotated 90 degrees clockwise from the original 4x3 layout:
@@ -3037,6 +3037,33 @@ def build_land_water_layers(cfg, x, y, z, land_threshold=None, wrap_x=True):
     )
     continent_land = np.ones_like(land_field, dtype=bool) if no_surface_water else land_field >= threshold
     land = continent_land
+
+    if not no_surface_water:
+        idens = float(np.clip(getattr(cfg, "island_density", 0.0), 0.0, 1.0))
+        if idens > 0.0:
+            iscale = max(2.0, float(cfg.island_scale))
+            island_n = fbm_3d(x, y, z, iscale, 5, 0.57, cfg.seed + 19231)
+            ith = float(np.clip(cfg.island_threshold, 0.0, 0.99))
+            icand = island_n > ith
+            dland = safe_distance_from_mask(continent_land, wrap_x=wrap_x)
+            dmin = float(cfg.island_min_continent_distance) * float(min(land_field.shape))
+            dmax = float(cfg.island_max_continent_distance) * float(min(land_field.shape))
+            if dmin > 0.0:
+                icand &= (dland >= dmin)
+            if dmax > 0.0:
+                icand &= (dland <= dmax)
+            ch = float(np.clip(cfg.island_chain_strength, 0.0, 1.0))
+            if ch > 0.0:
+                rdg = 1.0 - np.abs(fbm_3d(x * 1.1, y * 0.9, z * 1.2, iscale * 0.8, 3, 0.52, cfg.seed + 19311) * 2 - 1)
+                icand &= (rdg > 0.55 - ch * 0.35)
+            mina = float(getattr(cfg, "island_min_area", 0.0))
+            maxa = float(getattr(cfg, "island_max_area", 0.0))
+            if mina > 0.0 or maxa > 0.0:
+                icand = filter_land_components(icand, mina, maxa)
+            if np.any(icand):
+                land = continent_land | icand
+                iboost = np.clip((island_n - ith) * 1.1, 0.02, 0.35)
+                land_field = np.where(icand & ~continent_land, threshold + iboost, land_field)
 
     if no_surface_water:
         shoreline = np.zeros_like(land_field, dtype=np.float32)
@@ -6300,13 +6327,16 @@ def texture_map_path(out_dir, map_name, map_type="equirect", width=None, height=
     return out_dir / texture_map_filename(map_name, map_type, width, height, bit_depth, planet_name, face_id)
 
 
-def quad_sphere_map_faces_dir(out_dir, map_name):
-    return Path(out_dir) / f"{canonical_texture_map_name(map_name)}_faces"
+def quad_sphere_map_faces_dir(out_dir, map_name, face_size=None):
+    base = f"{canonical_texture_map_name(map_name)}_faces"
+    if face_size is not None:
+        base += f"_{int(face_size)}"
+    return Path(out_dir) / base
 
 
 def quad_sphere_face_path(out_dir, map_name, face, face_size, planet_name=None):
     return texture_map_path(
-        quad_sphere_map_faces_dir(out_dir, map_name),
+        quad_sphere_map_faces_dir(out_dir, map_name, face_size),
         map_name,
         "cubemap",
         face_size,
@@ -6325,7 +6355,8 @@ def quad_sphere_face_relative_path(map_name, face, face_size, planet_name=None):
         planet_name=planet_name,
         face_id=face,
     )
-    return Path("quad_sphere", f"{canonical_texture_map_name(map_name)}_faces", filename).as_posix()
+    return Path("quad_sphere", f"{canonical_texture_map_name(map_name)}_faces_{int(face_size)}", filename).as_posix()
+
 
 
 def selected_texture_maps(map_names=None):
@@ -7202,7 +7233,7 @@ def write_normal16_from_height_disk_arrays(path, raw_spec, normal_spec, land_spe
 
 
 def write_tile_parallel_map_file(out_dir, map_name, face, face_size, spec, planet_name=None):
-    face_dir = quad_sphere_map_faces_dir(out_dir, map_name)
+    face_dir = quad_sphere_map_faces_dir(out_dir, map_name, face_size)
     face_dir.mkdir(parents=True, exist_ok=True)
     path = texture_map_path(face_dir, map_name, "cubemap", face_size, face_size, planet_name=planet_name, face_id=face)
     if map_name in RGB_8BIT_MAPS:
@@ -7266,7 +7297,7 @@ def save_quad_sphere_color_faces_tiled(out_dir, cfg, face_size, tile_rows=None, 
         land_threshold, moisture_range = compute_quad_sphere_color_stats_tiled(cfg, face_size, tile_rows)
     else:
         land_threshold, _, moisture_range, _ = quad_sphere_stats_to_values(global_stats)
-    face_dir = quad_sphere_map_faces_dir(out_dir, "color")
+    face_dir = quad_sphere_map_faces_dir(out_dir, "color", face_size)
     face_dir.mkdir(parents=True, exist_ok=True)
     for face in selected_quad_sphere_faces(face_names):
         image = Image.new("RGB", (int(face_size), int(face_size)))
@@ -7368,7 +7399,7 @@ def save_quad_sphere_height_normal_faces_cached(
                     del terrain_normal_height, base_normal, land_mask
                 del normal_height
             for map_name in selected_maps:
-                face_dir = quad_sphere_map_faces_dir(out_dir, map_name)
+                face_dir = quad_sphere_map_faces_dir(out_dir, map_name, face_size)
                 face_dir.mkdir(parents=True, exist_ok=True)
                 save_map_set(face_dir, maps, (map_name,), planet_name=planet_name, map_type="cubemap", face_id=face)
             del maps, raw_height
@@ -7494,12 +7525,12 @@ def save_quad_sphere_height_normal_faces_tile_parallel(
 
         for face in faces:
             if "height" in selected_maps:
-                face_dir = quad_sphere_map_faces_dir(out_dir, "height")
+                face_dir = quad_sphere_map_faces_dir(out_dir, "height", face_size)
                 face_dir.mkdir(parents=True, exist_ok=True)
                 path = texture_map_path(face_dir, "height", "cubemap", face_size, face_size, planet_name=planet_name, face_id=face)
                 write_height16_from_raw_disk_array(path, raw_heights[face], height_range)
             if "normal" in selected_maps:
-                face_dir = quad_sphere_map_faces_dir(out_dir, "normal")
+                face_dir = quad_sphere_map_faces_dir(out_dir, "normal", face_size)
                 face_dir.mkdir(parents=True, exist_ok=True)
                 path = texture_map_path(face_dir, "normal", "cubemap", face_size, face_size, planet_name=planet_name, face_id=face)
                 write_normal16_from_height_disk_arrays(path, raw_heights[face], normal_heights[face], land_masks[face], cfg, tile_rows=tile_rows, terrain_spec=terrain_normal_heights[face])
@@ -7672,12 +7703,12 @@ def save_quad_sphere_maps_tile_parallel(
         height_write_started = time.perf_counter()
         for face in faces:
             if "height" in height_normal_maps:
-                face_dir = quad_sphere_map_faces_dir(out_dir, "height")
+                face_dir = quad_sphere_map_faces_dir(out_dir, "height", face_size)
                 face_dir.mkdir(parents=True, exist_ok=True)
                 path = texture_map_path(face_dir, "height", "cubemap", face_size, face_size, planet_name=planet_name, face_id=face)
                 write_height16_from_raw_disk_array(path, raw_heights[face], height_range)
             if "normal" in height_normal_maps:
-                face_dir = quad_sphere_map_faces_dir(out_dir, "normal")
+                face_dir = quad_sphere_map_faces_dir(out_dir, "normal", face_size)
                 face_dir.mkdir(parents=True, exist_ok=True)
                 path = texture_map_path(face_dir, "normal", "cubemap", face_size, face_size, planet_name=planet_name, face_id=face)
                 write_normal16_from_height_disk_arrays(path, raw_heights[face], normal_heights[face], land_masks[face], cfg, tile_rows=tile_rows, terrain_spec=terrain_normal_heights[face])
@@ -7786,7 +7817,7 @@ def save_quad_sphere_maps_low_memory(
             height_range=height_range,
         ):
             for map_name in group:
-                face_dir = quad_sphere_map_faces_dir(out_dir, map_name)
+                face_dir = quad_sphere_map_faces_dir(out_dir, map_name, face_size)
                 face_dir.mkdir(parents=True, exist_ok=True)
                 save_map_set(face_dir, maps, (map_name,), planet_name=planet_name, map_type="cubemap", face_id=face)
             del maps

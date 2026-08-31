@@ -267,7 +267,7 @@ class Harness:
         quad_dir = out_dir / "quad_sphere"
         self.require(quad_dir.exists(), "quad_sphere folder missing")
         for map_name, bit_depth in (("color", "8bit"), ("height", "16bit")):
-            map_dir = quad_dir / f"{map_name}_faces"
+            map_dir = quad_dir / f"{map_name}_faces_{face_size}"
             self.require(map_dir.is_dir(), f"{map_dir.name} folder missing")
             for face in QUAD_FACES:
                 file_name = f"{asset_name}_{map_name}_cubemap_{face}_{face_size}x{face_size}_{bit_depth}.png"

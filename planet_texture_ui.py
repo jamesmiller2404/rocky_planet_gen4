@@ -1988,6 +1988,10 @@ select {
 input[type="range"] {
   width: 100%;
 }
+#planetName,
+#outputName {
+  max-width: 192px;
+}
 .color-control {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 52px;
